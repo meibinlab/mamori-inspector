@@ -1,0 +1,2 @@
+# mamori-inspector
+Mamori Inspector is a unified code inspection platform for VS Code that orchestrates multiple analysis tools and presents results in a single, developer-friendly interface.
