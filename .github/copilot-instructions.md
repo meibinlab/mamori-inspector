@@ -2,7 +2,7 @@
 
 ## プロジェクト概要
 - Mamori Inspector は VS Code 拡張とリポジトリ内ランナーで構成され、複数の品質ツールを統合して SARIF で報告する。
-- 公式仕様は [docs/spec.md](docs/spec.md)。変更は必ず仕様に整合させる。
+- 公式仕様は [../docs/spec.md](../docs/spec.md)。変更は必ず仕様に整合させる。
 - 現状は仕様と README 以外に実装ファイルがない。
 
 ## アーキテクチャ（予定）
@@ -20,6 +20,7 @@
 ## ツール運用ルール（勝手に変更しない）
 - Java: 保存時 + pre-commit で Checkstyle/PMD/Semgrep。pre-push で CPD/SpotBugs を追加。
 - Web: ESLint/Stylelint/htmlhint は設定検出時のみ実行。pre-push 既定 ON。
+- TypeScript: ESLint を用いてコードチェックを行う。
 - Semgrep は `.semgrep.yml` があれば使用。無ければ `p/java` のみ。
 - SpotBugs は class ルート（例: `target/classes`, `build/classes/java/main`）を使い、無ければ警告してスキップ。
 
@@ -38,11 +39,13 @@
 - ツール実行結果は必ず SARIF に正規化し、Problems に反映する流れを維持する。
 - pre-commit の整形は再ステージまでを一連の処理として実装する。
 - Google Style に準拠する。
-- 関数や変数のコメントは日本語で必ず記載する。
+- TypeScript は Google TypeScript Style に準拠する。
+- 関数、インタフェース、変数およびその引数と戻り値は必ずコメントを記載する。
+- コメントは必ず日本語で記載する。
 
 ## 参照先
-- 仕様: [docs/spec.md](docs/spec.md)
-- 概要: [README.md](README.md)
+- 仕様: [../docs/spec.md](../docs/spec.md)
+- 概要: [../README.md](../README.md)
 
 # AIチャットのルール
 

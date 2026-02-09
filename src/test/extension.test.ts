@@ -1,15 +1,26 @@
+// 断言ユーティリティを表す
 import * as assert from 'assert';
 
-// You can import and use all API from the 'vscode' module
-// as well as import your extension to test it
+// VS Code API を表す
 import * as vscode from 'vscode';
-// import * as myExtension from '../../extension';
 
+/**
+ * 拡張のテストスイートを定義する。
+ * @returns 返り値はない。
+ */
 suite('Extension Test Suite', () => {
-	vscode.window.showInformationMessage('Start all tests.');
+  // テスト開始の通知メッセージを表す
+  const message = 'Start all tests.';
+  vscode.window.showInformationMessage(message);
 
-	test('Sample test', () => {
-		assert.strictEqual(-1, [1, 2, 3].indexOf(5));
-		assert.strictEqual(-1, [1, 2, 3].indexOf(0));
-	});
+  /**
+   * サンプルテストを実行する。
+   * @returns 返り値はない。
+   */
+  test('Sample test', () => {
+    // 配列に含まれない値を表す
+    const missing = -1;
+    assert.strictEqual(missing, [1, 2, 3].indexOf(5));
+    assert.strictEqual(missing, [1, 2, 3].indexOf(0));
+  });
 });

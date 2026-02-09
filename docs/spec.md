@@ -80,6 +80,8 @@ SpotBugsの例外仕様（確定）:
 
 ## 4. 実行エンジン構成
 
+ランナーのファイル構成は [docs/runner-structure.md](docs/runner-structure.md) を参照。
+
 ### 4.1 共通Nodeランナー（VS Code/フック共通）
 リポジトリ内に `.mamori/` を置き、VS Code拡張とgit hooksが同じランナーを呼ぶ。
 

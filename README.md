@@ -3,3 +3,6 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 
 ## Spec
 - docs/spec.md
+
+## Runner Structure
+- docs/runner-structure.md
