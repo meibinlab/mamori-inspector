@@ -1,0 +1,156 @@
+'use strict';
+
+// ファイルシステム操作を表す
+const fs = require('fs');
+// パス操作を表す
+const path = require('path');
+
+/**
+ * 候補ファイル名パターンに一致するか判定する。
+ * @param {string} filename 判定対象のファイル名を表す。
+ * @param {{type: string, value: string}} candidatePattern 候補パターンを表す。
+ * @returns {boolean} 一致した場合は true を返す。
+ */
+function matchesPattern(filename, candidatePattern) {
+  if (!candidatePattern || typeof candidatePattern.value !== 'string') {
+    return false;
+  }
+
+  if (candidatePattern.type === 'exact') {
+    return filename === candidatePattern.value;
+  }
+
+  if (candidatePattern.type === 'prefix') {
+    return filename.startsWith(candidatePattern.value);
+  }
+
+  return false;
+}
+
+/**
+ * ディレクトリ階層を上位へたどる。
+ * @param {string} startDirectory 探索開始ディレクトリを表す。
+ * @param {string} stopDirectory 探索停止ディレクトリを表す。
+ * @returns {string[]} 探索対象ディレクトリ一覧を返す。
+ */
+function buildSearchDirectories(startDirectory, stopDirectory) {
+  // 探索対象ディレクトリ一覧を表す
+  const directories = [];
+  // 現在探索中のディレクトリを表す
+  let currentDirectory = path.resolve(startDirectory);
+  // 探索停止ディレクトリを表す
+  const resolvedStopDirectory = path.resolve(stopDirectory);
+
+  while (true) {
+    directories.push(currentDirectory);
+    if (currentDirectory === resolvedStopDirectory) {
+      break;
+    }
+
+    // 1つ上の親ディレクトリを表す
+    const parentDirectory = path.dirname(currentDirectory);
+    if (parentDirectory === currentDirectory) {
+      break;
+    }
+    currentDirectory = parentDirectory;
+  }
+
+  return directories;
+}
+
+/**
+ * 最初に見つかった設定ファイルを返す。
+ * @param {string[]} startDirectories 探索開始ディレクトリ一覧を表す。
+ * @param {string} stopDirectory 探索停止ディレクトリを表す。
+ * @param {{type: string, value: string}[]} candidatePatterns 候補パターン一覧を表す。
+ * @returns {string|null} 見つかった設定ファイルの絶対パスを返す。
+ */
+function findFirstExistingFile(startDirectories, stopDirectory, candidatePatterns) {
+  for (const startDirectory of startDirectories) {
+    if (!fs.existsSync(startDirectory) || !fs.statSync(startDirectory).isDirectory()) {
+      continue;
+    }
+
+    // 探索対象ディレクトリ一覧を表す
+    const searchDirectories = buildSearchDirectories(startDirectory, stopDirectory);
+
+    for (const searchDirectory of searchDirectories) {
+      if (!fs.existsSync(searchDirectory) || !fs.statSync(searchDirectory).isDirectory()) {
+        continue;
+      }
+
+      // ディレクトリエントリ一覧を表す
+      const entries = fs.readdirSync(searchDirectory, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isFile()) {
+          continue;
+        }
+        if (!candidatePatterns.some((candidatePattern) => matchesPattern(entry.name, candidatePattern))) {
+          continue;
+        }
+        return path.join(searchDirectory, entry.name);
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Semgrep の探索結果を返す。
+ * @param {string[]} startDirectories 探索開始ディレクトリ一覧を表す。
+ * @param {string} currentWorkingDirectory 現在の作業ディレクトリを表す。
+ * @param {{configPatterns?: {type: string, value: string}[]}} defaults Semgrep の既定値を表す。
+ * @returns {{enabled: boolean, source: string, strategy: string, configPath?: string, rules?: string[]}} 解決結果を返す。
+ */
+function discoverSemgrepConfiguration(startDirectories, currentWorkingDirectory, defaults) {
+  // Semgrep 設定ファイル候補パターン一覧を表す
+  const configPatterns = Array.isArray(defaults.configPatterns)
+    ? defaults.configPatterns
+    : [{ type: 'exact', value: '.semgrep.yml' }];
+  // 探索で見つかった Semgrep 設定ファイルを表す
+  const discoveredConfigPath = findFirstExistingFile(
+    startDirectories,
+    currentWorkingDirectory,
+    configPatterns,
+  );
+
+  if (discoveredConfigPath) {
+    return {
+      enabled: true,
+      source: 'discovery',
+      strategy: 'config',
+      configPath: discoveredConfigPath,
+    };
+  }
+
+  return {
+    enabled: false,
+    source: 'discovery',
+    strategy: 'none',
+  };
+}
+
+/**
+ * Semgrep のデフォルト解決結果を返す。
+ * @param {{defaultRule?: string}} defaults Semgrep の既定値を表す。
+ * @returns {{enabled: boolean, source: string, strategy: string, rules: string[]}} 解決結果を返す。
+ */
+function buildDefaultSemgrepConfiguration(defaults) {
+  // 既定の Semgrep ルールを表す
+  const defaultRule = typeof defaults.defaultRule === 'string' && defaults.defaultRule
+    ? defaults.defaultRule
+    : 'p/java';
+
+  return {
+    enabled: true,
+    source: 'default',
+    strategy: 'rule',
+    rules: [defaultRule],
+  };
+}
+
+module.exports = {
+  buildDefaultSemgrepConfiguration,
+  discoverSemgrepConfiguration,
+};
