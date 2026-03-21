@@ -9,13 +9,23 @@
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onLanguage:java"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "commands": [
       {
-        "command": "mamori-inspector.helloWorld",
-        "title": "Hello World"
+        "command": "mamori-inspector.runWorkspaceCheck",
+        "title": "Mamori Inspector: Run Workspace Check"
+      },
+      {
+        "command": "mamori-inspector.installGitHooks",
+        "title": "Mamori Inspector: Install Git Hooks"
+      },
+      {
+        "command": "mamori-inspector.uninstallGitHooks",
+        "title": "Mamori Inspector: Uninstall Git Hooks"
       }
     ]
   },
@@ -25,7 +35,8 @@
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src .mamori",
-    "test": "vscode-test"
+    "test": "mocha --ui tdd \"out/test/**/*.test.js\"",
+    "test:integration": "node ./scripts/run-vscode-test.mjs"
   },
   "devDependencies": {
     "@types/vscode": "^1.109.0",
@@ -34,6 +45,7 @@
     "typescript-eslint": "^8.54.0",
     "eslint": "^9.39.2",
     "typescript": "^5.9.3",
+    "mocha": "^10.8.2",
     "@vscode/test-cli": "^0.0.12",
     "@vscode/test-electron": "^2.5.2"
   }

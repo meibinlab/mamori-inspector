@@ -168,11 +168,28 @@ SpotBugsのclass探索は別系統（除外に巻き込まない）:
 - pre-commit / pre-push のhookを生成して、Nodeランナーを呼ぶ
 - 失敗時はブロック（ただし `--no-verify` で回避可能）
 
+Git hooks の競合時仕様（確定）:
+- `pre-commit` または `pre-push` が既に存在し、Mamori が生成した管理対象hookでない場合は上書きしない
+- 上書きしなかった hook はそのまま保持し、install は他の対象 hook の処理を継続する
+- uninstall は Mamori 管理対象hookのみ削除し、手動作成された hook は削除しない
+- 競合や未削除があった場合は warning として扱い、CLI 標準出力と VS Code 拡張の通知で理由を表示する
+
+warning の例:
+- `pre-commit already exists and was left unchanged`
+- `pre-push already exists and was left unchanged`
+- `pre-commit is not managed by Mamori Inspector and was left unchanged`
+- `pre-push is not managed by Mamori Inspector and was left unchanged`
+
 ## 10. コマンド（拡張が提供）
 - セットアップ（Java系ツールDL、`.mamori/node` のnpm導入を明示実行）
 - Git hooks インストール / アンインストール
 - 手動全体チェック（manual）
 - キャッシュ削除（`.mamori/tools` / `.mamori/node`）
+
+Git hooks コマンドの通知仕様（確定）:
+- install / uninstall が成功した場合は情報通知を表示する
+- 競合や未変更 hook がある場合は成功通知に加えて warning 通知を表示する
+- warning は CLI の `mamori: hooks warnings=...` 行から拡張側で抽出し、Output Channel にも記録する
 
 ## 11. 今後の拡張
 - 手動ツールの追加（Dependency-Check/Trivyの取り込み強化、結果の詳細ビュー）

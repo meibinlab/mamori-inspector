@@ -1,0 +1,172 @@
+{
+  "semgrep": {
+    "defaultRule": "p/java",
+    "configPatterns": [
+      {
+        "type": "exact",
+        "value": ".semgrep.yml"
+      }
+    ]
+  },
+  "web": {
+    "eslint": {
+      "configPatterns": [
+        {
+          "type": "exact",
+          "value": ".eslintrc"
+        },
+        {
+          "type": "exact",
+          "value": ".eslintrc.js"
+        },
+        {
+          "type": "exact",
+          "value": ".eslintrc.cjs"
+        },
+        {
+          "type": "exact",
+          "value": ".eslintrc.json"
+        },
+        {
+          "type": "exact",
+          "value": ".eslintrc.yaml"
+        },
+        {
+          "type": "exact",
+          "value": ".eslintrc.yml"
+        },
+        {
+          "type": "exact",
+          "value": ".eslintrc.ts"
+        },
+        {
+          "type": "exact",
+          "value": ".eslintrc.mts"
+        },
+        {
+          "type": "exact",
+          "value": ".eslintrc.cts"
+        },
+        {
+          "type": "exact",
+          "value": "eslint.config.js"
+        },
+        {
+          "type": "exact",
+          "value": "eslint.config.mjs"
+        },
+        {
+          "type": "exact",
+          "value": "eslint.config.cjs"
+        },
+        {
+          "type": "exact",
+          "value": "eslint.config.ts"
+        },
+        {
+          "type": "exact",
+          "value": "eslint.config.mts"
+        },
+        {
+          "type": "exact",
+          "value": "eslint.config.cts"
+        }
+      ],
+      "packageJsonKey": "eslintConfig"
+    },
+    "stylelint": {
+      "configPatterns": [
+        {
+          "type": "exact",
+          "value": ".stylelintrc"
+        },
+        {
+          "type": "exact",
+          "value": ".stylelintrc.js"
+        },
+        {
+          "type": "exact",
+          "value": ".stylelintrc.cjs"
+        },
+        {
+          "type": "exact",
+          "value": ".stylelintrc.json"
+        },
+        {
+          "type": "exact",
+          "value": ".stylelintrc.yaml"
+        },
+        {
+          "type": "exact",
+          "value": ".stylelintrc.yml"
+        },
+        {
+          "type": "exact",
+          "value": ".stylelintrc.ts"
+        },
+        {
+          "type": "exact",
+          "value": ".stylelintrc.mts"
+        },
+        {
+          "type": "exact",
+          "value": ".stylelintrc.cts"
+        },
+        {
+          "type": "exact",
+          "value": "stylelint.config.js"
+        },
+        {
+          "type": "exact",
+          "value": "stylelint.config.mjs"
+        },
+        {
+          "type": "exact",
+          "value": "stylelint.config.cjs"
+        },
+        {
+          "type": "exact",
+          "value": "stylelint.config.ts"
+        },
+        {
+          "type": "exact",
+          "value": "stylelint.config.mts"
+        },
+        {
+          "type": "exact",
+          "value": "stylelint.config.cts"
+        }
+      ],
+      "packageJsonKey": "stylelint"
+    },
+    "htmlhint": {
+      "configPatterns": [
+        {
+          "type": "exact",
+          "value": ".htmlhintrc"
+        },
+        {
+          "type": "exact",
+          "value": ".htmlhintrc.js"
+        },
+        {
+          "type": "exact",
+          "value": ".htmlhintrc.cjs"
+        },
+        {
+          "type": "exact",
+          "value": ".htmlhintrc.json"
+        },
+        {
+          "type": "exact",
+          "value": ".htmlhintrc.yaml"
+        },
+        {
+          "type": "exact",
+          "value": ".htmlhintrc.yml"
+        }
+      ],
+      "packageJsonKey": "htmlhint"
+    }
+  }
+}
