@@ -4,6 +4,8 @@ import * as vscode from 'vscode';
 import { spawn } from 'child_process';
 // Node のパス操作 API を表す
 import * as path from 'path';
+// hooks 成功通知の整形処理を表す
+import { reportHooksCommandSuccess, type MamoriHooksAction } from './hooks-command-report';
 // SARIF Diagnostics 変換器を表す
 import { loadSarifFindings, SarifFinding } from './sarif-diagnostics';
 // 保存時チェックのスケジューラーを表す
@@ -25,6 +27,18 @@ const AUTO_SAVE_LANGUAGE_IDS = new Set([
   'sass',
   'html',
 ]);
+// 実行中の追随再実行を抑止する拡張子一覧を表す
+const AUTO_SAVE_NON_QUEUE_EXTENSIONS = new Set([
+  '.js',
+  '.cjs',
+  '.mjs',
+  '.jsx',
+  '.css',
+  '.scss',
+  '.sass',
+  '.html',
+  '.htm',
+]);
 // 保存時チェックのデバウンス時間を表す
 const SAVE_DEBOUNCE_MILLISECONDS = 400;
 // 自己再帰抑止時間を表す
@@ -43,11 +57,6 @@ interface MamoriCliRunOptions {
   /** 対象ファイル一覧を表す。 */
   files?: string[];
 }
-
-/**
- * Mamori hooks 操作種別を表す。
- */
-type MamoriHooksAction = 'install' | 'uninstall';
 
 /**
  * Mamori CLI 実行結果を表す。
@@ -200,27 +209,6 @@ function runMamoriCliCommand(
 }
 
 /**
- * hooks CLI の標準出力から警告一覧を抽出する。
- * @param stdout CLI 標準出力を表す。
- * @returns 警告一覧を返す。
- */
-function extractHooksWarnings(stdout: string): string[] {
-  const warningLine = stdout
-    .split(/\r?\n/u)
-    .find((line) => line.startsWith('mamori: hooks warnings='));
-
-  if (!warningLine) {
-    return [];
-  }
-
-  return warningLine
-    .replace('mamori: hooks warnings=', '')
-    .split(' | ')
-    .map((value) => value.trim())
-    .filter((value) => Boolean(value));
-}
-
-/**
  * hooks 管理コマンドを作成する。
  * @param action hooks 操作種別を表す。
  * @param outputChannel 出力チャネルを表す。
@@ -252,19 +240,7 @@ function createManageHooksCommand(
         },
       );
 
-      const warnings = extractHooksWarnings(commandResult ? commandResult.stdout : '');
-      if (warnings.length > 0) {
-        outputChannel.appendLine(`Mamori Inspector hooks ${action} warnings: ${warnings.join(' | ')}`);
-        void vscode.window.showWarningMessage(
-          `Mamori Inspector: Git hooks は処理しましたが、一部は変更しませんでした。${warnings.join(' / ')}`,
-        );
-      }
-
-      void vscode.window.showInformationMessage(
-        action === 'install'
-          ? 'Mamori Inspector: Git hooks をインストールしました。'
-          : 'Mamori Inspector: Git hooks をアンインストールしました。',
-      );
+      reportHooksCommandSuccess(action, commandResult ? commandResult.stdout : '', outputChannel, vscode.window);
     } catch (error) {
       outputChannel.appendLine(
         `Mamori Inspector hooks ${action} failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -333,7 +309,7 @@ function publishDiagnostics(
  * @returns ワークスペースフォルダーを返す。
  */
 function getWorkspaceFolderForUri(resourceUri: vscode.Uri): vscode.WorkspaceFolder | undefined {
-  return vscode.workspace.getWorkspaceFolder(resourceUri) || vscode.workspace.workspaceFolders?.[0];
+  return vscode.workspace.getWorkspaceFolder(resourceUri);
 }
 
 /**
@@ -342,7 +318,18 @@ function getWorkspaceFolderForUri(resourceUri: vscode.Uri): vscode.WorkspaceFold
  * @returns 対象なら true を返す。
  */
 function shouldRunAutomaticSaveCheck(document: vscode.TextDocument): boolean {
-  return document.uri.scheme === 'file' && AUTO_SAVE_LANGUAGE_IDS.has(document.languageId);
+  return document.uri.scheme === 'file'
+    && AUTO_SAVE_LANGUAGE_IDS.has(document.languageId)
+    && Boolean(vscode.workspace.getWorkspaceFolder(document.uri));
+}
+
+/**
+ * 実行中保存の追随再実行を許可するか判定する。
+ * @param filePath 対象ファイルパスを表す。
+ * @returns 追随再実行する場合は true を返す。
+ */
+function shouldQueueSaveCheckWhileRunning(filePath: string): boolean {
+  return !AUTO_SAVE_NON_QUEUE_EXTENSIONS.has(path.extname(filePath).toLowerCase());
 }
 
 /**
@@ -436,6 +423,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const saveCheckScheduler = new SaveCheckScheduler({
     debounceMilliseconds: SAVE_DEBOUNCE_MILLISECONDS,
     suppressionMilliseconds: SAVE_SUPPRESSION_MILLISECONDS,
+    shouldQueueDuringRun: shouldQueueSaveCheckWhileRunning,
     executeCheck: async(filePath: string) => {
       const workspaceFolder = getWorkspaceFolderForUri(vscode.Uri.file(filePath));
       if (!workspaceFolder) {

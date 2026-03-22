@@ -6,6 +6,8 @@ export interface SaveCheckSchedulerOptions {
   debounceMilliseconds: number;
   /** 自己再帰抑止時間を表す。 */
   suppressionMilliseconds: number;
+  /** 実行中保存の追随再実行可否を判定する。 */
+  shouldQueueDuringRun?: (filePath: string) => boolean;
   /** 実際のチェック処理を表す。 */
   executeCheck: (filePath: string) => Promise<void>;
 }
@@ -19,6 +21,12 @@ export class SaveCheckScheduler {
 
   /** ファイルごとの世代番号を表す。 */
   private readonly generations = new Map<string, number>();
+
+  /** 実行完了後に追随実行すべき世代番号を表す。 */
+  private readonly queuedGenerations = new Map<string, number>();
+
+  /** 実行中のファイル一覧を表す。 */
+  private readonly runningFiles = new Set<string>();
 
   /** ファイルごとの抑止期限を表す。 */
   private readonly suppressedUntil = new Map<string, number>();
@@ -48,6 +56,13 @@ export class SaveCheckScheduler {
     const nextGeneration = (this.generations.get(filePath) || 0) + 1;
     this.generations.set(filePath, nextGeneration);
 
+    if (this.runningFiles.has(filePath)) {
+      if (this.shouldQueueDuringRun(filePath)) {
+        this.queuedGenerations.set(filePath, nextGeneration);
+      }
+      return;
+    }
+
     const existingTimer = this.pendingTimers.get(filePath);
     if (existingTimer) {
       clearTimeout(existingTimer);
@@ -69,6 +84,8 @@ export class SaveCheckScheduler {
     }
     this.pendingTimers.clear();
     this.generations.clear();
+    this.queuedGenerations.clear();
+    this.runningFiles.clear();
     this.suppressedUntil.clear();
   }
 
@@ -84,10 +101,46 @@ export class SaveCheckScheduler {
     }
 
     this.pendingTimers.delete(filePath);
-    this.suppressedUntil.set(
-      filePath,
-      Date.now() + this.options.suppressionMilliseconds,
-    );
-    await this.options.executeCheck(filePath);
+    if (this.runningFiles.has(filePath)) {
+      if (this.shouldQueueDuringRun(filePath)) {
+        this.queuedGenerations.set(filePath, generation);
+      }
+      return;
+    }
+
+    this.runningFiles.add(filePath);
+    try {
+      await this.options.executeCheck(filePath);
+    } finally {
+      this.runningFiles.delete(filePath);
+      const queuedGeneration = this.queuedGenerations.get(filePath);
+      if (typeof queuedGeneration === 'number' && queuedGeneration > generation) {
+        this.queuedGenerations.delete(filePath);
+        const timer = setTimeout(() => {
+          void this.runScheduledCheck(filePath, queuedGeneration);
+        }, this.options.debounceMilliseconds);
+        this.pendingTimers.set(filePath, timer);
+        return;
+      }
+
+      this.queuedGenerations.delete(filePath);
+      this.suppressedUntil.set(
+        filePath,
+        Date.now() + this.options.suppressionMilliseconds,
+      );
+    }
+  }
+
+  /**
+   * 実行中保存の追随再実行可否を返す。
+   * @param filePath 対象ファイルパスを表す。
+   * @returns 追随再実行する場合は true を返す。
+   */
+  private shouldQueueDuringRun(filePath: string): boolean {
+    if (typeof this.options.shouldQueueDuringRun !== 'function') {
+      return true;
+    }
+
+    return this.options.shouldQueueDuringRun(filePath);
   }
 }

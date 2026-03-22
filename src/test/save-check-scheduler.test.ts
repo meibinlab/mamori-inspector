@@ -15,6 +15,22 @@ function wait(milliseconds: number): Promise<void> {
 }
 
 /**
+ * 条件を満たすまで待機する。
+ * @param predicate 判定関数を表す。
+ * @returns 条件成立を待つ Promise を返す。
+ */
+async function waitFor(predicate: () => boolean): Promise<void> {
+  for (let index = 0; index < 50; index += 1) {
+    if (predicate()) {
+      return;
+    }
+    await wait(10);
+  }
+
+  throw new Error('Timed out while waiting for scheduler state');
+}
+
+/**
  * 保存時チェックのスケジューラーテストを定義する。
  * @returns 返り値はない。
  */
@@ -68,5 +84,76 @@ suite('Save Check Scheduler Test Suite', () => {
     scheduler.dispose();
 
     assert.strictEqual(executionCount, 2);
+  });
+
+  /**
+   * 長時間実行中の再保存では完了後に最新状態だけ追随実行されること。
+   * @returns 実行完了を待つ Promise を返す。
+   */
+  test('Runs one follow-up check after repeated saves during a long-running check', async() => {
+    let executionCount = 0;
+    let resolveCurrentRun: (() => void) | undefined;
+    const scheduler = new SaveCheckScheduler({
+      debounceMilliseconds: 10,
+      suppressionMilliseconds: 40,
+      executeCheck: async() => {
+        executionCount += 1;
+        await new Promise<void>((resolve) => {
+          resolveCurrentRun = resolve;
+        });
+      },
+    });
+
+    scheduler.schedule('src/main/java/App.java');
+    await waitFor(() => executionCount === 1);
+    scheduler.schedule('src/main/java/App.java');
+    scheduler.schedule('src/main/java/App.java');
+
+    if (!resolveCurrentRun) {
+      throw new Error('First run resolver was not prepared');
+    }
+    resolveCurrentRun();
+    await waitFor(() => executionCount === 2);
+
+    if (!resolveCurrentRun) {
+      throw new Error('Second run resolver was not prepared');
+    }
+    resolveCurrentRun();
+    await wait(60);
+    assert.strictEqual(executionCount, 2);
+    scheduler.dispose();
+  });
+
+  /**
+   * 実行中追随が無効な場合は自己再帰由来の再保存を無視できること。
+   * @returns 実行完了を待つ Promise を返す。
+   */
+  test('Skips follow-up checks during a run when queued reruns are disabled', async() => {
+    let executionCount = 0;
+    let resolveCurrentRun: (() => void) | undefined;
+    const scheduler = new SaveCheckScheduler({
+      debounceMilliseconds: 10,
+      suppressionMilliseconds: 40,
+      shouldQueueDuringRun: () => false,
+      executeCheck: async() => {
+        executionCount += 1;
+        await new Promise<void>((resolve) => {
+          resolveCurrentRun = resolve;
+        });
+      },
+    });
+
+    scheduler.schedule('src/main/web/main.js');
+    await waitFor(() => executionCount === 1);
+    scheduler.schedule('src/main/web/main.js');
+
+    if (!resolveCurrentRun) {
+      throw new Error('Run resolver was not prepared');
+    }
+    resolveCurrentRun();
+    await wait(60);
+    scheduler.dispose();
+
+    assert.strictEqual(executionCount, 1);
   });
 });
