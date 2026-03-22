@@ -226,6 +226,90 @@ function resolveSingleWebToolConfiguration(
 }
 
 /**
+ * Web 系ツールの解決結果一覧を返す。
+ * @param {string} currentWorkingDirectory 現在の作業ディレクトリを表す。
+ * @param {{eslintConfig?: string, stylelintConfig?: string, htmlhintConfig?: string}} options CLI オプションを表す。
+ * @param {{eslint: object, stylelint: object, htmlhint: object}} discoveredWebConfigurations 探索結果を表す。
+ * @param {{modules?: object[]}} buildDefinitions build-definition 抽出結果を表す。
+ * @returns {{eslint: object, stylelint: object, htmlhint: object}} 解決結果を返す。
+ */
+function buildWebResolution(
+  currentWorkingDirectory,
+  options,
+  discoveredWebConfigurations,
+  buildDefinitions,
+) {
+  return {
+    eslint: resolveSingleWebToolConfiguration(
+      'eslint',
+      currentWorkingDirectory,
+      options.eslintConfig,
+      discoveredWebConfigurations.eslint,
+      buildDefinitions,
+    ),
+    stylelint: resolveSingleWebToolConfiguration(
+      'stylelint',
+      currentWorkingDirectory,
+      options.stylelintConfig,
+      discoveredWebConfigurations.stylelint,
+      buildDefinitions,
+    ),
+    htmlhint: resolveSingleWebToolConfiguration(
+      'htmlhint',
+      currentWorkingDirectory,
+      options.htmlhintConfig,
+      discoveredWebConfigurations.htmlhint,
+      buildDefinitions,
+    ),
+  };
+}
+
+/**
+ * workspace scope 向けの Web モジュール解決結果一覧を返す。
+ * @param {string} currentWorkingDirectory 現在の作業ディレクトリを表す。
+ * @param {{scope: string, eslintConfig?: string, stylelintConfig?: string, htmlhintConfig?: string}} options CLI オプションを表す。
+ * @param {{web?: object}} defaults 既定設定を表す。
+ * @param {{modules?: object[]}} buildDefinitions build-definition 抽出結果を表す。
+ * @returns {Array<{moduleRoot: string, web: {eslint: object, stylelint: object, htmlhint: object}}>} モジュール解決結果を返す。
+ */
+function resolveWorkspaceWebModules(currentWorkingDirectory, options, defaults, buildDefinitions) {
+  if (options.scope !== 'workspace') {
+    return [];
+  }
+
+  if (options.eslintConfig || options.stylelintConfig || options.htmlhintConfig) {
+    return [{
+      moduleRoot: currentWorkingDirectory,
+      web: buildWebResolution(
+        currentWorkingDirectory,
+        options,
+        {
+          eslint: { enabled: false, source: 'default', locationType: 'disabled' },
+          stylelint: { enabled: false, source: 'default', locationType: 'disabled' },
+          htmlhint: { enabled: false, source: 'default', locationType: 'disabled' },
+        },
+        buildDefinitions,
+      ),
+    }];
+  }
+
+  const discoveredWorkspaceModules = webConfigDetector.discoverWorkspaceWebModules(
+    currentWorkingDirectory,
+    defaults.web || {},
+  );
+
+  return discoveredWorkspaceModules.map((moduleResolution) => ({
+    moduleRoot: moduleResolution.moduleRoot,
+    web: buildWebResolution(
+      moduleResolution.moduleRoot,
+      options,
+      moduleResolution.web,
+      buildDefinitions,
+    ),
+  }));
+}
+
+/**
  * CLI 向けの設定解決結果を返す。
  * @param {{cwd?: string, mode: string, scope: string, files?: string[], semgrepConfig?: string, semgrepRules?: string[], eslintConfig?: string, stylelintConfig?: string, htmlhintConfig?: string}} options CLI オプションを表す。
  * @returns {{cwd: string, mode: string, scope: string, files: string[], resolutionOrder: string[], semgrep: object, web: object}} 解決結果を返す。
@@ -251,6 +335,18 @@ function resolveRunConfiguration(options) {
     currentWorkingDirectory,
     defaults.web || {},
   );
+  const webResolution = buildWebResolution(
+    currentWorkingDirectory,
+    options,
+    discoveredWebConfigurations,
+    buildDefinitions,
+  );
+  const workspaceWebModules = resolveWorkspaceWebModules(
+    currentWorkingDirectory,
+    options,
+    defaults,
+    buildDefinitions,
+  );
   // Semgrep の解決結果を表す
   const semgrepResolution = resolveSemgrepConfiguration(
     startDirectories,
@@ -260,9 +356,13 @@ function resolveRunConfiguration(options) {
   );
   // 実行計画を表す
   const executionPlan = executionPlanDetector.buildExecutionPlan({
+    cwd: currentWorkingDirectory,
     mode: options.mode,
     scope: options.scope,
+    files,
     buildDefinition: buildDefinitions,
+    web: webResolution,
+    webModules: workspaceWebModules,
   });
 
   return {
@@ -273,38 +373,19 @@ function resolveRunConfiguration(options) {
     buildDefinition: buildDefinitions,
     executionPlan,
     commandPlan: commandPlanDetector.buildCommandPlan({
+      cwd: currentWorkingDirectory,
       mode: options.mode,
       scope: options.scope,
       files,
       buildDefinition: buildDefinitions,
       executionPlan,
       semgrep: semgrepResolution,
+      web: webResolution,
+      webModules: workspaceWebModules,
     }),
     resolutionOrder: ['explicit', 'buildDefinition', 'discovery', 'default'],
     semgrep: semgrepResolution,
-    web: {
-      eslint: resolveSingleWebToolConfiguration(
-        'eslint',
-        currentWorkingDirectory,
-        options.eslintConfig,
-        discoveredWebConfigurations.eslint,
-        buildDefinitions,
-      ),
-      stylelint: resolveSingleWebToolConfiguration(
-        'stylelint',
-        currentWorkingDirectory,
-        options.stylelintConfig,
-        discoveredWebConfigurations.stylelint,
-        buildDefinitions,
-      ),
-      htmlhint: resolveSingleWebToolConfiguration(
-        'htmlhint',
-        currentWorkingDirectory,
-        options.htmlhintConfig,
-        discoveredWebConfigurations.htmlhint,
-        buildDefinitions,
-      ),
-    },
+    web: webResolution,
   };
 }
 

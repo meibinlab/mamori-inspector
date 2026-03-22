@@ -6,7 +6,38 @@ const fs = require('fs');
 const path = require('path');
 
 // コマンド計画を組み立てる対象ツール一覧を表す
-const SUPPORTED_COMMAND_TOOLS = new Set(['checkstyle', 'pmd', 'semgrep', 'spotless', 'cpd', 'spotbugs']);
+const SUPPORTED_COMMAND_TOOLS = new Set([
+  'checkstyle',
+  'pmd',
+  'semgrep',
+  'spotless',
+  'cpd',
+  'spotbugs',
+  'prettier',
+  'eslint',
+  'stylelint',
+  'htmlhint',
+]);
+
+// ツールごとの対象拡張子一覧を表す
+const TOOL_FILE_EXTENSIONS = {
+  prettier: new Set(['.js', '.cjs', '.mjs', '.jsx', '.css', '.scss', '.sass', '.html', '.htm']),
+  eslint: new Set(['.js', '.cjs', '.mjs', '.jsx']),
+  stylelint: new Set(['.css', '.scss', '.sass']),
+  htmlhint: new Set(['.html', '.htm']),
+};
+
+// ワークスペース探索時に除外するディレクトリ一覧を表す
+const DEFAULT_IGNORED_DIRECTORIES = new Set([
+  '.git',
+  '.gradle',
+  '.mamori',
+  'build',
+  'dist',
+  'node_modules',
+  'out',
+  'target',
+]);
 
 /**
  * 対象ファイルがモジュール配下か判定する。
@@ -34,6 +65,166 @@ function resolveModuleFiles(moduleRoot, files) {
   }
 
   return files.filter((filePath) => isInsideModule(moduleRoot, filePath));
+}
+
+/**
+ * 対象拡張子に一致するか判定する。
+ * @param {string} filePath 対象ファイルを表す。
+ * @param {Set<string>|undefined} extensions 許可拡張子一覧を表す。
+ * @returns {boolean} 一致する場合は true を返す。
+ */
+function hasMatchingExtension(filePath, extensions) {
+  return Boolean(extensions) && extensions.has(path.extname(filePath).toLowerCase());
+}
+
+/**
+ * ディレクトリ配下から対象拡張子のファイル一覧を収集する。
+ * @param {string} moduleRoot モジュールルートを表す。
+ * @param {Set<string>} extensions 対象拡張子一覧を表す。
+ * @returns {string[]} 対象ファイル一覧を返す。
+ */
+function discoverWorkspaceFiles(moduleRoot, extensions, excludedDirectories = []) {
+  const discoveredFiles = [];
+  const pendingDirectories = [moduleRoot];
+
+  while (pendingDirectories.length > 0) {
+    const currentDirectory = pendingDirectories.pop();
+    let entries = [];
+    try {
+      entries = fs.readdirSync(currentDirectory, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      const entryPath = path.join(currentDirectory, entry.name);
+      if (entry.isDirectory()) {
+        if (
+          !DEFAULT_IGNORED_DIRECTORIES.has(entry.name)
+          && !excludedDirectories.includes(entryPath)
+        ) {
+          pendingDirectories.push(entryPath);
+        }
+        continue;
+      }
+
+      if (entry.isFile() && hasMatchingExtension(entryPath, extensions)) {
+        discoveredFiles.push(entryPath);
+      }
+    }
+  }
+
+  return discoveredFiles;
+}
+
+/**
+ * ツールごとの対象ファイル一覧を返す。
+ * @param {string} moduleRoot モジュールルートを表す。
+ * @param {string[]} files 対象ファイル一覧を表す。
+ * @param {string} toolName ツール名を表す。
+ * @returns {string[]} 対象ファイル一覧を返す。
+ */
+function resolveToolFiles(moduleRoot, files, toolName, excludedDirectories = []) {
+  const extensions = TOOL_FILE_EXTENSIONS[toolName];
+
+  if (!extensions) {
+    return resolveModuleFiles(moduleRoot, files);
+  }
+
+  const moduleFiles = resolveModuleFiles(moduleRoot, files);
+  if (moduleFiles.length > 0) {
+    return moduleFiles.filter((filePath) => hasMatchingExtension(filePath, extensions));
+  }
+
+  return discoverWorkspaceFiles(moduleRoot, extensions, excludedDirectories);
+}
+
+/**
+ * Web ツールの設定引数一覧を返す。
+ * @param {string} toolName ツール名を表す。
+ * @param {{path?: string, locationType?: string}|undefined} toolResolution 設定解決結果を表す。
+ * @returns {string[]} 設定引数一覧を返す。
+ */
+function buildWebConfigArguments(toolName, toolResolution) {
+  if (!toolResolution || toolResolution.locationType !== 'file' || !toolResolution.path) {
+    return [];
+  }
+
+  if (toolName === 'eslint' || toolName === 'stylelint' || toolName === 'htmlhint') {
+    return ['--config', toolResolution.path];
+  }
+
+  return [];
+}
+
+/**
+ * Web ツールのコマンド計画を返す。
+ * @param {string} toolName ツール名を表す。
+ * @param {object} moduleDefinition モジュール定義を表す。
+ * @param {string[]} toolFiles 対象ファイル一覧を表す。
+ * @param {{web?: object}} options 補助オプションを表す。
+ * @returns {{tool: string, enabled: boolean, phase: string, command?: string, args?: string[], cwd?: string, reason?: string}|undefined} コマンド計画を返す。
+ */
+function buildWebCommandEntry(toolName, moduleDefinition, toolFiles, options) {
+  if (toolFiles.length === 0) {
+    return {
+      tool: toolName,
+      enabled: false,
+      phase: toolName === 'prettier' ? 'formatter' : 'check',
+      reason: 'no-target-files',
+    };
+  }
+
+  if (toolName === 'prettier') {
+    return {
+      tool: 'prettier',
+      enabled: true,
+      phase: 'formatter',
+      command: 'prettier',
+      args: ['--write', ...toolFiles],
+      cwd: moduleDefinition.moduleRoot,
+    };
+  }
+
+  const toolResolution = options.web && options.web[toolName]
+    ? options.web[toolName]
+    : undefined;
+  const configArguments = buildWebConfigArguments(toolName, toolResolution);
+
+  if (toolName === 'eslint') {
+    return {
+      tool: 'eslint',
+      enabled: true,
+      phase: 'check',
+      command: 'eslint',
+      args: [...configArguments, '--format', 'json', '--no-error-on-unmatched-pattern', ...toolFiles],
+      cwd: moduleDefinition.moduleRoot,
+    };
+  }
+
+  if (toolName === 'stylelint') {
+    return {
+      tool: 'stylelint',
+      enabled: true,
+      phase: 'check',
+      command: 'stylelint',
+      args: [...configArguments, '--formatter', 'json', '--allow-empty-input', ...toolFiles],
+      cwd: moduleDefinition.moduleRoot,
+    };
+  }
+
+  if (toolName === 'htmlhint') {
+    return {
+      tool: 'htmlhint',
+      enabled: true,
+      phase: 'check',
+      command: 'htmlhint',
+      args: [...configArguments, '--format', 'json', ...toolFiles],
+      cwd: moduleDefinition.moduleRoot,
+    };
+  }
+
+  return undefined;
 }
 
 /**
@@ -182,7 +373,7 @@ function buildGradleArguments(toolName) {
  * @param {string[]} moduleFiles モジュール配下の対象ファイル一覧を表す。
  * @returns {{tool: string, enabled: boolean, phase: string, command?: string, args?: string[], cwd?: string, reason?: string}|undefined} コマンド計画を返す。
  */
-function buildCommandEntry(toolEntry, moduleDefinition, semgrepResolution, moduleFiles) {
+function buildCommandEntry(toolEntry, moduleDefinition, semgrepResolution, moduleFiles, options = {}) {
   if (!SUPPORTED_COMMAND_TOOLS.has(toolEntry.tool)) {
     return undefined;
   }
@@ -194,6 +385,13 @@ function buildCommandEntry(toolEntry, moduleDefinition, semgrepResolution, modul
       phase: toolEntry.phase || 'check',
       reason: toolEntry.status || 'disabled-by-plan',
     };
+  }
+
+  if (toolEntry.tool === 'prettier'
+    || toolEntry.tool === 'eslint'
+    || toolEntry.tool === 'stylelint'
+    || toolEntry.tool === 'htmlhint') {
+    return buildWebCommandEntry(toolEntry.tool, moduleDefinition, moduleFiles, options);
   }
 
   if (toolEntry.tool === 'semgrep') {
@@ -240,8 +438,7 @@ function buildCommandEntry(toolEntry, moduleDefinition, semgrepResolution, modul
  * @param {string[]} files 対象ファイル一覧を表す。
  * @returns {{moduleRoot: string, buildSystem: string, commands: object[], warnings: string[]}} コマンド計画を返す。
  */
-function buildModuleCommandPlan(modulePlan, moduleDefinition, semgrepResolution, files) {
-  const moduleFiles = resolveModuleFiles(moduleDefinition.moduleRoot, files);
+function buildModuleCommandPlan(modulePlan, moduleDefinition, semgrepResolution, files, options = {}) {
   const toolEntries = [
     ...(Array.isArray(modulePlan.formatters) ? modulePlan.formatters : []),
     ...(Array.isArray(modulePlan.checks) ? modulePlan.checks : []),
@@ -251,7 +448,21 @@ function buildModuleCommandPlan(modulePlan, moduleDefinition, semgrepResolution,
     moduleRoot: modulePlan.moduleRoot,
     buildSystem: modulePlan.buildSystem,
     commands: toolEntries
-      .map((toolEntry) => buildCommandEntry(toolEntry, moduleDefinition, semgrepResolution, moduleFiles))
+      .map((toolEntry) => buildCommandEntry(
+        toolEntry,
+        moduleDefinition,
+        semgrepResolution,
+        resolveToolFiles(
+          moduleDefinition.moduleRoot,
+          files,
+          toolEntry.tool,
+          Array.isArray(modulePlan.excludedDirectories) ? modulePlan.excludedDirectories : [],
+        ),
+        {
+          ...options,
+          web: modulePlan.web || options.web || {},
+        },
+      ))
       .filter((commandEntry) => Boolean(commandEntry)),
     warnings: Array.isArray(modulePlan.warnings) ? [...modulePlan.warnings] : [],
   };
@@ -259,7 +470,7 @@ function buildModuleCommandPlan(modulePlan, moduleDefinition, semgrepResolution,
 
 /**
  * execution plan から command plan を構築する。
- * @param {{mode: string, scope: string, files?: string[], buildDefinition?: {modules?: object[]}, executionPlan?: {modules?: object[]}, semgrep?: object}} options 生成条件を表す。
+ * @param {{mode: string, scope: string, cwd?: string, files?: string[], buildDefinition?: {modules?: object[]}, executionPlan?: {modules?: object[]}, semgrep?: object, web?: object}} options 生成条件を表す。
  * @returns {{mode: string, scope: string, modules: object[]}} コマンド計画を返す。
  */
 function buildCommandPlan(options) {
@@ -283,6 +494,10 @@ function buildCommandPlan(options) {
         moduleDefinition || { moduleRoot: modulePlan.moduleRoot, buildSystem: modulePlan.buildSystem },
         options.semgrep || {},
         Array.isArray(options.files) ? options.files : [],
+        {
+          cwd: options.cwd,
+          web: options.web || {},
+        },
       );
     }),
   };

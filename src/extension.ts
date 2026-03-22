@@ -16,7 +16,15 @@ const MANUAL_SARIF_OUTPUT = path.join('.mamori', 'out', 'combined.sarif');
 // 保存時実行向けの SARIF 出力先を表す
 const SAVE_SARIF_OUTPUT = path.join('.mamori', 'out', 'combined-save.sarif');
 // 保存時自動チェック対象の言語一覧を表す
-const AUTO_SAVE_LANGUAGE_IDS = new Set(['java']);
+const AUTO_SAVE_LANGUAGE_IDS = new Set([
+  'java',
+  'javascript',
+  'javascriptreact',
+  'css',
+  'scss',
+  'sass',
+  'html',
+]);
 // 保存時チェックのデバウンス時間を表す
 const SAVE_DEBOUNCE_MILLISECONDS = 400;
 // 自己再帰抑止時間を表す

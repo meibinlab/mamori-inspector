@@ -8,10 +8,16 @@ const path = require('path');
 const checkstyleAdapter = require('../adapters/checkstyle');
 // CPD adapter を表す
 const cpdAdapter = require('../adapters/cpd');
+// ESLint adapter を表す
+const eslintAdapter = require('../adapters/eslint');
+// htmlhint adapter を表す
+const htmlhintAdapter = require('../adapters/htmlhint');
 // PMD adapter を表す
 const pmdAdapter = require('../adapters/pmd');
 // SpotBugs adapter を表す
 const spotbugsAdapter = require('../adapters/spotbugs');
+// Stylelint adapter を表す
+const stylelintAdapter = require('../adapters/stylelint');
 // Semgrep adapter を表す
 const semgrepAdapter = require('../adapters/semgrep');
 // コマンド実行器を表す
@@ -54,6 +60,18 @@ function extractIssues(commandResult) {
 
   if (commandResult.tool === 'semgrep') {
     return semgrepAdapter.parseSemgrepSarif(commandResult.stdout || '');
+  }
+
+  if (commandResult.tool === 'eslint') {
+    return eslintAdapter.parseEslintJson(commandResult.stdout || '');
+  }
+
+  if (commandResult.tool === 'stylelint') {
+    return stylelintAdapter.parseStylelintJson(commandResult.stdout || '');
+  }
+
+  if (commandResult.tool === 'htmlhint') {
+    return htmlhintAdapter.parseHtmlhintJson(commandResult.stdout || '');
   }
 
   return [];
@@ -193,6 +211,60 @@ function getExecutableExtensions(env) {
 }
 
 /**
+ * 優先的に追加する Node 実行パス一覧を返す。
+ * @param {string|undefined} currentWorkingDirectory 実行時の作業ディレクトリを表す。
+ * @returns {string[]} 優先パス一覧を返す。
+ */
+function buildPreferredNodePaths(currentWorkingDirectory) {
+  const preferredPaths = [];
+  const seenPaths = new Set();
+  const resolvedCwd = path.resolve(currentWorkingDirectory || process.cwd());
+  const workspaceRoot = path.resolve(process.cwd());
+  let currentDirectory = resolvedCwd;
+
+  while (true) {
+    const nodeBinPath = path.join(currentDirectory, 'node_modules', '.bin');
+    if (!seenPaths.has(nodeBinPath)) {
+      seenPaths.add(nodeBinPath);
+      preferredPaths.push(nodeBinPath);
+    }
+
+    if (currentDirectory === workspaceRoot) {
+      break;
+    }
+
+    const parentDirectory = path.dirname(currentDirectory);
+    if (parentDirectory === currentDirectory) {
+      break;
+    }
+    currentDirectory = parentDirectory;
+  }
+
+  const mamoriNodeBinPath = path.join(workspaceRoot, '.mamori', 'node', 'node_modules', '.bin');
+  if (!seenPaths.has(mamoriNodeBinPath)) {
+    preferredPaths.push(mamoriNodeBinPath);
+  }
+
+  return preferredPaths;
+}
+
+/**
+ * コマンド実行用の環境変数を返す。
+ * @param {string|undefined} currentWorkingDirectory 実行時の作業ディレクトリを表す。
+ * @param {NodeJS.ProcessEnv} env 元の環境変数を表す。
+ * @returns {NodeJS.ProcessEnv} 調整済み環境変数を返す。
+ */
+function buildCommandEnvironment(currentWorkingDirectory, env) {
+  const inheritedPath = env.PATH || '';
+  const preferredPaths = buildPreferredNodePaths(currentWorkingDirectory);
+
+  return {
+    ...env,
+    PATH: [...preferredPaths, inheritedPath].filter((value) => Boolean(value)).join(path.delimiter),
+  };
+}
+
+/**
  * コマンドが実行可能か判定する。
  * @param {string} command 実行コマンドを表す。
  * @param {string|undefined} cwd 作業ディレクトリを表す。
@@ -246,11 +318,13 @@ function canResolveCommand(command, cwd, env) {
  * @returns {Promise<{moduleRoot: string, tool: string, status: string, command?: string, args?: string[], exitCode?: number, stdout?: string, stderr?: string, message?: string}>} 実行結果を返す。
  */
 async function executeCommandEntry(moduleRoot, commandEntry, executor) {
+  const commandEnvironment = buildCommandEnvironment(commandEntry.cwd, process.env);
+
   if (!commandEntry.enabled) {
     return buildSkippedCommandResult(moduleRoot, commandEntry);
   }
 
-  if (!canResolveCommand(commandEntry.command, commandEntry.cwd, process.env)) {
+  if (!canResolveCommand(commandEntry.command, commandEntry.cwd, commandEnvironment)) {
     return {
       moduleRoot,
       tool: commandEntry.tool,
@@ -265,7 +339,7 @@ async function executeCommandEntry(moduleRoot, commandEntry, executor) {
   try {
     const result = await executor(commandEntry.command, commandEntry.args || [], {
       cwd: commandEntry.cwd,
-      env: process.env,
+      env: commandEnvironment,
       timeoutMs: 30000,
     });
 
