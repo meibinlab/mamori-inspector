@@ -10,7 +10,13 @@
     "Other"
   ],
   "activationEvents": [
-    "onLanguage:java"
+    "onLanguage:java",
+    "onLanguage:javascript",
+    "onLanguage:javascriptreact",
+    "onLanguage:css",
+    "onLanguage:scss",
+    "onLanguage:sass",
+    "onLanguage:html"
   ],
   "main": "./out/extension.js",
   "contributes": {
