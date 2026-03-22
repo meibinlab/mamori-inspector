@@ -1,6 +1,9 @@
 import { exec } from 'node:child_process';
 import { spawn } from 'node:child_process';
 
+// ローカルで隔離実行を有効化する環境変数名を表す
+const ISOLATED_TEST_ENVIRONMENT_VARIABLE = 'MAMORI_VSCODE_TEST_ISOLATED';
+
 /**
  * シェルコマンドを実行して標準出力を取得する。
  * @param {string} command 実行コマンドを表す。
@@ -42,9 +45,12 @@ async function hasRunningCodeProcess() {
 async function run() {
   // 先に起動中の VS Code を検出する
   const hasCodeProcess = await hasRunningCodeProcess();
+  const childEnvironment = { ...process.env };
+
   if (hasCodeProcess) {
+    childEnvironment[ISOLATED_TEST_ENVIRONMENT_VARIABLE] = 'true';
     process.stderr.write(
-      '警告: 起動中の VS Code を検出しました。既存セッションの影響で統合テストが不安定になる可能性がありますが、このまま続行します。\n',
+      '警告: 起動中の VS Code を検出しました。統合テストは隔離モードで続行します。\n',
     );
   }
 
@@ -52,6 +58,7 @@ async function run() {
   const child = spawn('npx', ['vscode-test'], {
     stdio: 'inherit',
     shell: true,
+    env: childEnvironment,
   });
 
   return await new Promise((resolve) => {

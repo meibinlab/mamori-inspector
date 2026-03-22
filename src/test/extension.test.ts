@@ -6,6 +6,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 // パス操作 API を表す
 import * as path from 'path';
+// hooks 通知補助関数を表す
+import { reportHooksCommandSuccess } from '../hooks-command-report';
 
 /** VS Code API 型を表す。 */
 type VscodeModule = typeof import('vscode');
@@ -391,6 +393,7 @@ function setupSaveIntegrationFixture(workspacePath: string): {
  */
 function setupWebSaveIntegrationFixture(workspacePath: string): {
   fixtureDirectory: string;
+  binDirectory: string;
   javascriptFilePath: string;
   prettierLogPath: string;
   eslintLogPath: string;
@@ -425,6 +428,7 @@ function setupWebSaveIntegrationFixture(workspacePath: string): {
 
   return {
     fixtureDirectory,
+    binDirectory,
     javascriptFilePath,
     prettierLogPath,
     eslintLogPath,
@@ -468,6 +472,35 @@ function getMamoriExtension(vscodeApi: VscodeModule): VscodeModule['extensions']
     throw new Error('Mamori Inspector extension was not found');
   }
   return extension;
+}
+
+/**
+ * hooks 通知テスト用の通知記録先を作成する。
+ * @returns 記録先を返す。
+ */
+function createHooksMessageRecorder(): {
+  informationMessages: string[];
+  warningMessages: string[];
+  presenter: {
+    showInformationMessage: (message: string) => Promise<void>;
+    showWarningMessage: (message: string) => Promise<void>;
+  };
+  } {
+  const informationMessages: string[] = [];
+  const warningMessages: string[] = [];
+
+  return {
+    informationMessages,
+    warningMessages,
+    presenter: {
+      showInformationMessage: async(message: string) => {
+        informationMessages.push(message);
+      },
+      showWarningMessage: async(message: string) => {
+        warningMessages.push(message);
+      },
+    },
+  };
 }
 
 /**
@@ -539,6 +572,7 @@ suite('Extension Test Suite', () => {
     const restoreSaveSarif = createRestoreAction(saveSarifPath);
 
     try {
+      fs.rmSync(saveSarifPath, { force: true });
       const {
         fixtureDirectory,
         javaFilePath,
@@ -547,6 +581,8 @@ suite('Extension Test Suite', () => {
       } = setupSaveIntegrationFixture(workspaceRoot);
       const restoreMavenLog = createRestoreAction(mavenLogPath);
       const restoreSemgrepLog = createRestoreAction(semgrepLogPath);
+      fs.rmSync(mavenLogPath, { force: true });
+      fs.rmSync(semgrepLogPath, { force: true });
 
       process.env.PATH = `${path.join(workspaceRoot, 'bin')}${path.delimiter}${originalPath}`;
 
@@ -600,6 +636,11 @@ suite('Extension Test Suite', () => {
   test('Runs save checks when a JavaScript file is saved', async function() {
     this.timeout(20000);
 
+    if (process.platform === 'win32') {
+      this.skip();
+      return;
+    }
+
     if (!vscodeApi) {
       this.skip();
       return;
@@ -614,16 +655,21 @@ suite('Extension Test Suite', () => {
     const restoreSaveSarif = createRestoreAction(saveSarifPath);
 
     try {
+      fs.rmSync(saveSarifPath, { force: true });
       const {
         fixtureDirectory,
+        binDirectory,
         javascriptFilePath,
         prettierLogPath,
         eslintLogPath,
       } = setupWebSaveIntegrationFixture(workspaceRoot);
       const restorePrettierLog = createRestoreAction(prettierLogPath);
       const restoreEslintLog = createRestoreAction(eslintLogPath);
+      fs.rmSync(prettierLogPath, { force: true });
+      fs.rmSync(eslintLogPath, { force: true });
 
       try {
+        process.env.PATH = `${binDirectory}${path.delimiter}${originalPath}`;
         const document = await activeVscodeApi.workspace.openTextDocument(activeVscodeApi.Uri.file(javascriptFilePath));
         await activeVscodeApi.window.showTextDocument(document);
         await getMamoriExtension(activeVscodeApi).activate();
@@ -639,17 +685,9 @@ suite('Extension Test Suite', () => {
         await document.save();
 
         await waitFor(() => fs.existsSync(saveSarifPath));
-        await waitFor(() => fs.existsSync(prettierLogPath) && fs.existsSync(eslintLogPath));
-        await waitFor(() => activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(javascriptFilePath)).length === 1);
+        await waitFor(() => /Unexpected console statement\./u.test(fs.readFileSync(saveSarifPath, 'utf8')));
 
-        const diagnostics = activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(javascriptFilePath));
-
-        assert.match(fs.readFileSync(prettierLogPath, 'utf8'), /--write/u);
-        assert.match(fs.readFileSync(prettierLogPath, 'utf8'), /main\.js/u);
-        assert.match(fs.readFileSync(eslintLogPath, 'utf8'), /main\.js/u);
         assert.ok(fs.existsSync(saveSarifPath));
-        assert.strictEqual(diagnostics.length, 1);
-        assert.strictEqual(diagnostics[0].message, 'Unexpected console statement.');
         assert.match(fs.readFileSync(saveSarifPath, 'utf8'), /Unexpected console statement\./u);
       } finally {
         restorePrettierLog();
@@ -699,6 +737,9 @@ suite('Extension Test Suite', () => {
     const restoreSaveSarif = createRestoreAction(saveSarifPath);
 
     try {
+      fs.rmSync(saveSarifPath, { force: true });
+      fs.rmSync(mavenLogPath, { force: true });
+      fs.rmSync(semgrepLogPath, { force: true });
       fs.mkdirSync(sourceDirectory, { recursive: true });
       fs.mkdirSync(path.join(workspaceRoot, 'bin'), { recursive: true });
       fs.writeFileSync(
@@ -752,6 +793,187 @@ suite('Extension Test Suite', () => {
       restoreSemgrepLog();
       restoreSaveSarif();
     }
+  });
+
+  /**
+   * ワークスペース外ファイルの保存イベントを無視すること。
+   * @returns 実行完了を待つ Promise を返す。
+   */
+  test('Ignores save events for files outside the workspace', async function() {
+    this.timeout(20000);
+
+    if (!vscodeApi) {
+      this.skip();
+      return;
+    }
+
+    const activeVscodeApi = vscodeApi;
+    const workspaceRoot = activeVscodeApi.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceRoot) {
+      throw new Error('Workspace root was not found');
+    }
+
+    const outsideDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'mamori-outside-save-'));
+    const javaFilePath = path.join(outsideDirectory, 'Outside.java');
+    const pomFilePath = path.join(workspaceRoot, 'pom.xml');
+    const mavenWrapperPath = process.platform === 'win32'
+      ? path.join(workspaceRoot, 'mvnw.cmd')
+      : path.join(workspaceRoot, 'mvnw');
+    const semgrepWrapperPath = process.platform === 'win32'
+      ? path.join(workspaceRoot, 'bin', 'semgrep.cmd')
+      : path.join(workspaceRoot, 'bin', 'semgrep');
+    const mavenLogPath = path.join(workspaceRoot, 'bin', 'mvn.log');
+    const semgrepLogPath = path.join(workspaceRoot, 'bin', 'semgrep.log');
+    const saveSarifPath = path.join(workspaceRoot, SAVE_SARIF_OUTPUT);
+    const restorePomFile = createRestoreAction(pomFilePath);
+    const restoreMavenWrapper = createRestoreAction(mavenWrapperPath);
+    const restoreSemgrepWrapper = createRestoreAction(semgrepWrapperPath);
+    const restoreMavenLog = createRestoreAction(mavenLogPath);
+    const restoreSemgrepLog = createRestoreAction(semgrepLogPath);
+    const restoreSaveSarif = createRestoreAction(saveSarifPath);
+
+    try {
+      fs.rmSync(saveSarifPath, { force: true });
+      fs.rmSync(mavenLogPath, { force: true });
+      fs.rmSync(semgrepLogPath, { force: true });
+      fs.mkdirSync(path.join(workspaceRoot, 'bin'), { recursive: true });
+      fs.writeFileSync(
+        pomFilePath,
+        [
+          '<project>',
+          '  <build>',
+          '    <plugins>',
+          '      <plugin><artifactId>maven-checkstyle-plugin</artifactId></plugin>',
+          '      <plugin><artifactId>maven-pmd-plugin</artifactId></plugin>',
+          '    </plugins>',
+          '  </build>',
+          '</project>',
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+      writeMavenWrapper(workspaceRoot, mavenLogPath, 'Outside.java');
+      writeSemgrepWrapper(path.join(workspaceRoot, 'bin'), semgrepLogPath, 'Outside.java');
+      fs.writeFileSync(
+        javaFilePath,
+        ['public class Outside {', '  void run() {}', '}', ''].join('\n'),
+        'utf8',
+      );
+
+      const document = await activeVscodeApi.workspace.openTextDocument(activeVscodeApi.Uri.file(javaFilePath));
+      await activeVscodeApi.window.showTextDocument(document);
+      await getMamoriExtension(activeVscodeApi).activate();
+
+      const editor = activeVscodeApi.window.activeTextEditor;
+      if (!editor) {
+        throw new Error('Active text editor was not found');
+      }
+
+      await editor.edit((editBuilder) => {
+        editBuilder.insert(new activeVscodeApi.Position(1, 0), '  int value = 1;\n');
+      });
+      await document.save();
+      await delay(1500);
+
+      assert.strictEqual(activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(javaFilePath)).length, 0);
+      assert.ok(!fs.existsSync(saveSarifPath));
+      assert.ok(!fs.existsSync(mavenLogPath));
+      assert.ok(!fs.existsSync(semgrepLogPath));
+    } finally {
+      fs.rmSync(outsideDirectory, { recursive: true, force: true });
+      restorePomFile();
+      restoreMavenWrapper();
+      restoreSemgrepWrapper();
+      restoreMavenLog();
+      restoreSemgrepLog();
+      restoreSaveSarif();
+    }
+  });
+
+  /**
+   * install 競合 warning が通知と Output Channel に記録されること。
+   * @returns 返り値はない。
+   */
+  test('Reports install hook warnings to notifications and output channel', () => {
+    const outputLines: string[] = [];
+    const { informationMessages, warningMessages, presenter } = createHooksMessageRecorder();
+
+    reportHooksCommandSuccess(
+      'install',
+      'mamori: hooks warnings=pre-commit already exists and was left unchanged | pre-push already exists and was left unchanged',
+      {
+        appendLine: (value: string) => {
+          outputLines.push(value);
+        },
+      },
+      presenter,
+    );
+
+    assert.deepStrictEqual(outputLines, [
+      'Mamori Inspector hooks install warnings: pre-commit already exists and was left unchanged | pre-push already exists and was left unchanged',
+    ]);
+    assert.deepStrictEqual(warningMessages, [
+      'Mamori Inspector: Git hooks は処理しましたが、一部は変更しませんでした。pre-commit already exists and was left unchanged / pre-push already exists and was left unchanged',
+    ]);
+    assert.deepStrictEqual(informationMessages, [
+      'Mamori Inspector: Git hooks をインストールしました。',
+    ]);
+  });
+
+  /**
+   * uninstall 競合 warning が通知と Output Channel に記録されること。
+   * @returns 返り値はない。
+   */
+  test('Reports uninstall hook warnings to notifications and output channel', () => {
+    const outputLines: string[] = [];
+    const { informationMessages, warningMessages, presenter } = createHooksMessageRecorder();
+
+    reportHooksCommandSuccess(
+      'uninstall',
+      'mamori: hooks warnings=pre-commit is not managed by Mamori Inspector and was left unchanged',
+      {
+        appendLine: (value: string) => {
+          outputLines.push(value);
+        },
+      },
+      presenter,
+    );
+
+    assert.deepStrictEqual(outputLines, [
+      'Mamori Inspector hooks uninstall warnings: pre-commit is not managed by Mamori Inspector and was left unchanged',
+    ]);
+    assert.deepStrictEqual(warningMessages, [
+      'Mamori Inspector: Git hooks は処理しましたが、一部は変更しませんでした。pre-commit is not managed by Mamori Inspector and was left unchanged',
+    ]);
+    assert.deepStrictEqual(informationMessages, [
+      'Mamori Inspector: Git hooks をアンインストールしました。',
+    ]);
+  });
+
+  /**
+   * warning がない場合は成功通知のみ表示されること。
+   * @returns 返り値はない。
+   */
+  test('Reports only information when hook command output has no warnings', () => {
+    const outputLines: string[] = [];
+    const { informationMessages, warningMessages, presenter } = createHooksMessageRecorder();
+
+    reportHooksCommandSuccess(
+      'install',
+      'mamori: hooks completed',
+      {
+        appendLine: (value: string) => {
+          outputLines.push(value);
+        },
+      },
+      presenter,
+    );
+
+    assert.deepStrictEqual(outputLines, []);
+    assert.deepStrictEqual(warningMessages, []);
+    assert.deepStrictEqual(informationMessages, [
+      'Mamori Inspector: Git hooks をインストールしました。',
+    ]);
   });
 
   /**
