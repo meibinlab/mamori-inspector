@@ -6,6 +6,10 @@
 
 ## [Unreleased]
 
+- なし
+
+## [0.1.0] - 2026-03-23
+
 ### Added
 - HTML 内の inline script を ESLint の対象に追加しました。save、pre-commit、pre-push の各経路で、一時ファイルへ抽出して元の HTML 位置へ診断を逆写像します。
 - HTML 内の inline style を Stylelint の対象に追加しました。save、pre-commit、pre-push の各経路で、一時ファイルへ抽出して元の HTML 位置へ診断を逆写像します。
