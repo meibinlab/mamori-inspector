@@ -17,6 +17,8 @@ const webConfigDetector = require('./web-config');
 
 // 既定設定ファイルの絶対パスを表す
 const DEFAULTS_PATH = path.join(__dirname, '..', 'config', 'defaults.json');
+// 組み込み Web 設定ディレクトリの絶対パスを表す
+const DEFAULT_CONFIG_DIRECTORY = path.dirname(DEFAULTS_PATH);
 
 /**
  * 既定設定を読み込む。
@@ -41,6 +43,52 @@ function normalizeExplicitPath(currentWorkingDirectory, configPath) {
   return path.isAbsolute(configPath)
     ? configPath
     : path.resolve(currentWorkingDirectory, configPath);
+}
+
+/**
+ * 組み込み設定ファイルの絶対パスを返す。
+ * @param {string|undefined} fallbackConfigPath 組み込み設定ファイルの相対パスを表す。
+ * @returns {string|undefined} 組み込み設定ファイルの絶対パスを返す。
+ */
+function resolveBundledConfigPath(fallbackConfigPath) {
+  if (typeof fallbackConfigPath !== 'string' || fallbackConfigPath.trim() === '') {
+    return undefined;
+  }
+
+  return path.join(DEFAULT_CONFIG_DIRECTORY, fallbackConfigPath);
+}
+
+/**
+ * 単一 Web ツールの組み込みデフォルト設定を返す。
+ * @param {string} toolName ツール名を表す。
+ * @param {{fallbackConfig?: string}|undefined} toolDefaults ツール既定値を表す。
+ * @param {{modules?: object[]}} buildDefinitions build-definition 抽出結果を表す。
+ * @returns {{enabled: boolean, source: string, locationType: string, path?: string, buildDefinition: object}} 解決結果を返す。
+ */
+function buildBundledWebToolConfiguration(toolName, toolDefaults, buildDefinitions) {
+  // 組み込み設定ファイルの絶対パスを表す
+  const bundledConfigPath = resolveBundledConfigPath(
+    toolDefaults && typeof toolDefaults.fallbackConfig === 'string'
+      ? toolDefaults.fallbackConfig
+      : undefined,
+  );
+
+  if (!bundledConfigPath) {
+    return {
+      enabled: false,
+      source: 'default',
+      locationType: 'disabled',
+      buildDefinition: buildToolDefinitionStatus(toolName, buildDefinitions),
+    };
+  }
+
+  return {
+    enabled: true,
+    source: 'default',
+    locationType: 'file',
+    path: bundledConfigPath,
+    buildDefinition: buildToolDefinitionStatus(toolName, buildDefinitions),
+  };
 }
 
 /**
@@ -200,6 +248,7 @@ function resolveSingleWebToolConfiguration(
   explicitConfig,
   discoveredConfiguration,
   buildDefinitions,
+  toolDefaults,
 ) {
   // 明示指定の設定ファイルを表す
   const explicitConfigPath = normalizeExplicitPath(
@@ -219,10 +268,14 @@ function resolveSingleWebToolConfiguration(
     };
   }
 
-  return {
-    ...discoveredConfiguration,
-    buildDefinition: buildToolDefinitionStatus(toolName, buildDefinitions) || buildDefinition,
-  };
+  if (discoveredConfiguration && discoveredConfiguration.enabled) {
+    return {
+      ...discoveredConfiguration,
+      buildDefinition: buildToolDefinitionStatus(toolName, buildDefinitions),
+    };
+  }
+
+  return buildBundledWebToolConfiguration(toolName, toolDefaults, buildDefinitions) || buildDefinition;
 }
 
 /**
@@ -238,6 +291,7 @@ function buildWebResolution(
   options,
   discoveredWebConfigurations,
   buildDefinitions,
+  webDefaults,
 ) {
   return {
     eslint: resolveSingleWebToolConfiguration(
@@ -246,6 +300,7 @@ function buildWebResolution(
       options.eslintConfig,
       discoveredWebConfigurations.eslint,
       buildDefinitions,
+      webDefaults && webDefaults.eslint ? webDefaults.eslint : undefined,
     ),
     stylelint: resolveSingleWebToolConfiguration(
       'stylelint',
@@ -253,6 +308,7 @@ function buildWebResolution(
       options.stylelintConfig,
       discoveredWebConfigurations.stylelint,
       buildDefinitions,
+      webDefaults && webDefaults.stylelint ? webDefaults.stylelint : undefined,
     ),
     htmlhint: resolveSingleWebToolConfiguration(
       'htmlhint',
@@ -260,6 +316,7 @@ function buildWebResolution(
       options.htmlhintConfig,
       discoveredWebConfigurations.htmlhint,
       buildDefinitions,
+      webDefaults && webDefaults.htmlhint ? webDefaults.htmlhint : undefined,
     ),
   };
 }
@@ -289,6 +346,7 @@ function resolveWorkspaceWebModules(currentWorkingDirectory, options, defaults, 
           htmlhint: { enabled: false, source: 'default', locationType: 'disabled' },
         },
         buildDefinitions,
+        defaults.web || {},
       ),
     }];
   }
@@ -305,6 +363,7 @@ function resolveWorkspaceWebModules(currentWorkingDirectory, options, defaults, 
       options,
       moduleResolution.web,
       buildDefinitions,
+      defaults.web || {},
     ),
   }));
 }
@@ -340,6 +399,7 @@ function resolveRunConfiguration(options) {
     options,
     discoveredWebConfigurations,
     buildDefinitions,
+    defaults.web || {},
   );
   const workspaceWebModules = resolveWorkspaceWebModules(
     currentWorkingDirectory,

@@ -2,7 +2,7 @@
   "name": "mamori-inspector",
   "displayName": "Mamori Inspector",
   "description": "Unified code inspection platform for VS Code",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "engines": {
     "vscode": "^1.109.0"
   },

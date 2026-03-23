@@ -10,6 +10,7 @@
   },
   "web": {
     "eslint": {
+      "fallbackConfig": "eslint.default.json",
       "configPatterns": [
         {
           "type": "exact",
@@ -75,6 +76,7 @@
       "packageJsonKey": "eslintConfig"
     },
     "stylelint": {
+      "fallbackConfig": "stylelint.default.json",
       "configPatterns": [
         {
           "type": "exact",
@@ -140,6 +142,7 @@
       "packageJsonKey": "stylelint"
     },
     "htmlhint": {
+      "fallbackConfig": "htmlhint.default.json",
       "configPatterns": [
         {
           "type": "exact",

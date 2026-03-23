@@ -167,6 +167,37 @@ function buildWebConfigArguments(toolName, toolResolution) {
 }
 
 /**
+ * Web ツールの追加環境変数を返す。
+ * @param {string} toolName ツール名を表す。
+ * @param {{source?: string}|undefined} toolResolution 設定解決結果を表す。
+ * @returns {NodeJS.ProcessEnv|undefined} 追加環境変数を返す。
+ */
+function buildWebCommandEnvironment(toolName, toolResolution) {
+  if (toolName === 'eslint' && toolResolution && toolResolution.source === 'default') {
+    return {
+      ESLINT_USE_FLAT_CONFIG: 'false',
+    };
+  }
+
+  return undefined;
+}
+
+/**
+ * Web ツール設定ファイルの除外対象パス一覧を返す。
+ * @param {{eslint?: object, stylelint?: object, htmlhint?: object}|undefined} webResolution Web 設定解決結果を表す。
+ * @returns {string[]} 除外対象パス一覧を返す。
+ */
+function resolveExcludedWebConfigPaths(webResolution) {
+  if (!webResolution) {
+    return [];
+  }
+
+  return Object.values(webResolution)
+    .map((toolResolution) => (toolResolution && toolResolution.path ? path.resolve(toolResolution.path) : ''))
+    .filter((toolPath) => Boolean(toolPath));
+}
+
+/**
  * Web ツールのコマンド計画を返す。
  * @param {string} toolName ツール名を表す。
  * @param {object} moduleDefinition モジュール定義を表す。
@@ -178,9 +209,9 @@ function buildWebCommandEntry(toolName, moduleDefinition, toolFiles, options) {
   const toolResolution = options.web && options.web[toolName]
     ? options.web[toolName]
     : undefined;
-  const filteredToolFiles = toolResolution && toolResolution.locationType === 'file' && toolResolution.path
-    ? toolFiles.filter((filePath) => path.resolve(filePath) !== path.resolve(toolResolution.path))
-    : toolFiles;
+  const commandEnvironment = buildWebCommandEnvironment(toolName, toolResolution);
+  const excludedConfigPaths = new Set(resolveExcludedWebConfigPaths(options.web));
+  const filteredToolFiles = toolFiles.filter((filePath) => !excludedConfigPaths.has(path.resolve(filePath)));
 
   if (filteredToolFiles.length === 0) {
     return {
@@ -215,6 +246,7 @@ function buildWebCommandEntry(toolName, moduleDefinition, toolFiles, options) {
       command: 'eslint',
       args: [...configArguments, '--format', 'json', '--no-error-on-unmatched-pattern', ...directFiles],
       cwd: moduleDefinition.moduleRoot,
+      env: commandEnvironment,
       directFiles,
       inlineHtmlFiles,
     };

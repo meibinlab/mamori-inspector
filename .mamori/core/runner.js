@@ -650,13 +650,20 @@ function buildPreferredNodePaths(currentWorkingDirectory) {
  * @returns {NodeJS.ProcessEnv} 調整済み環境変数を返す。
  */
 function buildCommandEnvironment(currentWorkingDirectory, env) {
-  const inheritedPath = env.PATH || '';
+  const inheritedPath = env.PATH || env.Path || '';
   const preferredPaths = buildPreferredNodePaths(currentWorkingDirectory);
+  const resolvedPath = [...preferredPaths, inheritedPath].filter((value) => Boolean(value)).join(path.delimiter);
 
-  return {
+  const resolvedEnvironment = {
     ...env,
-    PATH: [...preferredPaths, inheritedPath].filter((value) => Boolean(value)).join(path.delimiter),
+    PATH: resolvedPath,
   };
+
+  if (process.platform === 'win32') {
+    resolvedEnvironment.Path = resolvedPath;
+  }
+
+  return resolvedEnvironment;
 }
 
 /**
@@ -713,7 +720,11 @@ function canResolveCommand(command, cwd, env) {
  * @returns {Promise<{moduleRoot: string, tool: string, status: string, command?: string, args?: string[], exitCode?: number, stdout?: string, stderr?: string, message?: string}>} 実行結果を返す。
  */
 async function executeCommandEntry(moduleRoot, commandEntry, executor) {
-  const commandEnvironment = buildCommandEnvironment(commandEntry.cwd, process.env);
+  const baseEnvironment = {
+    ...process.env,
+    ...(commandEntry.env || {}),
+  };
+  const commandEnvironment = buildCommandEnvironment(commandEntry.cwd, baseEnvironment);
   let preparedCommand;
   let commandResult;
 

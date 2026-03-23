@@ -30,11 +30,11 @@
 
 チェック:
 - Java: Checkstyle / PMD / Semgrep
-- JavaScript: ESLint（設定がある場合のみ）
-- HTML 内 inline script: ESLint（設定がある場合のみ。対象は `src` なしで JavaScript と判定されたものに限る。HTML 本体は引き続き htmlhint）
-- CSS: Stylelint（設定がある場合のみ）
-- HTML 内 inline style: Stylelint（設定がある場合のみ。対象は CSS と判定されたものに限る。HTML 本体は引き続き htmlhint）
-- HTML: htmlhint（設定がある場合のみ）
+- JavaScript: ESLint（明示設定 → discovery → `package.json#eslintConfig` を優先し、無ければ Mamori 同梱の最小設定を使用）
+- HTML 内 inline script: ESLint（対象は `src` なしで JavaScript と判定されたものに限る。設定解決は明示設定 → discovery → `package.json#eslintConfig` → Mamori 同梱の最小設定。HTML 本体は引き続き htmlhint）
+- CSS: Stylelint（明示設定 → discovery → `package.json#stylelint` を優先し、無ければ Mamori 同梱の最小設定を使用）
+- HTML 内 inline style: Stylelint（対象は CSS と判定されたものに限る。設定解決は明示設定 → discovery → `package.json#stylelint` → Mamori 同梱の最小設定。HTML 本体は引き続き htmlhint）
+- HTML: htmlhint（明示設定 → discovery → `package.json#htmlhint` を優先し、無ければ Mamori 同梱の最小設定を使用）
 
 HTML inline script の扱い（確定）:
 - `src` を持たない inline script のみを一時 JavaScript ファイルへ抽出して ESLint 実行対象に含める
@@ -69,20 +69,20 @@ HTML inline style の扱い（確定）:
 
 チェック:
 - Java: Checkstyle / PMD / Semgrep
-- JavaScript: ESLint（設定がある場合のみ）
-- HTML 内 inline script: ESLint（設定がある場合のみ。対象は `src` なしで JavaScript と判定されたものに限る。HTML 本体は引き続き htmlhint）
-- CSS: Stylelint（設定がある場合のみ）
-- HTML 内 inline style: Stylelint（設定がある場合のみ。対象は CSS と判定されたものに限る。HTML 本体は引き続き htmlhint）
-- HTML: htmlhint（設定がある場合のみ）
+- JavaScript: ESLint（明示設定 → discovery → `package.json#eslintConfig` を優先し、無ければ Mamori 同梱の最小設定を使用）
+- HTML 内 inline script: ESLint（対象は `src` なしで JavaScript と判定されたものに限る。設定解決は明示設定 → discovery → `package.json#eslintConfig` → Mamori 同梱の最小設定。HTML 本体は引き続き htmlhint）
+- CSS: Stylelint（明示設定 → discovery → `package.json#stylelint` を優先し、無ければ Mamori 同梱の最小設定を使用）
+- HTML 内 inline style: Stylelint（対象は CSS と判定されたものに限る。設定解決は明示設定 → discovery → `package.json#stylelint` → Mamori 同梱の最小設定。HTML 本体は引き続き htmlhint）
+- HTML: htmlhint（明示設定 → discovery → `package.json#htmlhint` を優先し、無ければ Mamori 同梱の最小設定を使用）
 
 ### 3.3 pre-push（scope=workspace、失敗でブロック）
 チェック（デフォルト有効）:
 - Java: Checkstyle / PMD / Semgrep / CPD / SpotBugs
-- JavaScript: ESLint（設定がある場合のみ、デフォルト有効・設定でOFF可）
-- HTML 内 inline script: ESLint（設定がある場合のみ、デフォルト有効・設定でOFF可。対象は `src` なしで JavaScript と判定されたものに限る。HTML 本体は引き続き htmlhint）
-- CSS: Stylelint（設定がある場合のみ、デフォルト有効・設定でOFF可）
-- HTML 内 inline style: Stylelint（設定がある場合のみ、デフォルト有効・設定でOFF可。対象は CSS と判定されたものに限る。HTML 本体は引き続き htmlhint）
-- HTML: htmlhint（設定がある場合のみ、デフォルト有効・設定でOFF可）
+- JavaScript: ESLint（デフォルト有効・設定でOFF可。設定解決は明示設定 → discovery → `package.json#eslintConfig` → Mamori 同梱の最小設定）
+- HTML 内 inline script: ESLint（デフォルト有効・設定でOFF可。対象は `src` なしで JavaScript と判定されたものに限る。設定解決は明示設定 → discovery → `package.json#eslintConfig` → Mamori 同梱の最小設定。HTML 本体は引き続き htmlhint）
+- CSS: Stylelint（デフォルト有効・設定でOFF可。設定解決は明示設定 → discovery → `package.json#stylelint` → Mamori 同梱の最小設定）
+- HTML 内 inline style: Stylelint（デフォルト有効・設定でOFF可。対象は CSS と判定されたものに限る。設定解決は明示設定 → discovery → `package.json#stylelint` → Mamori 同梱の最小設定。HTML 本体は引き続き htmlhint）
+- HTML: htmlhint（デフォルト有効・設定でOFF可。設定解決は明示設定 → discovery → `package.json#htmlhint` → Mamori 同梱の最小設定）
 
 SpotBugsの例外仕様（確定）:
 - class files（例: `target/classes` や `build/classes/java/main`）が見つからない場合は警告ログを出してスキップし、pushは継続する
@@ -161,9 +161,11 @@ Java 17互換のpin例:
 - 無ければ `p/java` 固定
 
 ### 6.4 ESLint / Stylelint / htmlhint
-- 設定が見つかった時だけ有効化（無ければスキップ）
-- HTML の inline script は ESLint 設定が見つかった時だけ抽出・実行する
-- HTML の inline style は Stylelint 設定が見つかった時だけ抽出・実行する
+- 明示設定 → discovery → `package.json` 設定 → 組み込みデフォルト の順で解決する
+- 設定ファイルや `package.json` 設定が無い場合でも、Mamori 同梱の最小 ESLint / Stylelint / htmlhint 設定で有効化する
+- ESLint の組み込み最小設定は互換性を優先し、core rule のみで構成する
+- HTML の inline script は ESLint 設定解決後に抽出・実行する
+- HTML の inline style は Stylelint 設定解決後に抽出・実行する
 - 設定検出例:
   - ESLint: `eslint.config.*`、`.eslintrc*`、`package.json#eslintConfig`
   - Stylelint: `stylelint.config.*`、`.stylelintrc*`、`package.json#stylelint`

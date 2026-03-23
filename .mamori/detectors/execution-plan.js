@@ -210,7 +210,19 @@ function buildWebCheckEntry(toolName, hasTargetFiles, enabled) {
  */
 function shouldIncludeWebModule(options) {
   if (Array.isArray(options.webModules) && options.webModules.length > 0) {
-    return false;
+    if (options.scope !== 'workspace') {
+      return false;
+    }
+
+    if (options.webModules.some((moduleResolution) => moduleResolution.moduleRoot === options.cwd)) {
+      return false;
+    }
+
+    return hasWorkspaceFilesExcluding(
+      options.cwd,
+      WEB_FILE_EXTENSIONS.prettier,
+      options.webModules.map((moduleResolution) => moduleResolution.moduleRoot),
+    );
   }
 
   if (options.scope === 'file' || options.scope === 'staged') {
@@ -464,7 +476,13 @@ function buildExecutionPlan(options) {
   }
 
   if (shouldIncludeWebModule(options)) {
-    executionModules.push(buildWebExecutionPlan(options));
+    executionModules.push(buildWebExecutionPlan(
+      options,
+      undefined,
+      options.scope === 'workspace' && Array.isArray(options.webModules)
+        ? options.webModules.map((moduleResolution) => moduleResolution.moduleRoot)
+        : [],
+    ));
   }
 
   return {

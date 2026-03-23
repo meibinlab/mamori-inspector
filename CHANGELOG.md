@@ -8,6 +8,22 @@
 
 - なし
 
+## [0.2.0] - 2026-03-23
+
+### Added
+- Web checker の設定ファイルが無い場合でも動作する bundled minimal ESLint、Stylelint、htmlhint 設定を追加しました。
+- bundled fallback 設定、root と nested module の共存、Windows 実行経路を含む回帰テストを追加しました。
+
+### Changed
+- Web checker の設定解決順序を、明示設定、検出設定、`package.json` 設定、bundled minimal config に統一しました。
+- README、README.ja、仕様書を、bundled fallback と HTML inline check の挙動に合わせて更新しました。
+- 拡張テストを utility suite と integration suite に分離し、通常テストと統合テストの責務を整理しました。
+
+### Fixed
+- Windows で `PATH` と `Path` の両方を考慮して Web checker を解決できるようにしました。
+- nested module がある workspace でも、root 側の Web ファイルを fallback module として計画できるようにしました。
+- 統合テストで pending になっていた JavaScript 保存時検証と hooks 検証を安定して通るようにしました。
+
 ## [0.1.0] - 2026-03-23
 
 ### Added
