@@ -193,6 +193,301 @@ function writeWebCommandWrapper(
 }
 
 /**
+ * HTML inline script 向けの ESLint ラッパーを作成する。
+ * @param binDirectory ラッパーディレクトリを表す。
+ * @param outputFileName 出力ファイル名を表す。
+ * @param options ラッパー動作オプションを表す。
+ * @returns 返り値はない。
+ */
+function writeInlineHtmlEslintWrapper(
+  binDirectory: string,
+  outputFileName: string,
+  options: {
+    expectedExtension?: string;
+    requiredPackageJsonKey?: string;
+    stdout?: string;
+    exitCode?: number;
+  } = {},
+): void {
+  const outputPath = path.join(binDirectory, outputFileName);
+  const helperScriptPath = path.join(binDirectory, 'eslint-inline-wrapper.js');
+  const wrapperPath = process.platform === 'win32'
+    ? path.join(binDirectory, 'eslint.cmd')
+    : path.join(binDirectory, 'eslint');
+  const stdout = typeof options.stdout === 'string' ? options.stdout : '';
+  const exitCode = typeof options.exitCode === 'number' ? options.exitCode : 1;
+
+  fs.writeFileSync(
+    helperScriptPath,
+    [
+      'const fs = require("fs");',
+      'const path = require("path");',
+      'const logPath = process.argv[2];',
+      `const expectedExtension = ${JSON.stringify(options.expectedExtension || '')};`,
+      `const requiredPackageJsonKey = ${JSON.stringify(options.requiredPackageJsonKey || '')};`,
+      `const configuredExitCode = ${String(exitCode)};`,
+      `const configuredStdout = ${JSON.stringify(stdout)};`,
+      'const args = process.argv.slice(3);',
+      'const targetFiles = [];',
+      'for (let index = 0; index < args.length; index += 1) {',
+      '  const argument = args[index];',
+      '  if (argument === "--config" || argument === "--format") {',
+      '    index += 1;',
+      '    continue;',
+      '  }',
+      '  if (argument === "--no-error-on-unmatched-pattern") {',
+      '    continue;',
+      '  }',
+      '  if (argument.startsWith("-")) {',
+      '    continue;',
+      '  }',
+      '  targetFiles.push(argument);',
+      '}',
+      'fs.appendFileSync(logPath, `${args.join(" ")}\\n${targetFiles.map((filePath) => `TARGET=${filePath}`).join("\\n")}\\n`, "utf8");',
+      'for (const filePath of targetFiles) {',
+      '  if (expectedExtension && path.extname(filePath) !== expectedExtension) {',
+      '    process.stderr.write(`unexpected extension: ${path.extname(filePath)}`);',
+      '    process.exit(2);',
+      '  }',
+      '}',
+      'if (requiredPackageJsonKey) {',
+      '  for (const filePath of targetFiles) {',
+      '    let currentDirectory = path.dirname(filePath);',
+      '    let foundPackageJsonPath = "";',
+      '    while (true) {',
+      '      const packageJsonPath = path.join(currentDirectory, "package.json");',
+      '      if (fs.existsSync(packageJsonPath)) {',
+      '        const parsedPackageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));',
+      '        if (Object.prototype.hasOwnProperty.call(parsedPackageJson, requiredPackageJsonKey)) {',
+      '          foundPackageJsonPath = packageJsonPath;',
+      '          break;',
+      '        }',
+      '      }',
+      '      const parentDirectory = path.dirname(currentDirectory);',
+      '      if (parentDirectory === currentDirectory) {',
+      '        break;',
+      '      }',
+      '      currentDirectory = parentDirectory;',
+      '    }',
+      '    if (!foundPackageJsonPath) {',
+      '      process.stderr.write(`package.json key not found: ${requiredPackageJsonKey}`);',
+      '      process.exit(2);',
+      '    }',
+      '    fs.appendFileSync(logPath, `PACKAGE_JSON=${foundPackageJsonPath}\\n`, "utf8");',
+      '  }',
+      '}',
+      'if (configuredStdout) {',
+      '  process.stdout.write(configuredStdout);',
+      '  process.exit(configuredExitCode);',
+      '}',
+      'const results = [];',
+      'for (const filePath of targetFiles) {',
+      '  const text = fs.readFileSync(filePath, "utf8");',
+      '  let line = 1;',
+      '  let column = 1;',
+      '  for (const character of text) {',
+      '    if (/\\s/u.test(character)) {',
+      '      if (character === "\\n") {',
+      '        line += 1;',
+      '        column = 1;',
+      '      } else if (character !== "\\r") {',
+      '        column += 1;',
+      '      }',
+      '      continue;',
+      '    }',
+      '    break;',
+      '  }',
+      '  results.push({',
+      '    filePath,',
+      '    messages: [{',
+      '      ruleId: "semi",',
+      '      severity: 2,',
+      '      message: "Inline script finding.",',
+      '      line,',
+      '      column,',
+      '    }],',
+      '  });',
+      '  }',
+      'process.stdout.write(JSON.stringify(results));',
+      'process.exit(configuredExitCode);',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+
+  if (process.platform === 'win32') {
+    fs.writeFileSync(
+      wrapperPath,
+      `@echo off\r\nnode "${helperScriptPath}" "${outputPath}" %*\r\nexit /b %ERRORLEVEL%\r\n`,
+      'utf8',
+    );
+    return;
+  }
+
+  fs.writeFileSync(
+    wrapperPath,
+    `#!/bin/sh\nnode '${helperScriptPath}' '${outputPath}' "$@"\n`,
+    'utf8',
+  );
+  fs.chmodSync(wrapperPath, 0o755);
+}
+
+/**
+ * HTML inline style 向けの Stylelint ラッパーを作成する。
+ * @param binDirectory ラッパーディレクトリを表す。
+ * @param outputFileName 出力ファイル名を表す。
+ * @param options ラッパー動作オプションを表す。
+ * @returns 返り値はない。
+ */
+function writeInlineHtmlStylelintWrapper(
+  binDirectory: string,
+  outputFileName: string,
+  options: {
+    expectedExtension?: string;
+    requiredPackageJsonKey?: string;
+    stdout?: string;
+    stderr?: string;
+    exitCode?: number;
+    findingsStream?: 'stdout' | 'stderr';
+  } = {},
+): void {
+  const outputPath = path.join(binDirectory, outputFileName);
+  const helperScriptPath = path.join(binDirectory, 'stylelint-inline-wrapper.js');
+  const wrapperPath = process.platform === 'win32'
+    ? path.join(binDirectory, 'stylelint.cmd')
+    : path.join(binDirectory, 'stylelint');
+  const stdout = typeof options.stdout === 'string' ? options.stdout : '';
+  const stderr = typeof options.stderr === 'string' ? options.stderr : '';
+  const exitCode = typeof options.exitCode === 'number' ? options.exitCode : 2;
+  const findingsStream = options.findingsStream === 'stderr' ? 'stderr' : 'stdout';
+
+  fs.writeFileSync(
+    helperScriptPath,
+    [
+      'const fs = require("fs");',
+      'const path = require("path");',
+      'const logPath = process.argv[2];',
+      `const expectedExtension = ${JSON.stringify(options.expectedExtension || '')};`,
+      `const requiredPackageJsonKey = ${JSON.stringify(options.requiredPackageJsonKey || '')};`,
+      `const configuredExitCode = ${String(exitCode)};`,
+      `const configuredStdout = ${JSON.stringify(stdout)};`,
+      `const configuredStderr = ${JSON.stringify(stderr)};`,
+      `const findingsStream = ${JSON.stringify(findingsStream)};`,
+      'const args = process.argv.slice(3);',
+      'const targetFiles = [];',
+      'for (let index = 0; index < args.length; index += 1) {',
+      '  const argument = args[index];',
+      '  if (argument === "--config" || argument === "--formatter") {',
+      '    index += 1;',
+      '    continue;',
+      '  }',
+      '  if (argument === "--allow-empty-input") {',
+      '    continue;',
+      '  }',
+      '  if (argument.startsWith("-")) {',
+      '    continue;',
+      '  }',
+      '  targetFiles.push(argument);',
+      '}',
+      'fs.appendFileSync(logPath, `${args.join(" ")}\\n${targetFiles.map((filePath) => `TARGET=${filePath}`).join("\\n")}\\n`, "utf8");',
+      'for (const filePath of targetFiles) {',
+      '  if (expectedExtension && path.extname(filePath) !== expectedExtension) {',
+      '    process.stderr.write(`unexpected extension: ${path.extname(filePath)}`);',
+      '    process.exit(2);',
+      '  }',
+      '}',
+      'if (requiredPackageJsonKey) {',
+      '  for (const filePath of targetFiles) {',
+      '    let currentDirectory = path.dirname(filePath);',
+      '    let foundPackageJsonPath = "";',
+      '    while (true) {',
+      '      const packageJsonPath = path.join(currentDirectory, "package.json");',
+      '      if (fs.existsSync(packageJsonPath)) {',
+      '        const parsedPackageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));',
+      '        if (Object.prototype.hasOwnProperty.call(parsedPackageJson, requiredPackageJsonKey)) {',
+      '          foundPackageJsonPath = packageJsonPath;',
+      '          break;',
+      '        }',
+      '      }',
+      '      const parentDirectory = path.dirname(currentDirectory);',
+      '      if (parentDirectory === currentDirectory) {',
+      '        break;',
+      '      }',
+      '      currentDirectory = parentDirectory;',
+      '    }',
+      '    if (!foundPackageJsonPath) {',
+      '      process.stderr.write(`package.json key not found: ${requiredPackageJsonKey}`);',
+      '      process.exit(2);',
+      '    }',
+      '    fs.appendFileSync(logPath, `PACKAGE_JSON=${foundPackageJsonPath}\\n`, "utf8");',
+      '  }',
+      '}',
+      'if (configuredStdout) {',
+      '  process.stdout.write(configuredStdout);',
+      '}',
+      'if (configuredStderr) {',
+      '  process.stderr.write(configuredStderr);',
+      '}',
+      'if (configuredStdout || configuredStderr) {',
+      '  process.exit(configuredExitCode);',
+      '}',
+      'const results = [];',
+      'for (const filePath of targetFiles) {',
+      '  const text = fs.readFileSync(filePath, "utf8");',
+      '  let line = 1;',
+      '  let column = 1;',
+      '  for (const character of text) {',
+      '    if (/\\s/u.test(character)) {',
+      '      if (character === "\\n") {',
+      '        line += 1;',
+      '        column = 1;',
+      '      } else if (character !== "\\r") {',
+      '        column += 1;',
+      '      }',
+      '      continue;',
+      '    }',
+      '    break;',
+      '  }',
+      '  results.push({',
+      '    source: filePath,',
+      '    warnings: [{',
+      '      line,',
+      '      column,',
+      '      rule: "color-no-invalid-hex",',
+      '      severity: "error",',
+      "      text: 'Unexpected invalid hex color \"#12\" (color-no-invalid-hex)',",
+      '    }],',
+      '  });',
+      '}',
+      'if (findingsStream === "stderr") {',
+      '  process.stderr.write(JSON.stringify(results));',
+      '} else {',
+      '  process.stdout.write(JSON.stringify(results));',
+      '}',
+      'process.exit(configuredExitCode);',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+
+  if (process.platform === 'win32') {
+    fs.writeFileSync(
+      wrapperPath,
+      `@echo off\r\nnode "${helperScriptPath}" "${outputPath}" %*\r\nexit /b %ERRORLEVEL%\r\n`,
+      'utf8',
+    );
+    return;
+  }
+
+  fs.writeFileSync(
+    wrapperPath,
+    `#!/bin/sh\nnode '${helperScriptPath}' '${outputPath}' "$@"\n`,
+    'utf8',
+  );
+  fs.chmodSync(wrapperPath, 0o755);
+}
+
+/**
  * Maven 実行結果を返すテスト用ラッパーを作成する。
  * @param binDirectory ラッパーディレクトリを表す。
  * @param outputFileName 出力ファイル名を表す。
@@ -996,6 +1291,866 @@ suite('Mamori CLI Test Suite', () => {
   });
 
   /**
+   * pre-push で HTML inline style の Stylelint 診断を元 HTML に逆写像し、一時ファイルを削除すること。
+   * @returns 返り値はない。
+   */
+  test('Maps inline HTML Stylelint findings back to the source file and cleans temporary files', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const htmlDirectory = path.join(temporaryDirectory, 'public');
+    const htmlFilePath = path.join(htmlDirectory, 'index.html');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const stylelintLogPath = path.join(nodeBinDirectory, 'stylelint.log');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-inline-style.sarif');
+
+    fs.mkdirSync(htmlDirectory, { recursive: true });
+    fs.writeFileSync(
+      htmlFilePath,
+      [
+        '<!doctype html>',
+        '<html>',
+        '<body>',
+        '<style>body { color: #12; }</style>',
+        '</body>',
+        '</html>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    fs.writeFileSync(path.join(temporaryDirectory, 'stylelint.config.mjs'), 'export default {}\n', 'utf8');
+    fs.writeFileSync(path.join(temporaryDirectory, '.htmlhintrc'), '{"tag-pair": true}\n', 'utf8');
+    writeInlineHtmlStylelintWrapper(nodeBinDirectory, 'stylelint.log');
+    writeWebCommandWrapper(nodeBinDirectory, 'htmlhint', 'htmlhint.log');
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'prepush',
+      '--scope',
+      'workspace',
+      '--execute',
+      '--sarif-output',
+      path.relative(temporaryDirectory, sarifOutputPath),
+    ]);
+
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /Unexpected invalid hex color/u);
+    assert.match(result.stdout, /index\.html:4/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /index\.html/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /"startLine": 4/u);
+
+    const stylelintLog = fs.readFileSync(stylelintLogPath, 'utf8');
+    const targetMatch = stylelintLog.match(/TARGET=(.+)\r?\n/u);
+    assert.ok(targetMatch);
+    const temporaryInlineStylePath = targetMatch ? targetMatch[1].trim() : '';
+    assert.notStrictEqual(temporaryInlineStylePath, '');
+    assert.ok(!fs.existsSync(temporaryInlineStylePath));
+  });
+
+  /**
+   * pre-push で Stylelint が stderr に JSON を出しても HTML inline style 診断を取り込めること。
+   * @returns 返り値はない。
+   */
+  test('Parses inline HTML Stylelint findings from stderr output', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const htmlDirectory = path.join(temporaryDirectory, 'public');
+    const htmlFilePath = path.join(htmlDirectory, 'index.html');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-inline-style-stderr.sarif');
+
+    fs.mkdirSync(htmlDirectory, { recursive: true });
+    fs.writeFileSync(
+      htmlFilePath,
+      [
+        '<!doctype html>',
+        '<html>',
+        '<body>',
+        '<style>body { color: #12; }</style>',
+        '</body>',
+        '</html>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    fs.writeFileSync(path.join(temporaryDirectory, 'stylelint.config.mjs'), 'export default {}\n', 'utf8');
+    writeInlineHtmlStylelintWrapper(nodeBinDirectory, 'stylelint.log', {
+      findingsStream: 'stderr',
+    });
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'prepush',
+      '--scope',
+      'workspace',
+      '--execute',
+      '--sarif-output',
+      path.relative(temporaryDirectory, sarifOutputPath),
+    ]);
+
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /Unexpected invalid hex color/u);
+    assert.match(result.stdout, /index\.html:4/u);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /index\.html/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /"startLine": 4/u);
+  });
+
+  /**
+   * save/file で package.json の stylelint 設定を HTML inline style 実行時にも継承できること。
+   * @returns 返り値はない。
+   */
+  test('Uses package.json stylelint configuration for inline HTML style execution', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const htmlDirectory = path.join(temporaryDirectory, 'public');
+    const htmlFilePath = path.join(htmlDirectory, 'index.html');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const stylelintLogPath = path.join(nodeBinDirectory, 'stylelint.log');
+
+    fs.mkdirSync(htmlDirectory, { recursive: true });
+    fs.writeFileSync(
+      htmlFilePath,
+      [
+        '<!doctype html>',
+        '<html>',
+        '<body>',
+        '<style>body { color: #12; }</style>',
+        '</body>',
+        '</html>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    fs.writeFileSync(
+      path.join(temporaryDirectory, 'package.json'),
+      JSON.stringify({ stylelint: { rules: { 'color-no-invalid-hex': true } } }, null, 2),
+      'utf8',
+    );
+    writeWebCommandWrapper(nodeBinDirectory, 'prettier', 'prettier.log');
+    writeInlineHtmlStylelintWrapper(nodeBinDirectory, 'stylelint.log', {
+      requiredPackageJsonKey: 'stylelint',
+      stdout: '[]',
+      exitCode: 0,
+    });
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'save',
+      '--scope',
+      'file',
+      '--files',
+      path.relative(temporaryDirectory, htmlFilePath),
+      '--execute',
+    ]);
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /stylelint:ok exitCode=0/u);
+    assert.match(fs.readFileSync(stylelintLogPath, 'utf8'), /PACKAGE_JSON=.*package\.json/u);
+  });
+
+  /**
+   * CSS と互換でない type の inline style は Stylelint 対象外であること。
+   * @returns 返り値はない。
+   */
+  test('Skips non CSS inline style types', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const htmlDirectory = path.join(temporaryDirectory, 'public');
+    const htmlFilePath = path.join(htmlDirectory, 'index.html');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const stylelintLogPath = path.join(nodeBinDirectory, 'stylelint.log');
+
+    fs.mkdirSync(htmlDirectory, { recursive: true });
+    fs.writeFileSync(
+      htmlFilePath,
+      [
+        '<!doctype html>',
+        '<html>',
+        '<body>',
+        '<style type="text/less">@value: #12;</style>',
+        '</body>',
+        '</html>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    fs.writeFileSync(path.join(temporaryDirectory, 'stylelint.config.mjs'), 'export default {}\n', 'utf8');
+    writeWebCommandWrapper(nodeBinDirectory, 'prettier', 'prettier.log');
+    writeInlineHtmlStylelintWrapper(nodeBinDirectory, 'stylelint.log', {
+      stdout: '[]',
+      exitCode: 0,
+    });
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'save',
+      '--scope',
+      'file',
+      '--files',
+      path.relative(temporaryDirectory, htmlFilePath),
+      '--execute',
+    ]);
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /stylelint:skipped reason=no-target-files/u);
+    assert.ok(!fs.existsSync(stylelintLogPath));
+  });
+
+  /**
+   * data-type は style の type 属性として扱わず、inline style を Stylelint 対象に含めること。
+   * @returns 返り値はない。
+   */
+  test('Lints inline styles when only data-type is present', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const htmlDirectory = path.join(temporaryDirectory, 'public');
+    const htmlFilePath = path.join(htmlDirectory, 'index.html');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const stylelintLogPath = path.join(nodeBinDirectory, 'stylelint.log');
+
+    fs.mkdirSync(htmlDirectory, { recursive: true });
+    fs.writeFileSync(
+      htmlFilePath,
+      [
+        '<!doctype html>',
+        '<html>',
+        '<body>',
+        '<style data-type="text/less">body { color: #12; }</style>',
+        '</body>',
+        '</html>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    fs.writeFileSync(path.join(temporaryDirectory, 'stylelint.config.mjs'), 'export default {}\n', 'utf8');
+    writeWebCommandWrapper(nodeBinDirectory, 'prettier', 'prettier.log');
+    writeInlineHtmlStylelintWrapper(nodeBinDirectory, 'stylelint.log');
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'save',
+      '--scope',
+      'file',
+      '--files',
+      path.relative(temporaryDirectory, htmlFilePath),
+      '--execute',
+    ]);
+
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /stylelint:failed exitCode=2/u);
+    assert.ok(fs.existsSync(stylelintLogPath));
+  });
+
+  /**
+   * 属性値に > を含む HTML inline style でも本文位置を正しく逆写像できること。
+   * @returns 返り値はない。
+   */
+  test('Maps inline HTML Stylelint findings when style attributes include a greater-than sign', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const htmlDirectory = path.join(temporaryDirectory, 'public');
+    const htmlFilePath = path.join(htmlDirectory, 'index.html');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-inline-style-quoted-attribute.sarif');
+
+    fs.mkdirSync(htmlDirectory, { recursive: true });
+    fs.writeFileSync(
+      htmlFilePath,
+      [
+        '<!doctype html>',
+        '<html>',
+        '<body>',
+        '<style data-label="1>0">body { color: #12; }</style>',
+        '</body>',
+        '</html>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    fs.writeFileSync(path.join(temporaryDirectory, 'stylelint.config.mjs'), 'export default {};\n', 'utf8');
+    fs.writeFileSync(path.join(temporaryDirectory, '.htmlhintrc'), '{"tag-pair": true}\n', 'utf8');
+    writeInlineHtmlStylelintWrapper(nodeBinDirectory, 'stylelint.log');
+    writeWebCommandWrapper(nodeBinDirectory, 'htmlhint', 'htmlhint.log');
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'prepush',
+      '--scope',
+      'workspace',
+      '--execute',
+      '--sarif-output',
+      path.relative(temporaryDirectory, sarifOutputPath),
+    ]);
+
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /index\.html:4/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /"startLine": 4/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /"startColumn": 25/u);
+  });
+
+  /**
+   * pre-push で HTML inline script の ESLint 診断を元 HTML に逆写像し、一時ファイルを削除すること。
+   * @returns 返り値はない。
+   */
+  test('Maps inline HTML ESLint findings back to the source file and cleans temporary files', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const htmlDirectory = path.join(temporaryDirectory, 'public');
+    const htmlFilePath = path.join(htmlDirectory, 'index.html');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const eslintLogPath = path.join(nodeBinDirectory, 'eslint.log');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-inline-html.sarif');
+
+    fs.mkdirSync(htmlDirectory, { recursive: true });
+    fs.writeFileSync(
+      htmlFilePath,
+      [
+        '<!doctype html>',
+        '<html>',
+        '<body>',
+        '<script>console.log("sample")</script>',
+        '</body>',
+        '</html>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    fs.writeFileSync(path.join(temporaryDirectory, 'eslint.config.mjs'), 'export default [];\n', 'utf8');
+    fs.writeFileSync(path.join(temporaryDirectory, '.htmlhintrc'), '{"tag-pair": true}\n', 'utf8');
+    writeInlineHtmlEslintWrapper(nodeBinDirectory, 'eslint.log');
+    writeWebCommandWrapper(nodeBinDirectory, 'htmlhint', 'htmlhint.log');
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'prepush',
+      '--scope',
+      'workspace',
+      '--execute',
+      '--sarif-output',
+      path.relative(temporaryDirectory, sarifOutputPath),
+    ]);
+
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /Inline script finding\./u);
+    assert.match(result.stdout, /index\.html:4/u);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /index\.html/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /"startLine": 4/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /"startColumn": 9/u);
+
+    const eslintLog = fs.readFileSync(eslintLogPath, 'utf8');
+    const targetMatch = eslintLog.match(/TARGET=(.+)\r?\n/u);
+    assert.ok(targetMatch);
+    const temporaryInlineScriptPath = targetMatch ? targetMatch[1].trim() : '';
+    assert.notStrictEqual(temporaryInlineScriptPath, '');
+    assert.ok(!fs.existsSync(temporaryInlineScriptPath));
+  });
+
+  /**
+   * pre-push で複数の HTML inline script 診断を元 HTML に逆写像できること。
+   * @returns 返り値はない。
+   */
+  test('Maps multiple inline HTML ESLint findings back to the source file', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const htmlDirectory = path.join(temporaryDirectory, 'public');
+    const htmlFilePath = path.join(htmlDirectory, 'index.html');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const eslintLogPath = path.join(nodeBinDirectory, 'eslint.log');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-inline-html-multiple.sarif');
+
+    fs.mkdirSync(htmlDirectory, { recursive: true });
+    fs.writeFileSync(
+      htmlFilePath,
+      [
+        '<!doctype html>',
+        '<html>',
+        '<body>',
+        '<script>console.log("first")</script>',
+        '<div>middle</div>',
+        '<script type="module">export const second = 2</script>',
+        '</body>',
+        '</html>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    fs.writeFileSync(path.join(temporaryDirectory, 'eslint.config.mjs'), 'export default [];\n', 'utf8');
+    fs.writeFileSync(path.join(temporaryDirectory, '.htmlhintrc'), '{"tag-pair": true}\n', 'utf8');
+    writeInlineHtmlEslintWrapper(nodeBinDirectory, 'eslint.log');
+    writeWebCommandWrapper(nodeBinDirectory, 'htmlhint', 'htmlhint.log');
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'prepush',
+      '--scope',
+      'workspace',
+      '--execute',
+      '--sarif-output',
+      path.relative(temporaryDirectory, sarifOutputPath),
+    ]);
+
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /issues=2/u);
+    assert.match(result.stdout, /index\.html:4/u);
+    assert.match(result.stdout, /index\.html:6/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /"startLine": 4/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /"startLine": 6/u);
+
+    const eslintLog = fs.readFileSync(eslintLogPath, 'utf8');
+    const temporaryInlineScriptPaths = Array.from(
+      eslintLog.matchAll(/TARGET=(.+)\r?\n/gu),
+      (match) => match[1].trim(),
+    );
+    assert.strictEqual(temporaryInlineScriptPaths.length, 2);
+    assert.match(eslintLog, /TARGET=.*\.js/u);
+    assert.match(eslintLog, /TARGET=.*\.mjs/u);
+    for (const temporaryInlineScriptPath of temporaryInlineScriptPaths) {
+      assert.ok(!fs.existsSync(temporaryInlineScriptPath));
+    }
+  });
+
+  /**
+   * 属性値に > を含む HTML inline script でも本文位置を正しく逆写像できること。
+   * @returns 返り値はない。
+   */
+  test('Maps inline HTML ESLint findings when script attributes include a greater-than sign', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const htmlDirectory = path.join(temporaryDirectory, 'public');
+    const htmlFilePath = path.join(htmlDirectory, 'index.html');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-inline-html-quoted-attribute.sarif');
+
+    fs.mkdirSync(htmlDirectory, { recursive: true });
+    fs.writeFileSync(
+      htmlFilePath,
+      [
+        '<!doctype html>',
+        '<html>',
+        '<body>',
+        '<script data-label="1>0">console.log("sample")</script>',
+        '</body>',
+        '</html>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    fs.writeFileSync(path.join(temporaryDirectory, 'eslint.config.mjs'), 'export default [];\n', 'utf8');
+    fs.writeFileSync(path.join(temporaryDirectory, '.htmlhintrc'), '{"tag-pair": true}\n', 'utf8');
+    writeInlineHtmlEslintWrapper(nodeBinDirectory, 'eslint.log');
+    writeWebCommandWrapper(nodeBinDirectory, 'htmlhint', 'htmlhint.log');
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'prepush',
+      '--scope',
+      'workspace',
+      '--execute',
+      '--sarif-output',
+      path.relative(temporaryDirectory, sarifOutputPath),
+    ]);
+
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /index\.html:4/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /"startLine": 4/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /"startColumn": 26/u);
+  });
+
+  /**
+   * save/file で package.json の eslintConfig を HTML inline script 実行時にも継承できること。
+   * @returns 返り値はない。
+   */
+  test('Uses package.json eslintConfig for inline HTML script execution', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const htmlDirectory = path.join(temporaryDirectory, 'public');
+    const htmlFilePath = path.join(htmlDirectory, 'index.html');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const eslintLogPath = path.join(nodeBinDirectory, 'eslint.log');
+
+    fs.mkdirSync(htmlDirectory, { recursive: true });
+    fs.writeFileSync(
+      htmlFilePath,
+      [
+        '<!doctype html>',
+        '<html>',
+        '<body>',
+        '<script>console.log("sample")</script>',
+        '</body>',
+        '</html>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    fs.writeFileSync(
+      path.join(temporaryDirectory, 'package.json'),
+      JSON.stringify({ eslintConfig: { rules: { semi: 'error' } } }, null, 2),
+      'utf8',
+    );
+    writeWebCommandWrapper(nodeBinDirectory, 'prettier', 'prettier.log');
+    writeInlineHtmlEslintWrapper(nodeBinDirectory, 'eslint.log', {
+      requiredPackageJsonKey: 'eslintConfig',
+      stdout: '[]',
+      exitCode: 0,
+    });
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'save',
+      '--scope',
+      'file',
+      '--files',
+      path.relative(temporaryDirectory, htmlFilePath),
+      '--execute',
+    ]);
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /eslint:ok exitCode=0/u);
+    assert.match(fs.readFileSync(eslintLogPath, 'utf8'), /PACKAGE_JSON=.*package\.json/u);
+  });
+
+  /**
+   * save/file で type=module の inline script を .mjs として ESLint へ渡すこと。
+   * @returns 返り値はない。
+   */
+  test('Uses mjs temporary files for module inline scripts', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const htmlDirectory = path.join(temporaryDirectory, 'public');
+    const htmlFilePath = path.join(htmlDirectory, 'index.html');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const eslintLogPath = path.join(nodeBinDirectory, 'eslint.log');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-inline-module.sarif');
+
+    fs.mkdirSync(htmlDirectory, { recursive: true });
+    fs.writeFileSync(
+      htmlFilePath,
+      [
+        '<!doctype html>',
+        '<html>',
+        '<body>',
+        '<script type="module">export const sample = 1;</script>',
+        '</body>',
+        '</html>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    fs.writeFileSync(path.join(temporaryDirectory, 'eslint.config.mjs'), 'export default []\n', 'utf8');
+    writeWebCommandWrapper(nodeBinDirectory, 'prettier', 'prettier.log');
+    writeInlineHtmlEslintWrapper(nodeBinDirectory, 'eslint.log', {
+      expectedExtension: '.mjs',
+    });
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'save',
+      '--scope',
+      'file',
+      '--files',
+      path.relative(temporaryDirectory, htmlFilePath),
+      '--execute',
+      '--sarif-output',
+      path.relative(temporaryDirectory, sarifOutputPath),
+    ]);
+
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /Inline script finding\./u);
+    assert.match(fs.readFileSync(eslintLogPath, 'utf8'), /TARGET=.*\.mjs/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /index\.html/u);
+  });
+
+  /**
+   * save/file でパラメータ付き JavaScript MIME type の inline script も ESLint 対象であること。
+   * @returns 返り値はない。
+   */
+  test('Lints inline scripts with parameterized JavaScript MIME types', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const htmlDirectory = path.join(temporaryDirectory, 'public');
+    const htmlFilePath = path.join(htmlDirectory, 'index.html');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const eslintLogPath = path.join(nodeBinDirectory, 'eslint.log');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-inline-mime-parameter.sarif');
+
+    fs.mkdirSync(htmlDirectory, { recursive: true });
+    fs.writeFileSync(
+      htmlFilePath,
+      [
+        '<!doctype html>',
+        '<html>',
+        '<body>',
+        '<script type="text/javascript; charset=utf-8">console.log("sample")</script>',
+        '</body>',
+        '</html>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    fs.writeFileSync(path.join(temporaryDirectory, 'eslint.config.mjs'), 'export default []\n', 'utf8');
+    writeWebCommandWrapper(nodeBinDirectory, 'prettier', 'prettier.log');
+    writeInlineHtmlEslintWrapper(nodeBinDirectory, 'eslint.log', {
+      expectedExtension: '.js',
+    });
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'save',
+      '--scope',
+      'file',
+      '--files',
+      path.relative(temporaryDirectory, htmlFilePath),
+      '--execute',
+      '--sarif-output',
+      path.relative(temporaryDirectory, sarifOutputPath),
+    ]);
+
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /Inline script finding\./u);
+    assert.match(result.stdout, /index\.html:4/u);
+    assert.match(fs.readFileSync(eslintLogPath, 'utf8'), /TARGET=.*\.js/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /index\.html/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /"startLine": 4/u);
+  });
+
+  /**
+   * save/file で parameterized な application JavaScript MIME type の inline script も ESLint 対象であること。
+   * @returns 返り値はない。
+   */
+  test('Lints inline scripts with parameterized application JavaScript MIME types', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const htmlDirectory = path.join(temporaryDirectory, 'public');
+    const htmlFilePath = path.join(htmlDirectory, 'index.html');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const eslintLogPath = path.join(nodeBinDirectory, 'eslint.log');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-inline-application-mime-parameter.sarif');
+
+    fs.mkdirSync(htmlDirectory, { recursive: true });
+    fs.writeFileSync(
+      htmlFilePath,
+      [
+        '<!doctype html>',
+        '<html>',
+        '<body>',
+        '<script type="application/javascript; charset=utf-8">console.log("first")</script>',
+        '<script type="application/ecmascript; charset=utf-8">console.log("second")</script>',
+        '</body>',
+        '</html>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    fs.writeFileSync(path.join(temporaryDirectory, 'eslint.config.mjs'), 'export default []\n', 'utf8');
+    writeWebCommandWrapper(nodeBinDirectory, 'prettier', 'prettier.log');
+    writeInlineHtmlEslintWrapper(nodeBinDirectory, 'eslint.log', {
+      expectedExtension: '.js',
+    });
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'save',
+      '--scope',
+      'file',
+      '--files',
+      path.relative(temporaryDirectory, htmlFilePath),
+      '--execute',
+      '--sarif-output',
+      path.relative(temporaryDirectory, sarifOutputPath),
+    ]);
+
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /issues=2/u);
+    assert.match(result.stdout, /Inline script finding\./u);
+    assert.match(result.stdout, /index\.html:4/u);
+    assert.match(result.stdout, /index\.html:5/u);
+    const eslintLog = fs.readFileSync(eslintLogPath, 'utf8');
+    const temporaryInlineScriptPaths = Array.from(
+      eslintLog.matchAll(/TARGET=(.+)\r?\n/gu),
+      (match) => match[1].trim(),
+    );
+    assert.strictEqual(temporaryInlineScriptPaths.length, 2);
+    assert.match(eslintLog, /TARGET=.*\.js/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /"startLine": 4/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /"startLine": 5/u);
+  });
+
+  /**
+   * save/file で parameterized な非 JavaScript MIME type の inline script は ESLint 対象外であること。
+   * @returns 返り値はない。
+   */
+  test('Skips parameterized non JavaScript inline script MIME types', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const htmlDirectory = path.join(temporaryDirectory, 'public');
+    const htmlFilePath = path.join(htmlDirectory, 'index.html');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const eslintLogPath = path.join(nodeBinDirectory, 'eslint.log');
+
+    fs.mkdirSync(htmlDirectory, { recursive: true });
+    fs.writeFileSync(
+      htmlFilePath,
+      [
+        '<!doctype html>',
+        '<html>',
+        '<body>',
+        '<script type="text/plain; charset=utf-8">console.log("sample")</script>',
+        '</body>',
+        '</html>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    fs.writeFileSync(path.join(temporaryDirectory, 'eslint.config.mjs'), 'export default []\n', 'utf8');
+    writeWebCommandWrapper(nodeBinDirectory, 'prettier', 'prettier.log');
+    writeInlineHtmlEslintWrapper(nodeBinDirectory, 'eslint.log', {
+      stdout: '[]',
+      exitCode: 0,
+    });
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'save',
+      '--scope',
+      'file',
+      '--files',
+      path.relative(temporaryDirectory, htmlFilePath),
+      '--execute',
+    ]);
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /eslint:skipped reason=no-target-files/u);
+    assert.ok(!fs.existsSync(eslintLogPath));
+  });
+
+  /**
+   * data-src と data-type は script の src/type 属性として扱わず、inline script を ESLint 対象に含めること。
+   * @returns 返り値はない。
+   */
+  test('Lints inline scripts when only data-src and data-type are present', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const htmlDirectory = path.join(temporaryDirectory, 'public');
+    const htmlFilePath = path.join(htmlDirectory, 'index.html');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const eslintLogPath = path.join(nodeBinDirectory, 'eslint.log');
+
+    fs.mkdirSync(htmlDirectory, { recursive: true });
+    fs.writeFileSync(
+      htmlFilePath,
+      [
+        '<!doctype html>',
+        '<html>',
+        '<body>',
+        '<script data-src="virtual.js" data-type="text/plain">console.log("sample")</script>',
+        '</body>',
+        '</html>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    fs.writeFileSync(path.join(temporaryDirectory, 'eslint.config.mjs'), 'export default []\n', 'utf8');
+    writeWebCommandWrapper(nodeBinDirectory, 'prettier', 'prettier.log');
+    writeInlineHtmlEslintWrapper(nodeBinDirectory, 'eslint.log');
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'save',
+      '--scope',
+      'file',
+      '--files',
+      path.relative(temporaryDirectory, htmlFilePath),
+      '--execute',
+    ]);
+
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /eslint:failed exitCode=1/u);
+    assert.ok(fs.existsSync(eslintLogPath));
+  });
+
+  /**
+   * save/file で .js ファイルと非 JavaScript inline script を含む HTML が混在しても、.js だけを ESLint 対象にすること。
+   * @returns 返り値はない。
+   */
+  test('Lints direct JavaScript files while skipping non JavaScript inline HTML scripts', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const htmlDirectory = path.join(temporaryDirectory, 'public');
+    const sourceDirectory = path.join(temporaryDirectory, 'src');
+    const htmlFilePath = path.join(htmlDirectory, 'index.html');
+    const javascriptFilePath = path.join(sourceDirectory, 'main.js');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const eslintLogPath = path.join(nodeBinDirectory, 'eslint.log');
+    const prettierLogPath = path.join(nodeBinDirectory, 'prettier.log');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-inline-mixed-negative.sarif');
+    const eslintOutput = JSON.stringify([
+      {
+        filePath: javascriptFilePath,
+        messages: [
+          {
+            ruleId: 'semi',
+            severity: 2,
+            message: 'Missing semicolon.',
+            line: 1,
+            column: 17,
+          },
+        ],
+      },
+    ]);
+
+    fs.mkdirSync(htmlDirectory, { recursive: true });
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.writeFileSync(
+      htmlFilePath,
+      [
+        '<!doctype html>',
+        '<html>',
+        '<body>',
+        '<script type="text/plain; charset=utf-8">console.log("sample")</script>',
+        '</body>',
+        '</html>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    fs.writeFileSync(javascriptFilePath, 'const sample = 1\n', 'utf8');
+    fs.writeFileSync(path.join(temporaryDirectory, 'eslint.config.mjs'), 'export default []\n', 'utf8');
+    writeWebCommandWrapper(nodeBinDirectory, 'prettier', 'prettier.log');
+    writeWebCommandWrapper(nodeBinDirectory, 'eslint', 'eslint.log', { stdout: eslintOutput, exitCode: 1 });
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'save',
+      '--scope',
+      'file',
+      '--files',
+      [
+        path.relative(temporaryDirectory, javascriptFilePath),
+        path.relative(temporaryDirectory, htmlFilePath),
+      ].join(','),
+      '--execute',
+      '--sarif-output',
+      path.relative(temporaryDirectory, sarifOutputPath),
+    ]);
+
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /eslint:failed exitCode=1/u);
+    assert.match(result.stdout, /Missing semicolon\./u);
+    assert.match(fs.readFileSync(prettierLogPath, 'utf8'), /main\.js/u);
+    assert.match(fs.readFileSync(prettierLogPath, 'utf8'), /index\.html/u);
+
+    const eslintLog = fs.readFileSync(eslintLogPath, 'utf8');
+    assert.match(eslintLog, /main\.js/u);
+    assert.doesNotMatch(eslintLog, /index\.html/u);
+    assert.doesNotMatch(eslintLog, /inline-/u);
+
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /main\.js/u);
+    assert.doesNotMatch(fs.readFileSync(sarifOutputPath, 'utf8'), /index\.html/u);
+  });
+
+  /**
    * Git hooks をインストールできること。
    * @returns 返り値はない。
    */
@@ -1405,6 +2560,188 @@ suite('Mamori CLI Test Suite', () => {
     assert.match(fs.readFileSync(indexSnapshotPath, 'utf8'), /formatted by prettier/u);
     assert.ok(fs.existsSync(sarifOutputPath));
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Missing semicolon\./u);
+  });
+
+  /**
+   * pre-commit の staged HTML で inline script 診断を元 HTML に逆写像し、整形結果を再ステージすること。
+   * @returns 返り値はない。
+   */
+  test('Restages staged HTML files and maps inline ESLint findings back to the source file', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const htmlDirectory = path.join(temporaryDirectory, 'public');
+    const htmlFilePath = path.join(htmlDirectory, 'index.html');
+    const gitBinDirectory = createCommandBinDirectory(temporaryDirectory);
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const gitLogPath = path.join(gitBinDirectory, 'git.log');
+    const prettierLogPath = path.join(nodeBinDirectory, 'prettier.log');
+    const eslintLogPath = path.join(nodeBinDirectory, 'eslint.log');
+    const htmlhintLogPath = path.join(nodeBinDirectory, 'htmlhint.log');
+    const indexSnapshotPath = path.join(temporaryDirectory, '.tmp-index', 'public', 'index.html');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-inline-html-precommit.sarif');
+
+    fs.mkdirSync(htmlDirectory, { recursive: true });
+    fs.writeFileSync(
+      htmlFilePath,
+      [
+        '<!doctype html>',
+        '<html>',
+        '<body>',
+        '<script>console.log("sample")</script>',
+        '</body>',
+        '</html>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    fs.writeFileSync(path.join(temporaryDirectory, 'eslint.config.mjs'), 'export default [];\n', 'utf8');
+    fs.writeFileSync(path.join(temporaryDirectory, '.htmlhintrc'), '{"tag-pair": true}\n', 'utf8');
+    writeGitPrecommitWrapper(
+      gitBinDirectory,
+      'git.log',
+      path.relative(temporaryDirectory, htmlFilePath),
+      htmlFilePath,
+      indexSnapshotPath,
+    );
+    writeWebCommandWrapper(nodeBinDirectory, 'prettier', 'prettier.log', { formattedFilePath: htmlFilePath });
+    writeInlineHtmlEslintWrapper(nodeBinDirectory, 'eslint.log');
+    writeWebCommandWrapper(nodeBinDirectory, 'htmlhint', 'htmlhint.log');
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      [
+        'run',
+        '--mode',
+        'precommit',
+        '--scope',
+        'staged',
+        '--execute',
+        '--sarif-output',
+        path.relative(temporaryDirectory, sarifOutputPath),
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(gitBinDirectory),
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /prettier:ok/u);
+    assert.match(result.stdout, /eslint:failed exitCode=1/u);
+    assert.match(result.stdout, /htmlhint:ok/u);
+    assert.match(result.stdout, /Inline script finding\./u);
+    assert.match(result.stdout, /index\.html:4/u);
+    assert.match(fs.readFileSync(gitLogPath, 'utf8'), /diff --cached --name-only --diff-filter=ACMR/u);
+    assert.match(fs.readFileSync(gitLogPath, 'utf8'), /add --/u);
+    assert.match(fs.readFileSync(gitLogPath, 'utf8'), /public[\\/]index\.html/u);
+    assert.match(fs.readFileSync(prettierLogPath, 'utf8'), /index\.html/u);
+    assert.match(fs.readFileSync(htmlhintLogPath, 'utf8'), /index\.html/u);
+    assert.match(fs.readFileSync(indexSnapshotPath, 'utf8'), /formatted by prettier/u);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /index\.html/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /"startLine": 4/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /"startColumn": 9/u);
+
+    const eslintLog = fs.readFileSync(eslintLogPath, 'utf8');
+    const targetMatch = eslintLog.match(/TARGET=(.+)\r?\n/u);
+    assert.ok(targetMatch);
+    assert.doesNotMatch(eslintLog, /index\.html/u);
+    assert.match(eslintLog, /TARGET=.*\.js/u);
+    const temporaryInlineScriptPath = targetMatch ? targetMatch[1].trim() : '';
+    assert.notStrictEqual(temporaryInlineScriptPath, '');
+    assert.ok(!fs.existsSync(temporaryInlineScriptPath));
+  });
+
+  /**
+   * pre-commit の staged HTML で inline style 診断を元 HTML に逆写像し、整形結果を再ステージすること。
+   * @returns 返り値はない。
+   */
+  test('Restages staged HTML files and maps inline Stylelint findings back to the source file', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const htmlDirectory = path.join(temporaryDirectory, 'public');
+    const htmlFilePath = path.join(htmlDirectory, 'index.html');
+    const gitBinDirectory = createCommandBinDirectory(temporaryDirectory);
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const gitLogPath = path.join(gitBinDirectory, 'git.log');
+    const prettierLogPath = path.join(nodeBinDirectory, 'prettier.log');
+    const stylelintLogPath = path.join(nodeBinDirectory, 'stylelint.log');
+    const htmlhintLogPath = path.join(nodeBinDirectory, 'htmlhint.log');
+    const indexSnapshotPath = path.join(temporaryDirectory, '.tmp-index', 'public', 'index.html');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-inline-style-precommit.sarif');
+
+    fs.mkdirSync(htmlDirectory, { recursive: true });
+    fs.writeFileSync(
+      htmlFilePath,
+      [
+        '<!doctype html>',
+        '<html>',
+        '<body>',
+        '<style>body { color: #12; }</style>',
+        '</body>',
+        '</html>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    fs.writeFileSync(path.join(temporaryDirectory, 'stylelint.config.mjs'), 'export default {};\n', 'utf8');
+    fs.writeFileSync(path.join(temporaryDirectory, '.htmlhintrc'), '{"tag-pair": true}\n', 'utf8');
+    writeGitPrecommitWrapper(
+      gitBinDirectory,
+      'git.log',
+      path.relative(temporaryDirectory, htmlFilePath),
+      htmlFilePath,
+      indexSnapshotPath,
+    );
+    writeWebCommandWrapper(nodeBinDirectory, 'prettier', 'prettier.log', { formattedFilePath: htmlFilePath });
+    writeInlineHtmlStylelintWrapper(nodeBinDirectory, 'stylelint.log');
+    writeWebCommandWrapper(nodeBinDirectory, 'htmlhint', 'htmlhint.log');
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      [
+        'run',
+        '--mode',
+        'precommit',
+        '--scope',
+        'staged',
+        '--execute',
+        '--sarif-output',
+        path.relative(temporaryDirectory, sarifOutputPath),
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(gitBinDirectory),
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /prettier:ok/u);
+    assert.match(result.stdout, /stylelint:failed exitCode=2/u);
+    assert.match(result.stdout, /htmlhint:ok/u);
+    assert.match(result.stdout, /Unexpected invalid hex color/u);
+    assert.match(result.stdout, /index\.html:4/u);
+    assert.match(fs.readFileSync(gitLogPath, 'utf8'), /diff --cached --name-only --diff-filter=ACMR/u);
+    assert.match(fs.readFileSync(gitLogPath, 'utf8'), /add --/u);
+    assert.match(fs.readFileSync(gitLogPath, 'utf8'), /public[\\/]index\.html/u);
+    assert.match(fs.readFileSync(prettierLogPath, 'utf8'), /index\.html/u);
+    assert.match(fs.readFileSync(htmlhintLogPath, 'utf8'), /index\.html/u);
+    assert.match(fs.readFileSync(indexSnapshotPath, 'utf8'), /formatted by prettier/u);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /index\.html/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /"startLine": 4/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /"startColumn": 8/u);
+
+    const stylelintLog = fs.readFileSync(stylelintLogPath, 'utf8');
+    const targetMatch = stylelintLog.match(/TARGET=(.+)\r?\n/u);
+    assert.ok(targetMatch);
+    assert.doesNotMatch(stylelintLog, /index\.html/u);
+    assert.match(stylelintLog, /TARGET=.*\.css/u);
+    const temporaryInlineStylePath = targetMatch ? targetMatch[1].trim() : '';
+    assert.notStrictEqual(temporaryInlineStylePath, '');
+    assert.ok(!fs.existsSync(temporaryInlineStylePath));
   });
 
   /**

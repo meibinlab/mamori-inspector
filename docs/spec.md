@@ -31,8 +31,26 @@
 チェック:
 - Java: Checkstyle / PMD / Semgrep
 - JavaScript: ESLint（設定がある場合のみ）
+- HTML 内 inline script: ESLint（設定がある場合のみ。対象は `src` なしで JavaScript と判定されたものに限る。HTML 本体は引き続き htmlhint）
 - CSS: Stylelint（設定がある場合のみ）
+- HTML 内 inline style: Stylelint（設定がある場合のみ。対象は CSS と判定されたものに限る。HTML 本体は引き続き htmlhint）
 - HTML: htmlhint（設定がある場合のみ）
+
+HTML inline script の扱い（確定）:
+- `src` を持たない inline script のみを一時 JavaScript ファイルへ抽出して ESLint 実行対象に含める
+- `type` が未指定、空文字、`module`、または `text/javascript`、`application/javascript`、`application/ecmascript` など JavaScript MIME type の場合のみ対象に含める
+- `text/javascript; charset=utf-8` のような parameter 付き JavaScript MIME type は parameter を除去して判定する
+- `text/plain` など JavaScript 以外の `type` を持つ inline script は対象外とする
+- `type="module"` は一時 `.mjs` ファイルとして抽出する
+- ESLint の診断位置は元の HTML 位置へ逆写像する
+- 一時ファイルは各実行後に削除する
+
+HTML inline style の扱い（確定）:
+- CSS と互換な `type` を持つ inline style のみを一時 CSS ファイルへ抽出して Stylelint 実行対象に含める
+- `type` が未指定、空文字、`text/css`、または `text/css; ...` の場合のみ対象に含める
+- CSS 以外の `type` を持つ inline style は対象外とする
+- Stylelint の診断位置は元の HTML 位置へ逆写像する
+- 一時ファイルは各実行後に削除する
 
 保存時の非同期整形仕様（確定）:
 - 保存操作をブロックしない（保存完了後にバックグラウンドで処理）
@@ -52,14 +70,18 @@
 チェック:
 - Java: Checkstyle / PMD / Semgrep
 - JavaScript: ESLint（設定がある場合のみ）
+- HTML 内 inline script: ESLint（設定がある場合のみ。対象は `src` なしで JavaScript と判定されたものに限る。HTML 本体は引き続き htmlhint）
 - CSS: Stylelint（設定がある場合のみ）
+- HTML 内 inline style: Stylelint（設定がある場合のみ。対象は CSS と判定されたものに限る。HTML 本体は引き続き htmlhint）
 - HTML: htmlhint（設定がある場合のみ）
 
 ### 3.3 pre-push（scope=workspace、失敗でブロック）
 チェック（デフォルト有効）:
 - Java: Checkstyle / PMD / Semgrep / CPD / SpotBugs
 - JavaScript: ESLint（設定がある場合のみ、デフォルト有効・設定でOFF可）
+- HTML 内 inline script: ESLint（設定がある場合のみ、デフォルト有効・設定でOFF可。対象は `src` なしで JavaScript と判定されたものに限る。HTML 本体は引き続き htmlhint）
 - CSS: Stylelint（設定がある場合のみ、デフォルト有効・設定でOFF可）
+- HTML 内 inline style: Stylelint（設定がある場合のみ、デフォルト有効・設定でOFF可。対象は CSS と判定されたものに限る。HTML 本体は引き続き htmlhint）
 - HTML: htmlhint（設定がある場合のみ、デフォルト有効・設定でOFF可）
 
 SpotBugsの例外仕様（確定）:
@@ -140,6 +162,8 @@ Java 17互換のpin例:
 
 ### 6.4 ESLint / Stylelint / htmlhint
 - 設定が見つかった時だけ有効化（無ければスキップ）
+- HTML の inline script は ESLint 設定が見つかった時だけ抽出・実行する
+- HTML の inline style は Stylelint 設定が見つかった時だけ抽出・実行する
 - 設定検出例:
   - ESLint: `eslint.config.*`、`.eslintrc*`、`package.json#eslintConfig`
   - Stylelint: `stylelint.config.*`、`.stylelintrc*`、`package.json#stylelint`

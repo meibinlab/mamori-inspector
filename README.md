@@ -13,8 +13,8 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 - Save-time validation starts automatically after the extension is installed and a supported file is saved.
 - Git hook validation does not start automatically on extension installation. You must install the managed hooks explicitly.
 - `precommit/staged` requires the Git CLI on `PATH` because staged files are resolved with `git diff --cached --name-only --diff-filter=ACMR`.
-- JavaScript checks run only when ESLint configuration is detected.
-- CSS and SCSS and Sass checks run only when Stylelint configuration is detected.
+- JavaScript files and HTML inline script checks run only when ESLint configuration is detected.
+- CSS and SCSS and Sass checks, and HTML inline style checks, run only when Stylelint configuration is detected.
 - HTML checks run only when htmlhint configuration is detected.
 
 ## Current Behavior
@@ -22,17 +22,32 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 - Save-time validation formats supported files first, then publishes diagnostics from the generated SARIF.
 - JavaScript save-time validation uses Prettier and ESLint when ESLint configuration is detected.
 - CSS and SCSS and Sass save-time validation use Prettier and Stylelint when Stylelint configuration is detected.
+- HTML save-time validation also extracts inline style blocks whose type is compatible with CSS into temporary CSS files for Stylelint, maps diagnostics back to the original HTML locations, and removes the temporary files after execution when Stylelint configuration is detected.
 - HTML save-time validation uses Prettier and htmlhint when htmlhint configuration is detected.
+- HTML save-time validation also extracts inline script blocks without `src` into temporary JavaScript files for ESLint, maps diagnostics back to the original HTML locations, and removes the temporary files after execution when ESLint configuration is detected.
 - `precommit/staged` resolves staged files via `git diff --cached --name-only --diff-filter=ACMR`, runs Spotless first when available, and re-stages formatted files with `git add -- <files>`.
 - `precommit/staged` also runs Prettier for staged JavaScript, CSS, SCSS, Sass, and HTML files before running the configured checkers.
+- `precommit/staged` includes HTML inline style blocks in the Stylelint target set while keeping HTML files themselves on htmlhint.
+- `precommit/staged` includes HTML inline script blocks in the ESLint target set while keeping HTML files themselves on htmlhint.
 - `precommit/staged` returns success without running checks when no staged files are detected, and requires the Git CLI on `PATH` for staged-file resolution.
 - `prepush/workspace` runs lightweight Java checks plus CPD, and adds SpotBugs only when compiled class roots such as `target/classes` or `build/classes/java/main` exist.
 - `prepush/workspace` also runs ESLint, Stylelint, and htmlhint for workspace files when the corresponding configuration is detected.
+- `prepush/workspace` includes HTML inline style blocks in Stylelint by using temporary CSS files and reporting findings on the original HTML locations.
+- `prepush/workspace` includes HTML inline script blocks in ESLint by using temporary JavaScript files and reporting findings on the original HTML locations.
 - `manual/workspace` currently reuses the lightweight Java check plan until the heavy manual tools are added.
 - The command `Mamori Inspector: Run Workspace Check` executes a workspace-wide manual check and publishes diagnostics from the generated SARIF.
 - The commands `Mamori Inspector: Install Git Hooks` and `Mamori Inspector: Uninstall Git Hooks` call the same runner as the CLI and manage `.git/hooks/pre-commit` and `.git/hooks/pre-push`.
 - Maven and Gradle build definitions are inspected to resolve Java tooling such as Checkstyle, PMD, Spotless, CPD, and SpotBugs.
 - `mamori.js hooks install` and `mamori.js hooks uninstall` create or remove managed `pre-commit` and `pre-push` hooks under `.git/hooks`.
+
+## HTML Inline JS And CSS Checks
+- Mamori splits HTML validation across htmlhint for markup, ESLint for inline script blocks, and Stylelint for inline style blocks.
+- Inline script checks target only `script` tags without `src` whose `type` is omitted, empty, `module`, or a JavaScript MIME type such as `text/javascript`, `application/javascript`, or `application/ecmascript`.
+- Parameterized JavaScript MIME types such as `text/javascript; charset=utf-8` are normalized and treated as JavaScript.
+- Inline script blocks with non-JavaScript `type` values such as `text/plain` are excluded from ESLint.
+- Inline style checks target only `style` tags whose `type` is omitted, empty, `text/css`, or a parameterized `text/css` value such as `text/css; charset=utf-8`.
+- Inline style blocks with non-CSS `type` values are excluded from Stylelint.
+- Findings from inline script and inline style checks are mapped back to the original HTML locations, and the temporary extracted files are removed after each execution.
 
 ## Validation Modes
 | Trigger | Starts automatically after extension install | Additional setup | Scope | Notes |
@@ -57,8 +72,8 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 | Java Spotless | `pom.xml`, `build.gradle`, or `build.gradle.kts` with Spotless configuration | Used for Java formatting during save and pre-commit when configured. |
 | Java SpotBugs | `pom.xml`, `build.gradle`, or `build.gradle.kts` with SpotBugs configuration | `prepush/workspace` also needs compiled classes under `target/classes` or `build/classes/java/main`. |
 | Java Semgrep | No required config file, or optional `.semgrep.yml` | If `.semgrep.yml` is not present, Mamori uses the default `p/java` ruleset. |
-| JavaScript ESLint | One of `eslint.config.js`, `eslint.config.mjs`, `eslint.config.cjs`, `eslint.config.ts`, `eslint.config.mts`, `eslint.config.cts`, `.eslintrc`, `.eslintrc.js`, `.eslintrc.cjs`, `.eslintrc.json`, `.eslintrc.yaml`, `.eslintrc.yml`, `.eslintrc.ts`, `.eslintrc.mts`, `.eslintrc.cts`, or `package.json` with `eslintConfig` | Without one of these files or settings, JavaScript checks are skipped. |
-| CSS / SCSS / Sass Stylelint | One of `stylelint.config.js`, `stylelint.config.mjs`, `stylelint.config.cjs`, `stylelint.config.ts`, `stylelint.config.mts`, `stylelint.config.cts`, `.stylelintrc`, `.stylelintrc.js`, `.stylelintrc.cjs`, `.stylelintrc.json`, `.stylelintrc.yaml`, `.stylelintrc.yml`, `.stylelintrc.ts`, `.stylelintrc.mts`, `.stylelintrc.cts`, or `package.json` with `stylelint` | Without one of these files or settings, CSS checks are skipped. |
+| JavaScript ESLint | One of `eslint.config.js`, `eslint.config.mjs`, `eslint.config.cjs`, `eslint.config.ts`, `eslint.config.mts`, `eslint.config.cts`, `.eslintrc`, `.eslintrc.js`, `.eslintrc.cjs`, `.eslintrc.json`, `.eslintrc.yaml`, `.eslintrc.yml`, `.eslintrc.ts`, `.eslintrc.mts`, `.eslintrc.cts`, or `package.json` with `eslintConfig` | Without one of these files or settings, JavaScript files and HTML inline script checks are skipped. |
+| CSS / SCSS / Sass Stylelint | One of `stylelint.config.js`, `stylelint.config.mjs`, `stylelint.config.cjs`, `stylelint.config.ts`, `stylelint.config.mts`, `stylelint.config.cts`, `.stylelintrc`, `.stylelintrc.js`, `.stylelintrc.cjs`, `.stylelintrc.json`, `.stylelintrc.yaml`, `.stylelintrc.yml`, `.stylelintrc.ts`, `.stylelintrc.mts`, `.stylelintrc.cts`, or `package.json` with `stylelint` | Without one of these files or settings, CSS files and HTML inline style checks are skipped. |
 | HTML htmlhint | One of `.htmlhintrc`, `.htmlhintrc.js`, `.htmlhintrc.cjs`, `.htmlhintrc.json`, `.htmlhintrc.yaml`, `.htmlhintrc.yml`, or `package.json` with `htmlhint` | Without one of these files or settings, HTML checks are skipped. |
 | Prettier for JavaScript / CSS / HTML | No Mamori-specific config file is required | If your project uses a Prettier config, keep it in the project as usual so formatting behavior matches your repository rules. |
 
