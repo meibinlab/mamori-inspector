@@ -143,6 +143,7 @@ function writeWebCommandWrapper(
   outputFileName: string,
   options: {
     formattedFilePath?: string;
+    loggedEnvironmentKeys?: string[];
     stdout?: string;
     exitCode?: number;
   } = {},
@@ -153,6 +154,9 @@ function writeWebCommandWrapper(
     : path.join(binDirectory, commandName);
   const stdout = typeof options.stdout === 'string' ? options.stdout : '';
   const exitCode = typeof options.exitCode === 'number' ? options.exitCode : 0;
+  const loggedEnvironmentKeys = Array.isArray(options.loggedEnvironmentKeys)
+    ? options.loggedEnvironmentKeys
+    : [];
   const encodedStdout = Buffer.from(stdout, 'utf8').toString('base64');
 
   if (process.platform === 'win32') {
@@ -160,6 +164,10 @@ function writeWebCommandWrapper(
       '@echo off',
       `echo %*>>"${outputPath}"`,
     ];
+
+    for (const environmentKey of loggedEnvironmentKeys) {
+      lines.push(`echo ${environmentKey}=%${environmentKey}%>>"${outputPath}"`);
+    }
 
     if (options.formattedFilePath) {
       lines.push(`>>"${options.formattedFilePath}" echo // formatted by ${commandName}`);
@@ -178,6 +186,10 @@ function writeWebCommandWrapper(
     '#!/bin/sh',
     `printf '%s\n' "$*" >> "${outputPath}"`,
   ];
+
+  for (const environmentKey of loggedEnvironmentKeys) {
+    lines.push(`printf '%s\n' '${environmentKey}='"\${${environmentKey}:-}" >> '${outputPath}'`);
+  }
 
   if (options.formattedFilePath) {
     lines.push(`printf '%s\n' '// formatted by ${commandName}' >> '${options.formattedFilePath}'`);
@@ -1107,14 +1119,15 @@ suite('Mamori CLI Test Suite', () => {
 
     assert.strictEqual(result.status, 0);
     assert.doesNotMatch(result.stdout, /eslint\.config\.backup/u);
-    assert.match(result.stdout, /eslint: disabled \(source=default\)/u);
+    assert.match(result.stdout, /eslint: enabled \(source=default\)/u);
+    assert.match(result.stdout, /eslint\.default\.json/u);
   });
 
   /**
-   * 設定未検出時は Web checker を skip として計画すること。
+   * 設定未検出時は組み込み Web 設定で checker を有効化すること。
    * @returns 返り値はない。
    */
-  test('Skips web checkers when configuration is not detected', () => {
+  test('Enables web checkers with bundled fallback configuration when project configuration is not detected', () => {
     const temporaryDirectory = createTemporaryDirectory();
     const scriptDirectory = path.join(temporaryDirectory, 'src');
     const styleDirectory = path.join(temporaryDirectory, 'styles');
@@ -1138,9 +1151,63 @@ suite('Mamori CLI Test Suite', () => {
     assert.strictEqual(result.status, 0);
     assert.doesNotMatch(result.stdout, /mamori: execution-plan\n  - none/u);
     assert.doesNotMatch(result.stdout, /mamori: command-plan\n  - none/u);
-    assert.match(result.stdout, /eslint:disabled reason=config-not-detected/u);
-    assert.match(result.stdout, /stylelint:disabled reason=config-not-detected/u);
-    assert.match(result.stdout, /htmlhint:disabled reason=config-not-detected/u);
+    assert.match(result.stdout, /eslint: enabled \(source=default\)/u);
+    assert.match(result.stdout, /stylelint: enabled \(source=default\)/u);
+    assert.match(result.stdout, /htmlhint: enabled \(source=default\)/u);
+    assert.match(result.stdout, /eslint:enabled/u);
+    assert.match(result.stdout, /stylelint:enabled/u);
+    assert.match(result.stdout, /htmlhint:enabled/u);
+    assert.match(result.stdout, /eslint\.default\.json/u);
+    assert.match(result.stdout, /stylelint\.default\.json/u);
+    assert.match(result.stdout, /htmlhint\.default\.json/u);
+    assert.doesNotMatch(result.stdout, /config-not-detected/u);
+  });
+
+  /**
+   * 設定未検出時でも組み込み Web 設定ファイルを各 checker 実行へ渡すこと。
+   * @returns 返り値はない。
+   */
+  test('Executes web checkers with bundled fallback configuration files', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const scriptDirectory = path.join(temporaryDirectory, 'src');
+    const styleDirectory = path.join(temporaryDirectory, 'styles');
+    const htmlDirectory = path.join(temporaryDirectory, 'public');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const eslintLogPath = path.join(nodeBinDirectory, 'eslint.log');
+    const stylelintLogPath = path.join(nodeBinDirectory, 'stylelint.log');
+    const htmlhintLogPath = path.join(nodeBinDirectory, 'htmlhint.log');
+
+    fs.mkdirSync(scriptDirectory, { recursive: true });
+    fs.mkdirSync(styleDirectory, { recursive: true });
+    fs.mkdirSync(htmlDirectory, { recursive: true });
+    fs.writeFileSync(path.join(scriptDirectory, 'main.js'), 'const sample = 1\n', 'utf8');
+    fs.writeFileSync(path.join(styleDirectory, 'site.css'), 'body { color: #12; }\n', 'utf8');
+    fs.writeFileSync(path.join(htmlDirectory, 'index.html'), '<!doctype html>\n<html><body><div id="a" id="a"></div></body></html>\n', 'utf8');
+    writeWebCommandWrapper(nodeBinDirectory, 'eslint', 'eslint.log', {
+      stdout: '[]',
+      exitCode: 0,
+      loggedEnvironmentKeys: ['ESLINT_USE_FLAT_CONFIG'],
+    });
+    writeWebCommandWrapper(nodeBinDirectory, 'stylelint', 'stylelint.log', { stdout: '[]', exitCode: 0 });
+    writeWebCommandWrapper(nodeBinDirectory, 'htmlhint', 'htmlhint.log', { stdout: '[]', exitCode: 0 });
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'prepush',
+      '--scope',
+      'workspace',
+      '--execute',
+    ]);
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /eslint:ok exitCode=0/u);
+    assert.match(result.stdout, /stylelint:ok exitCode=0/u);
+    assert.match(result.stdout, /htmlhint:ok exitCode=0/u);
+    assert.match(fs.readFileSync(eslintLogPath, 'utf8'), /--config .*eslint\.default\.json/u);
+    assert.match(fs.readFileSync(eslintLogPath, 'utf8'), /ESLINT_USE_FLAT_CONFIG=false/u);
+    assert.match(fs.readFileSync(stylelintLogPath, 'utf8'), /--config .*stylelint\.default\.json/u);
+    assert.match(fs.readFileSync(htmlhintLogPath, 'utf8'), /--config .*htmlhint\.default\.json/u);
   });
 
   /**
@@ -1196,6 +1263,38 @@ suite('Mamori CLI Test Suite', () => {
     assert.match(result.stdout, /packages[\\/]app/u);
     assert.match(result.stdout, /checks=eslint:enabled/u);
     assert.match(result.stdout, /commands=eslint:eslint/u);
+  });
+
+  /**
+   * nested module と root 側の Web ファイルが共存しても両方を計画できること。
+   * @returns 返り値はない。
+   */
+  test('Adds a root fallback web module when root files coexist with nested configured modules', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const rootSourceDirectory = path.join(temporaryDirectory, 'src');
+    const moduleDirectory = path.join(temporaryDirectory, 'packages', 'app');
+    const moduleSourceDirectory = path.join(moduleDirectory, 'src');
+
+    fs.mkdirSync(rootSourceDirectory, { recursive: true });
+    fs.mkdirSync(moduleSourceDirectory, { recursive: true });
+    fs.writeFileSync(path.join(rootSourceDirectory, 'root-main.js'), 'const rootValue = 1;\n', 'utf8');
+    fs.writeFileSync(path.join(moduleSourceDirectory, 'nested-main.js'), 'const nestedValue = 1;\n', 'utf8');
+    fs.writeFileSync(path.join(moduleDirectory, 'eslint.config.mjs'), 'export default [];\n', 'utf8');
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'prepush',
+      '--scope',
+      'workspace',
+    ]);
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /root-main\.js/u);
+    assert.match(result.stdout, /nested-main\.js/u);
+    assert.match(result.stdout, /eslint\.default\.json/u);
+    assert.match(result.stdout, /packages[\\/]app[\\/]eslint\.config\.mjs/u);
+    assert.ok((result.stdout.match(/commands=eslint:eslint/gu) || []).length >= 2);
   });
 
   /**
@@ -1372,6 +1471,7 @@ suite('Mamori CLI Test Suite', () => {
       'utf8',
     );
     fs.writeFileSync(path.join(temporaryDirectory, 'stylelint.config.mjs'), 'export default {}\n', 'utf8');
+    writeWebCommandWrapper(nodeBinDirectory, 'htmlhint', 'htmlhint.log', { stdout: '[]', exitCode: 0 });
     writeInlineHtmlStylelintWrapper(nodeBinDirectory, 'stylelint.log', {
       findingsStream: 'stderr',
     });
@@ -1405,6 +1505,7 @@ suite('Mamori CLI Test Suite', () => {
     const htmlFilePath = path.join(htmlDirectory, 'index.html');
     const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
     const stylelintLogPath = path.join(nodeBinDirectory, 'stylelint.log');
+    const htmlhintLogPath = path.join(nodeBinDirectory, 'htmlhint.log');
 
     fs.mkdirSync(htmlDirectory, { recursive: true });
     fs.writeFileSync(
@@ -1426,6 +1527,7 @@ suite('Mamori CLI Test Suite', () => {
       'utf8',
     );
     writeWebCommandWrapper(nodeBinDirectory, 'prettier', 'prettier.log');
+    writeWebCommandWrapper(nodeBinDirectory, 'htmlhint', 'htmlhint.log', { stdout: '[]', exitCode: 0 });
     writeInlineHtmlStylelintWrapper(nodeBinDirectory, 'stylelint.log', {
       requiredPackageJsonKey: 'stylelint',
       stdout: '[]',
@@ -1445,7 +1547,9 @@ suite('Mamori CLI Test Suite', () => {
 
     assert.strictEqual(result.status, 0);
     assert.match(result.stdout, /stylelint:ok exitCode=0/u);
+    assert.match(result.stdout, /htmlhint:ok exitCode=0/u);
     assert.match(fs.readFileSync(stylelintLogPath, 'utf8'), /PACKAGE_JSON=.*package\.json/u);
+    assert.match(fs.readFileSync(htmlhintLogPath, 'utf8'), /--config .*htmlhint\.default\.json/u);
   });
 
   /**
@@ -1475,6 +1579,7 @@ suite('Mamori CLI Test Suite', () => {
     );
     fs.writeFileSync(path.join(temporaryDirectory, 'stylelint.config.mjs'), 'export default {}\n', 'utf8');
     writeWebCommandWrapper(nodeBinDirectory, 'prettier', 'prettier.log');
+    writeWebCommandWrapper(nodeBinDirectory, 'htmlhint', 'htmlhint.log', { stdout: '[]', exitCode: 0 });
     writeInlineHtmlStylelintWrapper(nodeBinDirectory, 'stylelint.log', {
       stdout: '[]',
       exitCode: 0,
@@ -1523,6 +1628,7 @@ suite('Mamori CLI Test Suite', () => {
     );
     fs.writeFileSync(path.join(temporaryDirectory, 'stylelint.config.mjs'), 'export default {}\n', 'utf8');
     writeWebCommandWrapper(nodeBinDirectory, 'prettier', 'prettier.log');
+    writeWebCommandWrapper(nodeBinDirectory, 'htmlhint', 'htmlhint.log', { stdout: '[]', exitCode: 0 });
     writeInlineHtmlStylelintWrapper(nodeBinDirectory, 'stylelint.log');
 
     const result = runMamoriCli(temporaryDirectory, [
@@ -1767,6 +1873,7 @@ suite('Mamori CLI Test Suite', () => {
     const htmlFilePath = path.join(htmlDirectory, 'index.html');
     const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
     const eslintLogPath = path.join(nodeBinDirectory, 'eslint.log');
+    const htmlhintLogPath = path.join(nodeBinDirectory, 'htmlhint.log');
 
     fs.mkdirSync(htmlDirectory, { recursive: true });
     fs.writeFileSync(
@@ -1788,6 +1895,7 @@ suite('Mamori CLI Test Suite', () => {
       'utf8',
     );
     writeWebCommandWrapper(nodeBinDirectory, 'prettier', 'prettier.log');
+    writeWebCommandWrapper(nodeBinDirectory, 'htmlhint', 'htmlhint.log', { stdout: '[]', exitCode: 0 });
     writeInlineHtmlEslintWrapper(nodeBinDirectory, 'eslint.log', {
       requiredPackageJsonKey: 'eslintConfig',
       stdout: '[]',
@@ -1807,7 +1915,9 @@ suite('Mamori CLI Test Suite', () => {
 
     assert.strictEqual(result.status, 0);
     assert.match(result.stdout, /eslint:ok exitCode=0/u);
+    assert.match(result.stdout, /htmlhint:ok exitCode=0/u);
     assert.match(fs.readFileSync(eslintLogPath, 'utf8'), /PACKAGE_JSON=.*package\.json/u);
+    assert.match(fs.readFileSync(htmlhintLogPath, 'utf8'), /--config .*htmlhint\.default\.json/u);
   });
 
   /**
@@ -1838,6 +1948,7 @@ suite('Mamori CLI Test Suite', () => {
     );
     fs.writeFileSync(path.join(temporaryDirectory, 'eslint.config.mjs'), 'export default []\n', 'utf8');
     writeWebCommandWrapper(nodeBinDirectory, 'prettier', 'prettier.log');
+    writeWebCommandWrapper(nodeBinDirectory, 'htmlhint', 'htmlhint.log', { stdout: '[]', exitCode: 0 });
     writeInlineHtmlEslintWrapper(nodeBinDirectory, 'eslint.log', {
       expectedExtension: '.mjs',
     });
@@ -1889,6 +2000,7 @@ suite('Mamori CLI Test Suite', () => {
     );
     fs.writeFileSync(path.join(temporaryDirectory, 'eslint.config.mjs'), 'export default []\n', 'utf8');
     writeWebCommandWrapper(nodeBinDirectory, 'prettier', 'prettier.log');
+    writeWebCommandWrapper(nodeBinDirectory, 'htmlhint', 'htmlhint.log', { stdout: '[]', exitCode: 0 });
     writeInlineHtmlEslintWrapper(nodeBinDirectory, 'eslint.log', {
       expectedExtension: '.js',
     });
@@ -1943,6 +2055,7 @@ suite('Mamori CLI Test Suite', () => {
     );
     fs.writeFileSync(path.join(temporaryDirectory, 'eslint.config.mjs'), 'export default []\n', 'utf8');
     writeWebCommandWrapper(nodeBinDirectory, 'prettier', 'prettier.log');
+    writeWebCommandWrapper(nodeBinDirectory, 'htmlhint', 'htmlhint.log', { stdout: '[]', exitCode: 0 });
     writeInlineHtmlEslintWrapper(nodeBinDirectory, 'eslint.log', {
       expectedExtension: '.js',
     });
@@ -2003,6 +2116,7 @@ suite('Mamori CLI Test Suite', () => {
     );
     fs.writeFileSync(path.join(temporaryDirectory, 'eslint.config.mjs'), 'export default []\n', 'utf8');
     writeWebCommandWrapper(nodeBinDirectory, 'prettier', 'prettier.log');
+    writeWebCommandWrapper(nodeBinDirectory, 'htmlhint', 'htmlhint.log', { stdout: '[]', exitCode: 0 });
     writeInlineHtmlEslintWrapper(nodeBinDirectory, 'eslint.log', {
       stdout: '[]',
       exitCode: 0,
@@ -2051,6 +2165,7 @@ suite('Mamori CLI Test Suite', () => {
     );
     fs.writeFileSync(path.join(temporaryDirectory, 'eslint.config.mjs'), 'export default []\n', 'utf8');
     writeWebCommandWrapper(nodeBinDirectory, 'prettier', 'prettier.log');
+    writeWebCommandWrapper(nodeBinDirectory, 'htmlhint', 'htmlhint.log', { stdout: '[]', exitCode: 0 });
     writeInlineHtmlEslintWrapper(nodeBinDirectory, 'eslint.log');
 
     const result = runMamoriCli(temporaryDirectory, [
@@ -2116,6 +2231,7 @@ suite('Mamori CLI Test Suite', () => {
     fs.writeFileSync(javascriptFilePath, 'const sample = 1\n', 'utf8');
     fs.writeFileSync(path.join(temporaryDirectory, 'eslint.config.mjs'), 'export default []\n', 'utf8');
     writeWebCommandWrapper(nodeBinDirectory, 'prettier', 'prettier.log');
+    writeWebCommandWrapper(nodeBinDirectory, 'htmlhint', 'htmlhint.log', { stdout: '[]', exitCode: 0 });
     writeWebCommandWrapper(nodeBinDirectory, 'eslint', 'eslint.log', { stdout: eslintOutput, exitCode: 1 });
 
     const result = runMamoriCli(temporaryDirectory, [
