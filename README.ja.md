@@ -34,6 +34,15 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 - Maven と Gradle の build 定義を解析して、Checkstyle、PMD、Spotless、CPD、SpotBugs などの Java ツール設定を解決します。
 - `mamori.js hooks install` と `mamori.js hooks uninstall` は、`.git/hooks` 配下の管理対象 `pre-commit` と `pre-push` を作成または削除します。
 
+## HTML 内の JS / CSS チェック
+- Mamori は、HTML のマークアップ本体を htmlhint、inline script を ESLint、inline style を Stylelint で分担して検査します。
+- inline script のチェック対象は、`src` を持たず、`type` が未指定、空文字、`module`、または `text/javascript`、`application/javascript`、`application/ecmascript` などの JavaScript MIME type である `script` タグだけです。
+- `text/javascript; charset=utf-8` のような parameter 付き JavaScript MIME type も正規化して JavaScript として扱います。
+- `text/plain` など JavaScript 以外の `type` を持つ inline script は ESLint の対象外です。
+- inline style のチェック対象は、`type` が未指定、空文字、`text/css`、または `text/css; charset=utf-8` のような parameter 付き `text/css` である `style` タグだけです。
+- CSS 以外の `type` を持つ inline style は Stylelint の対象外です。
+- inline script / inline style の診断は元の HTML 上の位置に逆写像して報告し、抽出に使った一時ファイルは各実行後に削除します。
+
 ## 検証モード
 | トリガー | 拡張インストール後に自動開始 | 追加セットアップ | 対象範囲 | 補足 |
 | ---- | ---- | ---- | ---- | ---- |

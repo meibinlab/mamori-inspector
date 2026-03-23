@@ -14,8 +14,8 @@ const SPOTBUGS_CLASS_ROOT_CANDIDATES = [
 // Web 系ファイル拡張子一覧を表す
 const WEB_FILE_EXTENSIONS = {
   prettier: new Set(['.js', '.cjs', '.mjs', '.jsx', '.css', '.scss', '.sass', '.html', '.htm']),
-  eslint: new Set(['.js', '.cjs', '.mjs', '.jsx']),
-  stylelint: new Set(['.css', '.scss', '.sass']),
+  eslint: new Set(['.js', '.cjs', '.mjs', '.jsx', '.html', '.htm']),
+  stylelint: new Set(['.css', '.scss', '.sass', '.html', '.htm']),
   htmlhint: new Set(['.html', '.htm']),
 };
 

@@ -23,6 +23,15 @@ const semgrepAdapter = require('../adapters/semgrep');
 // コマンド実行器を表す
 const { execCommand } = require('../tools/exec');
 
+// HTML ファイル拡張子一覧を表す
+const HTML_FILE_EXTENSIONS = new Set(['.html', '.htm']);
+
+// inline script 抽出用の正規表現を表す
+const INLINE_SCRIPT_PATTERN = /<script\b((?:"[^"]*"|'[^']*'|[^'">])*)>([\s\S]*?)<\/script>/giu;
+
+// inline style 抽出用の正規表現を表す
+const INLINE_STYLE_PATTERN = /<style\b((?:"[^"]*"|'[^']*'|[^'">])*)>([\s\S]*?)<\/style>/giu;
+
 /**
  * 実行結果の初期値を返す。
  * @returns {{issues: object[], warnings: string[], commandResults: object[], exitCode: number}} 初期結果を返す。
@@ -63,11 +72,19 @@ function extractIssues(commandResult) {
   }
 
   if (commandResult.tool === 'eslint') {
-    return eslintAdapter.parseEslintJson(commandResult.stdout || '');
+    return eslintAdapter.parseEslintJson(
+      commandResult.stdout || '',
+      commandResult.filePathMappings,
+    );
   }
 
   if (commandResult.tool === 'stylelint') {
-    return stylelintAdapter.parseStylelintJson(commandResult.stdout || '');
+    return stylelintAdapter.parseStylelintJson(
+      typeof commandResult.stdout === 'string' && commandResult.stdout.trim() !== ''
+        ? commandResult.stdout
+        : (commandResult.stderr || ''),
+      commandResult.filePathMappings,
+    );
   }
 
   if (commandResult.tool === 'htmlhint') {
@@ -75,6 +92,384 @@ function extractIssues(commandResult) {
   }
 
   return [];
+}
+
+/**
+ * HTML ファイルか判定する。
+ * @param {string} filePath 対象ファイルパスを表す。
+ * @returns {boolean} HTML ファイルなら true を返す。
+ */
+function isHtmlFile(filePath) {
+  return HTML_FILE_EXTENSIONS.has(path.extname(filePath).toLowerCase());
+}
+
+/**
+ * 属性文字列から指定属性の値を返す。
+ * @param {string} attributes タグ属性文字列を表す。
+ * @param {string} attributeName 属性名を表す。
+ * @returns {string|undefined} 属性値を返す。
+ */
+function resolveAttributeValue(attributes, attributeName) {
+  const attributePattern = new RegExp(
+    `(?:^|\\s)${attributeName}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`,
+    'iu',
+  );
+  const attributeMatch = attributes.match(attributePattern);
+  if (!attributeMatch) {
+    return undefined;
+  }
+
+  return attributeMatch[1] || attributeMatch[2] || attributeMatch[3] || '';
+}
+
+/**
+ * script タグ属性から正規化済み type 値を返す。
+ * @param {string} attributes script タグ属性文字列を表す。
+ * @returns {string} 小文字化し、パラメータ部を除去した type 値を返す。
+ */
+function resolveNormalizedInlineScriptType(attributes) {
+  const typeValue = resolveAttributeValue(attributes, 'type');
+  if (typeof typeValue !== 'string') {
+    return '';
+  }
+
+  return typeValue
+    .trim()
+    .toLowerCase()
+    .split(';', 1)[0]
+    .trim();
+}
+
+/**
+ * script タグ属性が ESLint 対象の JavaScript か判定する。
+ * @param {string} attributes script タグ属性文字列を表す。
+ * @returns {boolean} JavaScript として扱う場合は true を返す。
+ */
+function isLintableInlineScript(attributes) {
+  if (typeof resolveAttributeValue(attributes, 'src') === 'string') {
+    return false;
+  }
+
+  const normalizedType = resolveNormalizedInlineScriptType(attributes);
+  if (normalizedType === '') {
+    return true;
+  }
+
+  if (normalizedType === 'module') {
+    return true;
+  }
+
+  return /(java|ecma)script$/u.test(normalizedType);
+}
+
+/**
+ * script タグ属性から一時ファイル拡張子を返す。
+ * @param {string} attributes script タグ属性文字列を表す。
+ * @returns {string} 一時ファイル拡張子を返す。
+ */
+function resolveInlineScriptExtension(attributes) {
+  const normalizedType = resolveNormalizedInlineScriptType(attributes);
+  if (normalizedType === '') {
+    return '.js';
+  }
+
+  return normalizedType === 'module' ? '.mjs' : '.js';
+}
+
+/**
+ * style タグ属性が Stylelint 対象の CSS か判定する。
+ * @param {string} attributes style タグ属性文字列を表す。
+ * @returns {boolean} CSS として扱う場合は true を返す。
+ */
+function isLintableInlineStyle(attributes) {
+  const typeValue = resolveAttributeValue(attributes, 'type');
+  if (typeof typeValue !== 'string') {
+    return true;
+  }
+
+  const normalizedType = typeValue.trim().toLowerCase();
+  if (normalizedType === '' || normalizedType === 'text/css') {
+    return true;
+  }
+
+  return normalizedType.startsWith('text/css;');
+}
+
+/**
+ * 文字列インデックスから行・列を返す。
+ * @param {string} text 対象文字列を表す。
+ * @param {number} index 位置インデックスを表す。
+ * @returns {{line: number, column: number}} 行・列を返す。
+ */
+function resolveLineAndColumn(text, index) {
+  const normalizedPrefix = text.slice(0, index).replace(/\r\n?/gu, '\n');
+  const lines = normalizedPrefix.split('\n');
+  return {
+    line: lines.length,
+    column: lines[lines.length - 1].length + 1,
+  };
+}
+
+/**
+ * inline script を ESLint 用ソースへ整形する。
+ * @param {string} htmlText HTML 文字列を表す。
+ * @param {number} startIndex script 本文の開始位置を表す。
+ * @param {string} scriptBody script 本文を表す。
+ * @returns {string} ESLint 用の一時ファイル内容を返す。
+ */
+function buildAlignedInlineScriptSource(htmlText, startIndex, scriptBody) {
+  const location = resolveLineAndColumn(htmlText, startIndex);
+  return `${'\n'.repeat(Math.max(location.line - 1, 0))}${' '.repeat(Math.max(location.column - 1, 0))}${scriptBody}`;
+}
+
+/**
+ * 開始タグの本文開始オフセットを返す。
+ * @param {string} tagText 開始タグを含む文字列を表す。
+ * @returns {number} 本文開始オフセットを返す。
+ */
+function resolveStartTagBodyOffset(tagText) {
+  let activeQuote = '';
+
+  for (let index = 0; index < tagText.length; index += 1) {
+    const character = tagText[index];
+    if (activeQuote) {
+      if (character === activeQuote) {
+        activeQuote = '';
+      }
+      continue;
+    }
+
+    if (character === '"' || character === "'") {
+      activeQuote = character;
+      continue;
+    }
+
+    if (character === '>') {
+      return index + 1;
+    }
+  }
+
+  return tagText.indexOf('>') + 1;
+}
+
+/**
+ * HTML から ESLint 対象の inline script 一覧を抽出する。
+ * @param {string} htmlFilePath HTML ファイルパスを表す。
+ * @returns {Array<{htmlFilePath: string, source: string, extension: string}>} 抽出結果一覧を返す。
+ */
+function extractInlineScriptSources(htmlFilePath) {
+  const htmlText = fs.readFileSync(htmlFilePath, 'utf8');
+  const extractedScripts = [];
+  INLINE_SCRIPT_PATTERN.lastIndex = 0;
+
+  let match;
+  while ((match = INLINE_SCRIPT_PATTERN.exec(htmlText)) !== null) {
+    const attributes = match[1] || '';
+    const scriptBody = match[2] || '';
+
+    if (!isLintableInlineScript(attributes) || scriptBody.trim() === '') {
+      continue;
+    }
+
+    const bodyOffset = resolveStartTagBodyOffset(match[0]);
+    const bodyStartIndex = match.index + bodyOffset;
+    extractedScripts.push({
+      htmlFilePath,
+      source: buildAlignedInlineScriptSource(htmlText, bodyStartIndex, scriptBody),
+      extension: resolveInlineScriptExtension(attributes),
+    });
+  }
+
+  return extractedScripts;
+}
+
+/**
+ * HTML から Stylelint 対象の inline style 一覧を抽出する。
+ * @param {string} htmlFilePath HTML ファイルパスを表す。
+ * @returns {Array<{htmlFilePath: string, source: string, extension: string}>} 抽出結果一覧を返す。
+ */
+function extractInlineStyleSources(htmlFilePath) {
+  const htmlText = fs.readFileSync(htmlFilePath, 'utf8');
+  const extractedStyles = [];
+  INLINE_STYLE_PATTERN.lastIndex = 0;
+
+  let match;
+  while ((match = INLINE_STYLE_PATTERN.exec(htmlText)) !== null) {
+    const attributes = match[1] || '';
+    const styleBody = match[2] || '';
+
+    if (!isLintableInlineStyle(attributes) || styleBody.trim() === '') {
+      continue;
+    }
+
+    const bodyOffset = resolveStartTagBodyOffset(match[0]);
+    const bodyStartIndex = match.index + bodyOffset;
+    extractedStyles.push({
+      htmlFilePath,
+      source: buildAlignedInlineScriptSource(htmlText, bodyStartIndex, styleBody),
+      extension: '.css',
+    });
+  }
+
+  return extractedStyles;
+}
+
+/**
+ * ESLint 向け inline script 一時ファイル群を作成する。
+ * @param {string[]|undefined} inlineHtmlFiles HTML ファイル一覧を表す。
+ * @param {string|undefined} currentWorkingDirectory 実行時の作業ディレクトリを表す。
+ * @returns {{tempDirectory?: string, tempFilePaths: string[], filePathMappings: Record<string, string>}} 一時ファイル情報を返す。
+ */
+function materializeInlineScriptFiles(inlineHtmlFiles, currentWorkingDirectory) {
+  if (!Array.isArray(inlineHtmlFiles) || inlineHtmlFiles.length === 0) {
+    return {
+      tempFilePaths: [],
+      filePathMappings: {},
+    };
+  }
+
+  const workspaceTempRoot = path.join(
+    path.resolve(currentWorkingDirectory || process.cwd()),
+    '.mamori',
+    'tmp',
+  );
+  fs.mkdirSync(workspaceTempRoot, { recursive: true });
+  const tempDirectory = fs.mkdtempSync(path.join(workspaceTempRoot, 'mamori-eslint-inline-'));
+  const tempFilePaths = [];
+  const filePathMappings = {};
+  let scriptIndex = 0;
+
+  for (const htmlFilePath of inlineHtmlFiles.filter((filePath) => isHtmlFile(filePath))) {
+    const inlineScripts = extractInlineScriptSources(htmlFilePath);
+    for (const inlineScript of inlineScripts) {
+      const tempFilePath = path.join(
+        tempDirectory,
+        `${path.basename(htmlFilePath, path.extname(htmlFilePath))}.inline-${scriptIndex}${inlineScript.extension}`,
+      );
+      fs.writeFileSync(tempFilePath, inlineScript.source, 'utf8');
+      tempFilePaths.push(tempFilePath);
+      filePathMappings[path.resolve(tempFilePath)] = htmlFilePath;
+      scriptIndex += 1;
+    }
+  }
+
+  if (tempFilePaths.length === 0) {
+    fs.rmSync(tempDirectory, { recursive: true, force: true });
+    return {
+      tempFilePaths: [],
+      filePathMappings: {},
+    };
+  }
+
+  return {
+    tempDirectory,
+    tempFilePaths,
+    filePathMappings,
+  };
+}
+
+/**
+ * Stylelint 向け inline style 一時ファイル群を作成する。
+ * @param {string[]|undefined} inlineHtmlFiles HTML ファイル一覧を表す。
+ * @param {string|undefined} currentWorkingDirectory 実行時の作業ディレクトリを表す。
+ * @returns {{tempDirectory?: string, tempFilePaths: string[], filePathMappings: Record<string, string>}} 一時ファイル情報を返す。
+ */
+function materializeInlineStyleFiles(inlineHtmlFiles, currentWorkingDirectory) {
+  if (!Array.isArray(inlineHtmlFiles) || inlineHtmlFiles.length === 0) {
+    return {
+      tempFilePaths: [],
+      filePathMappings: {},
+    };
+  }
+
+  const workspaceTempRoot = path.join(
+    path.resolve(currentWorkingDirectory || process.cwd()),
+    '.mamori',
+    'tmp',
+  );
+  fs.mkdirSync(workspaceTempRoot, { recursive: true });
+  const tempDirectory = fs.mkdtempSync(path.join(workspaceTempRoot, 'mamori-stylelint-inline-'));
+  const tempFilePaths = [];
+  const filePathMappings = {};
+  let styleIndex = 0;
+
+  for (const htmlFilePath of inlineHtmlFiles.filter((filePath) => isHtmlFile(filePath))) {
+    const inlineStyles = extractInlineStyleSources(htmlFilePath);
+    for (const inlineStyle of inlineStyles) {
+      const tempFilePath = path.join(
+        tempDirectory,
+        `${path.basename(htmlFilePath, path.extname(htmlFilePath))}.inline-style-${styleIndex}${inlineStyle.extension}`,
+      );
+      fs.writeFileSync(tempFilePath, inlineStyle.source, 'utf8');
+      tempFilePaths.push(tempFilePath);
+      filePathMappings[path.resolve(tempFilePath)] = htmlFilePath;
+      styleIndex += 1;
+    }
+  }
+
+  if (tempFilePaths.length === 0) {
+    fs.rmSync(tempDirectory, { recursive: true, force: true });
+    return {
+      tempFilePaths: [],
+      filePathMappings: {},
+    };
+  }
+
+  return {
+    tempDirectory,
+    tempFilePaths,
+    filePathMappings,
+  };
+}
+
+/**
+ * 実行前にコマンド引数と付帯情報を調整する。
+ * @param {object} commandEntry コマンド計画を表す。
+ * @returns {{args: string[], filePathMappings?: Record<string, string>, tempDirectory?: string, skipReason?: string}} 実行準備結果を返す。
+ */
+function prepareCommandExecution(commandEntry) {
+  if (commandEntry.tool !== 'eslint' && commandEntry.tool !== 'stylelint') {
+    return {
+      args: Array.isArray(commandEntry.args) ? commandEntry.args : [],
+    };
+  }
+
+  const directFiles = Array.isArray(commandEntry.directFiles) ? commandEntry.directFiles : [];
+  const inlineArtifacts = commandEntry.tool === 'eslint'
+    ? materializeInlineScriptFiles(commandEntry.inlineHtmlFiles, commandEntry.cwd)
+    : materializeInlineStyleFiles(commandEntry.inlineHtmlFiles, commandEntry.cwd);
+  if (directFiles.length === 0 && inlineArtifacts.tempFilePaths.length === 0) {
+    return {
+      args: Array.isArray(commandEntry.args) ? commandEntry.args : [],
+      tempDirectory: inlineArtifacts.tempDirectory,
+      skipReason: 'no-target-files',
+    };
+  }
+
+  return {
+    args: [...(Array.isArray(commandEntry.args) ? commandEntry.args : []), ...inlineArtifacts.tempFilePaths],
+    filePathMappings: inlineArtifacts.filePathMappings,
+    tempDirectory: inlineArtifacts.tempDirectory,
+  };
+}
+
+/**
+ * 実行準備で作成した一時ファイルを削除する。
+ * @param {{tempDirectory?: string}|undefined} preparedCommand 実行準備結果を表す。
+ * @returns {string|undefined} cleanup に失敗した場合の警告を返す。
+ */
+function cleanupPreparedCommand(preparedCommand) {
+  if (!preparedCommand || !preparedCommand.tempDirectory) {
+    return undefined;
+  }
+
+  try {
+    fs.rmSync(preparedCommand.tempDirectory, { recursive: true, force: true });
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+
+  return undefined;
 }
 
 /**
@@ -319,63 +714,90 @@ function canResolveCommand(command, cwd, env) {
  */
 async function executeCommandEntry(moduleRoot, commandEntry, executor) {
   const commandEnvironment = buildCommandEnvironment(commandEntry.cwd, process.env);
+  let preparedCommand;
+  let commandResult;
 
   if (!commandEntry.enabled) {
     return buildSkippedCommandResult(moduleRoot, commandEntry);
   }
 
-  if (!canResolveCommand(commandEntry.command, commandEntry.cwd, commandEnvironment)) {
-    return {
-      moduleRoot,
-      tool: commandEntry.tool,
-      phase: commandEntry.phase,
-      status: 'error',
-      command: commandEntry.command,
-      args: commandEntry.args || [],
-      message: `command not found: ${commandEntry.command}`,
-    };
-  }
-
   try {
-    const result = await executor(commandEntry.command, commandEntry.args || [], {
+    preparedCommand = prepareCommandExecution(commandEntry);
+
+    if (preparedCommand.skipReason) {
+      commandResult = {
+        moduleRoot,
+        tool: commandEntry.tool,
+        phase: commandEntry.phase,
+        status: 'skipped',
+        reason: preparedCommand.skipReason,
+      };
+      return commandResult;
+    }
+
+    if (!canResolveCommand(commandEntry.command, commandEntry.cwd, commandEnvironment)) {
+      commandResult = {
+        moduleRoot,
+        tool: commandEntry.tool,
+        phase: commandEntry.phase,
+        status: 'error',
+        command: commandEntry.command,
+        args: preparedCommand.args,
+        message: `command not found: ${commandEntry.command}`,
+      };
+      return commandResult;
+    }
+
+    const result = await executor(commandEntry.command, preparedCommand.args, {
       cwd: commandEntry.cwd,
       env: commandEnvironment,
       timeoutMs: 30000,
     });
 
     if (result.exitCode !== 0 && isCommandStartFailure(result.stderr)) {
-      return {
+      commandResult = {
         moduleRoot,
         tool: commandEntry.tool,
         phase: commandEntry.phase,
         status: 'error',
         command: commandEntry.command,
-        args: commandEntry.args || [],
+        args: preparedCommand.args,
         message: result.stderr.trim() || `failed to start ${commandEntry.command}`,
       };
+      return commandResult;
     }
 
-    return {
+    commandResult = {
       moduleRoot,
       tool: commandEntry.tool,
       phase: commandEntry.phase,
       status: result.exitCode === 0 ? 'ok' : 'failed',
       command: commandEntry.command,
-      args: commandEntry.args || [],
+      args: preparedCommand.args,
       exitCode: result.exitCode,
       stdout: result.stdout,
       stderr: result.stderr,
+      filePathMappings: preparedCommand.filePathMappings,
     };
+    return commandResult;
   } catch (error) {
-    return {
+    commandResult = {
       moduleRoot,
       tool: commandEntry.tool,
       phase: commandEntry.phase,
       status: 'error',
       command: commandEntry.command,
-      args: commandEntry.args || [],
+      args: preparedCommand && Array.isArray(preparedCommand.args)
+        ? preparedCommand.args
+        : (commandEntry.args || []),
       message: error instanceof Error ? error.message : String(error),
     };
+    return commandResult;
+  } finally {
+    const cleanupWarning = cleanupPreparedCommand(preparedCommand);
+    if (cleanupWarning && commandResult) {
+      commandResult.warning = `temporary inline files cleanup failed in ${moduleRoot}: ${cleanupWarning}`;
+    }
   }
 }
 
@@ -401,6 +823,10 @@ async function runResolvedConfiguration(resolution, options = {}) {
     for (const commandEntry of commands) {
       const commandResult = await executeCommandEntry(modulePlan.moduleRoot, commandEntry, executor);
       result.commandResults.push(commandResult);
+
+      if (commandResult.warning) {
+        result.warnings.push(commandResult.warning);
+      }
 
       if (commandResult.status === 'failed') {
         result.exitCode = Math.max(result.exitCode, 1);

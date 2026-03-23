@@ -22,8 +22,8 @@ const SUPPORTED_COMMAND_TOOLS = new Set([
 // ツールごとの対象拡張子一覧を表す
 const TOOL_FILE_EXTENSIONS = {
   prettier: new Set(['.js', '.cjs', '.mjs', '.jsx', '.css', '.scss', '.sass', '.html', '.htm']),
-  eslint: new Set(['.js', '.cjs', '.mjs', '.jsx']),
-  stylelint: new Set(['.css', '.scss', '.sass']),
+  eslint: new Set(['.js', '.cjs', '.mjs', '.jsx', '.html', '.htm']),
+  stylelint: new Set(['.css', '.scss', '.sass', '.html', '.htm']),
   htmlhint: new Set(['.html', '.htm']),
 };
 
@@ -75,6 +75,15 @@ function resolveModuleFiles(moduleRoot, files) {
  */
 function hasMatchingExtension(filePath, extensions) {
   return Boolean(extensions) && extensions.has(path.extname(filePath).toLowerCase());
+}
+
+/**
+ * HTML ファイルか判定する。
+ * @param {string} filePath 対象ファイルを表す。
+ * @returns {boolean} HTML ファイルなら true を返す。
+ */
+function isHtmlFile(filePath) {
+  return hasMatchingExtension(filePath, TOOL_FILE_EXTENSIONS.htmlhint);
 }
 
 /**
@@ -166,7 +175,14 @@ function buildWebConfigArguments(toolName, toolResolution) {
  * @returns {{tool: string, enabled: boolean, phase: string, command?: string, args?: string[], cwd?: string, reason?: string}|undefined} コマンド計画を返す。
  */
 function buildWebCommandEntry(toolName, moduleDefinition, toolFiles, options) {
-  if (toolFiles.length === 0) {
+  const toolResolution = options.web && options.web[toolName]
+    ? options.web[toolName]
+    : undefined;
+  const filteredToolFiles = toolResolution && toolResolution.locationType === 'file' && toolResolution.path
+    ? toolFiles.filter((filePath) => path.resolve(filePath) !== path.resolve(toolResolution.path))
+    : toolFiles;
+
+  if (filteredToolFiles.length === 0) {
     return {
       tool: toolName,
       enabled: false,
@@ -181,35 +197,42 @@ function buildWebCommandEntry(toolName, moduleDefinition, toolFiles, options) {
       enabled: true,
       phase: 'formatter',
       command: 'prettier',
-      args: ['--write', ...toolFiles],
+      args: ['--write', ...filteredToolFiles],
       cwd: moduleDefinition.moduleRoot,
     };
   }
 
-  const toolResolution = options.web && options.web[toolName]
-    ? options.web[toolName]
-    : undefined;
   const configArguments = buildWebConfigArguments(toolName, toolResolution);
 
   if (toolName === 'eslint') {
+    const directFiles = filteredToolFiles.filter((filePath) => !isHtmlFile(filePath));
+    const inlineHtmlFiles = filteredToolFiles.filter((filePath) => isHtmlFile(filePath));
+
     return {
       tool: 'eslint',
       enabled: true,
       phase: 'check',
       command: 'eslint',
-      args: [...configArguments, '--format', 'json', '--no-error-on-unmatched-pattern', ...toolFiles],
+      args: [...configArguments, '--format', 'json', '--no-error-on-unmatched-pattern', ...directFiles],
       cwd: moduleDefinition.moduleRoot,
+      directFiles,
+      inlineHtmlFiles,
     };
   }
 
   if (toolName === 'stylelint') {
+    const directFiles = filteredToolFiles.filter((filePath) => !isHtmlFile(filePath));
+    const inlineHtmlFiles = filteredToolFiles.filter((filePath) => isHtmlFile(filePath));
+
     return {
       tool: 'stylelint',
       enabled: true,
       phase: 'check',
       command: 'stylelint',
-      args: [...configArguments, '--formatter', 'json', '--allow-empty-input', ...toolFiles],
+      args: [...configArguments, '--formatter', 'json', '--allow-empty-input', ...directFiles],
       cwd: moduleDefinition.moduleRoot,
+      directFiles,
+      inlineHtmlFiles,
     };
   }
 
@@ -219,7 +242,7 @@ function buildWebCommandEntry(toolName, moduleDefinition, toolFiles, options) {
       enabled: true,
       phase: 'check',
       command: 'htmlhint',
-      args: [...configArguments, '--format', 'json', ...toolFiles],
+      args: [...configArguments, '--format', 'json', ...filteredToolFiles],
       cwd: moduleDefinition.moduleRoot,
     };
   }
