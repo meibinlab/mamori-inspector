@@ -614,6 +614,57 @@ function createHooksMessageRecorder(): {
 }
 
 /**
+ * VS Code の通知メッセージを一時的に記録する。
+ * @param vscodeApi VS Code API を表す。
+ * @returns 記録内容と復元関数を返す。
+ */
+function captureWindowMessages(vscodeApi: VscodeModule): {
+  informationMessages: string[];
+  errorMessages: string[];
+  restore: () => void;
+} {
+  const informationMessages: string[] = [];
+  const errorMessages: string[] = [];
+  const windowApi = vscodeApi.window as unknown as Record<string, unknown>;
+  const originalShowInformationMessage = windowApi.showInformationMessage;
+  const originalShowErrorMessage = windowApi.showErrorMessage;
+
+  Object.defineProperty(windowApi, 'showInformationMessage', {
+    configurable: true,
+    writable: true,
+    value: async(message: string) => {
+      informationMessages.push(message);
+      return undefined;
+    },
+  });
+  Object.defineProperty(windowApi, 'showErrorMessage', {
+    configurable: true,
+    writable: true,
+    value: async(message: string) => {
+      errorMessages.push(message);
+      return undefined;
+    },
+  });
+
+  return {
+    informationMessages,
+    errorMessages,
+    restore: () => {
+      Object.defineProperty(windowApi, 'showInformationMessage', {
+        configurable: true,
+        writable: true,
+        value: originalShowInformationMessage,
+      });
+      Object.defineProperty(windowApi, 'showErrorMessage', {
+        configurable: true,
+        writable: true,
+        value: originalShowErrorMessage,
+      });
+    },
+  };
+}
+
+/**
  * 拡張補助機能のテストスイートを定義する。
  * @returns 返り値はない。
  */
@@ -1244,6 +1295,54 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
     } finally {
       restorePreCommitHook();
       restorePrePushHook();
+    }
+  });
+
+  /**
+   * 手動実行で SARIF が生成されない場合でも失敗せず 0 件として完了できること。
+   * @returns 実行完了を待つ Promise を返す。
+   */
+  test('Completes workspace checks when manual execution does not generate SARIF output', async function() {
+    this.timeout(20000);
+
+    const activeVscodeApi = vscodeApi;
+    const workspaceRoot = activeVscodeApi.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceRoot) {
+      throw new Error('Workspace root was not found');
+    }
+
+    const cliScriptPath = path.join(workspaceRoot, '.mamori', 'mamori.js');
+    const manualSarifPath = path.join(workspaceRoot, '.mamori', 'out', 'combined.sarif');
+    const restoreCliScript = createRestoreAction(cliScriptPath);
+    const restoreManualSarif = createRestoreAction(manualSarifPath);
+    const messageCapture = captureWindowMessages(activeVscodeApi);
+
+    try {
+      fs.rmSync(manualSarifPath, { force: true });
+      fs.writeFileSync(
+        cliScriptPath,
+        [
+          '#!/usr/bin/env node',
+          'process.exit(0);',
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+      makeExecutable(cliScriptPath);
+
+      await getMamoriExtension(activeVscodeApi).activate();
+      await activeVscodeApi.commands.executeCommand('mamori-inspector.runWorkspaceCheck');
+
+      await waitFor(() => messageCapture.informationMessages.length > 0 || messageCapture.errorMessages.length > 0);
+
+      assert.deepStrictEqual(messageCapture.errorMessages, []);
+      assert.strictEqual(messageCapture.informationMessages.length, 1);
+      assert.match(messageCapture.informationMessages[0] || '', /0 件の問題を反映しました。/u);
+      assert.ok(!fs.existsSync(manualSarifPath));
+    } finally {
+      messageCapture.restore();
+      restoreCliScript();
+      restoreManualSarif();
     }
   });
 });
