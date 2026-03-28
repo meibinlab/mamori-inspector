@@ -114,6 +114,10 @@ export function parseSarifFindings(rawSarif: string): SarifFinding[] {
  * @returns finding 一覧を返す。
  */
 export function loadSarifFindings(sarifPath: string): SarifFinding[] {
+  if (!fs.existsSync(sarifPath)) {
+    return [];
+  }
+
   const rawSarif = fs.readFileSync(sarifPath, 'utf8');
   return parseSarifFindings(rawSarif);
 }

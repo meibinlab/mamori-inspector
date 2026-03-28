@@ -1020,6 +1020,126 @@ suite('Mamori CLI Test Suite', () => {
   });
 
   /**
+   * save/file で CSS ファイルの Stylelint finding を SARIF 化できること。
+   * @returns 返り値はない。
+   */
+  test('Reports direct CSS Stylelint findings during save checks', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const styleDirectory = path.join(temporaryDirectory, 'styles');
+    const cssFilePath = path.join(styleDirectory, 'site.css');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const prettierLogPath = path.join(nodeBinDirectory, 'prettier.log');
+    const stylelintLogPath = path.join(nodeBinDirectory, 'stylelint.log');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-css-save.sarif');
+    const stylelintOutput = JSON.stringify([
+      {
+        source: cssFilePath,
+        warnings: [
+          {
+            line: 1,
+            column: 15,
+            rule: 'color-no-invalid-hex',
+            severity: 'error',
+            text: 'Unexpected invalid hex color "#12" (color-no-invalid-hex)',
+          },
+        ],
+      },
+    ]);
+
+    fs.mkdirSync(styleDirectory, { recursive: true });
+    fs.writeFileSync(cssFilePath, 'body { color: #12; }\n', 'utf8');
+    fs.writeFileSync(path.join(temporaryDirectory, 'stylelint.config.mjs'), 'export default {};\n', 'utf8');
+    writeWebCommandWrapper(nodeBinDirectory, 'prettier', 'prettier.log');
+    writeWebCommandWrapper(nodeBinDirectory, 'stylelint', 'stylelint.log', {
+      stdout: stylelintOutput,
+      exitCode: 2,
+    });
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'save',
+      '--scope',
+      'file',
+      '--files',
+      path.relative(temporaryDirectory, cssFilePath),
+      '--execute',
+      '--sarif-output',
+      path.relative(temporaryDirectory, sarifOutputPath),
+    ]);
+
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /stylelint:failed exitCode=2/u);
+    assert.match(result.stdout, /Unexpected invalid hex color/u);
+    assert.match(fs.readFileSync(prettierLogPath, 'utf8'), /site\.css/u);
+    assert.match(fs.readFileSync(stylelintLogPath, 'utf8'), /site\.css/u);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /color-no-invalid-hex/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /site\.css/u);
+  });
+
+  /**
+   * save/file で HTML 本体の htmlhint finding を SARIF 化できること。
+   * @returns 返り値はない。
+   */
+  test('Reports direct HTML htmlhint findings during save checks', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const htmlDirectory = path.join(temporaryDirectory, 'public');
+    const htmlFilePath = path.join(htmlDirectory, 'index.html');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const prettierLogPath = path.join(nodeBinDirectory, 'prettier.log');
+    const htmlhintLogPath = path.join(nodeBinDirectory, 'htmlhint.log');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-html-save.sarif');
+    const htmlhintOutput = JSON.stringify([
+      {
+        file: htmlFilePath,
+        messages: [
+          {
+            type: 'warning',
+            message: 'Tag must be paired.',
+            line: 2,
+            col: 1,
+            rule: { id: 'tag-pair' },
+          },
+        ],
+      },
+    ]);
+
+    fs.mkdirSync(htmlDirectory, { recursive: true });
+    fs.writeFileSync(htmlFilePath, '<!doctype html>\n<div>\n', 'utf8');
+    fs.writeFileSync(path.join(temporaryDirectory, '.htmlhintrc'), '{"tag-pair": true}\n', 'utf8');
+    writeWebCommandWrapper(nodeBinDirectory, 'prettier', 'prettier.log');
+    writeWebCommandWrapper(nodeBinDirectory, 'htmlhint', 'htmlhint.log', {
+      stdout: htmlhintOutput,
+      exitCode: 1,
+    });
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'save',
+      '--scope',
+      'file',
+      '--files',
+      path.relative(temporaryDirectory, htmlFilePath),
+      '--execute',
+      '--sarif-output',
+      path.relative(temporaryDirectory, sarifOutputPath),
+    ]);
+
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /htmlhint:failed exitCode=1/u);
+    assert.match(result.stdout, /Tag must be paired\./u);
+    assert.match(result.stdout, /eslint:skipped reason=no-target-files/u);
+    assert.match(result.stdout, /stylelint:skipped reason=no-target-files/u);
+    assert.match(fs.readFileSync(prettierLogPath, 'utf8'), /index\.html/u);
+    assert.match(fs.readFileSync(htmlhintLogPath, 'utf8'), /index\.html/u);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /tag-pair/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /index\.html/u);
+  });
+
+  /**
    * 明示指定がある場合は Semgrep の既定値より優先されること。
    * @returns 返り値はない。
    */
