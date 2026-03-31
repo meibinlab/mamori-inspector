@@ -8,6 +8,19 @@
 
 - なし
 
+## [0.2.2] - 2026-03-31
+
+### Added
+- TypeScript を ESLint の保存時チェック対象に含める CLI テストと拡張結合テストを追加しました。
+- Maven の Checkstyle、PMD、CPD、SpotBugs が既定レポートファイル出力でも SARIF と Problems に反映される回帰テストを追加しました。
+
+### Changed
+- README、README.ja、仕様書を、TypeScript の保存時チェック条件と bundled fallback の扱いに合わせて更新しました。
+
+### Fixed
+- Maven 系ツールで stdout に結果が出ない場合でも、更新された既定レポートファイルから finding を取り込めるようにしました。
+- TypeScript ファイルを保存時トリガーと VS Code 拡張の起動条件に含め、ESLint 設定がある場合に Problems へ反映されるようにしました。
+
 ## [0.2.1] - 2026-03-31
 
 ### Added

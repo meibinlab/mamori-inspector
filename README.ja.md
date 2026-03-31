@@ -15,13 +15,15 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 - `precommit/staged` は、ステージ済みファイルを `git diff --cached --name-only --diff-filter=ACMR` で解決するため、`PATH` 上の Git CLI が必要です。
 - Web checker の設定は、明示設定、検出した設定ファイル、`package.json` の設定、bundled minimal config の順で解決します。
 - JavaScript ファイルと HTML の inline script チェックは、プロジェクト設定が検出できない場合、bundled minimal ESLint config にフォールバックします。bundled fallback は互換性を優先した保守的な core rule だけを使います。
+- TypeScript ファイルは、明示設定、ワークスペース探索、または `package.json#eslintConfig` で ESLint 設定を解決できた場合にのみチェックします。Mamori の JavaScript 向け bundled fallback は TypeScript には適用しません。
 - CSS、SCSS、Sass のチェックと HTML の inline style チェックは、プロジェクト設定が検出できない場合、bundled minimal Stylelint config にフォールバックします。
 - HTML のチェックは、プロジェクト設定が検出できない場合、bundled minimal htmlhint config にフォールバックします。
 
 ## 現在の挙動
-- Java、JavaScript、JavaScript React、CSS、SCSS、Sass、HTML ファイルは、保存時にデバウンスと再帰抑止付きのバックグラウンドチェックを自動実行します。
+- Java、JavaScript、JavaScript React、TypeScript、TypeScript React、CSS、SCSS、Sass、HTML ファイルは、保存時にデバウンスと再帰抑止付きのバックグラウンドチェックを自動実行します。
 - 保存時検証では、対応ファイルを先に整形し、その後に生成された SARIF から Diagnostics を公開します。
 - JavaScript の保存時検証は、Prettier と ESLint を使用し、明示設定または検出したプロジェクト設定を優先し、見つからない場合は Mamori の bundled minimal ESLint config を使用します。
+- TypeScript の保存時検証では、明示設定、ワークスペース探索、または `package.json#eslintConfig` で解決できる ESLint 設定がある場合にのみ ESLint を使用します。
 - CSS、SCSS、Sass の保存時検証は、Prettier と Stylelint を使用し、明示設定または検出したプロジェクト設定を優先し、見つからない場合は Mamori の bundled minimal Stylelint config を使用します。
 - HTML の保存時検証では、CSS と互換性のある type を持つ inline style ブロックも一時的な CSS ファイルへ抽出して Stylelint で検査し、診断を元の HTML 上の位置へ逆写像したうえで、実行後に一時ファイルを削除します。このとき Stylelint はプロジェクト設定を優先し、見つからない場合は Mamori の bundled minimal Stylelint config を使用します。
 - HTML の保存時検証は、Prettier と htmlhint を使用し、明示設定または検出したプロジェクト設定を優先し、見つからない場合は Mamori の bundled minimal htmlhint config を使用します。
@@ -73,7 +75,7 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 | Java Spotless | Spotless 設定を含む `pom.xml`、`build.gradle`、または `build.gradle.kts` | 保存時と pre-commit の Java 整形で使用されます。 |
 | Java SpotBugs | SpotBugs 設定を含む `pom.xml`、`build.gradle`、または `build.gradle.kts` | `prepush/workspace` では追加で `target/classes` または `build/classes/java/main` の class 出力が必要です。 |
 | Java Semgrep | 必須設定ファイルなし、または任意で `.semgrep.yml` | `.semgrep.yml` がない場合は既定の `p/java` ルールセットを使用します。 |
-| JavaScript ESLint | 任意: `eslint.config.js`、`eslint.config.mjs`、`eslint.config.cjs`、`eslint.config.ts`、`eslint.config.mts`、`eslint.config.cts`、`.eslintrc`、`.eslintrc.js`、`.eslintrc.cjs`、`.eslintrc.json`、`.eslintrc.yaml`、`.eslintrc.yml`、`.eslintrc.ts`、`.eslintrc.mts`、`.eslintrc.cts` のいずれか、または `eslintConfig` を含む `package.json` | プロジェクト設定がある場合はそれを優先し、ない場合は JavaScript ファイルと HTML の inline script チェックに bundled minimal ESLint config を使用します。 |
+| JavaScript / TypeScript ESLint | 任意: `eslint.config.js`、`eslint.config.mjs`、`eslint.config.cjs`、`eslint.config.ts`、`eslint.config.mts`、`eslint.config.cts`、`.eslintrc`、`.eslintrc.js`、`.eslintrc.cjs`、`.eslintrc.json`、`.eslintrc.yaml`、`.eslintrc.yml`、`.eslintrc.ts`、`.eslintrc.mts`、`.eslintrc.cts` のいずれか、または `eslintConfig` を含む `package.json` | プロジェクト設定がある場合はそれを優先します。JavaScript ファイルと HTML の inline script チェックは設定未検出時に bundled minimal ESLint config を使用し、TypeScript ファイルはプロジェクト ESLint 設定が必要です。 |
 | CSS / SCSS / Sass Stylelint | 任意: `stylelint.config.js`、`stylelint.config.mjs`、`stylelint.config.cjs`、`stylelint.config.ts`、`stylelint.config.mts`、`stylelint.config.cts`、`.stylelintrc`、`.stylelintrc.js`、`.stylelintrc.cjs`、`.stylelintrc.json`、`.stylelintrc.yaml`、`.stylelintrc.yml`、`.stylelintrc.ts`、`.stylelintrc.mts`、`.stylelintrc.cts` のいずれか、または `stylelint` を含む `package.json` | プロジェクト設定がある場合はそれを優先し、ない場合は CSS ファイルと HTML の inline style チェックに bundled minimal Stylelint config を使用します。 |
 | HTML htmlhint | 任意: `.htmlhintrc`、`.htmlhintrc.js`、`.htmlhintrc.cjs`、`.htmlhintrc.json`、`.htmlhintrc.yaml`、`.htmlhintrc.yml` のいずれか、または `htmlhint` を含む `package.json` | プロジェクト設定がある場合はそれを優先し、ない場合は HTML チェックに bundled minimal htmlhint config を使用します。 |
 | JavaScript / CSS / HTML の Prettier | Mamori 専用の必須設定ファイルはありません | プロジェクトで Prettier 設定を使う場合は、通常どおりプロジェクト内に置いて整形ルールを合わせてください。 |

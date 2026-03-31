@@ -14,7 +14,7 @@
 初期対応と将来拡張の前提を以下とする。
 
 - 初期: Java
-- 追加: JavaScript / CSS / HTML
+- 追加: JavaScript / TypeScript / CSS / HTML
 
 ## 3. 実行タイミング別の構成（確定）
 
@@ -31,6 +31,7 @@
 チェック:
 - Java: Checkstyle / PMD / Semgrep
 - JavaScript: ESLint（明示設定 → discovery → `package.json#eslintConfig` を優先し、無ければ Mamori 同梱の最小設定を使用）
+- TypeScript: ESLint（明示設定 → discovery → `package.json#eslintConfig` を優先し、TypeScript では Mamori 同梱の JavaScript 向け最小設定は使用しない）
 - HTML 内 inline script: ESLint（対象は `src` なしで JavaScript と判定されたものに限る。設定解決は明示設定 → discovery → `package.json#eslintConfig` → Mamori 同梱の最小設定。HTML 本体は引き続き htmlhint）
 - CSS: Stylelint（明示設定 → discovery → `package.json#stylelint` を優先し、無ければ Mamori 同梱の最小設定を使用）
 - HTML 内 inline style: Stylelint（対象は CSS と判定されたものに限る。設定解決は明示設定 → discovery → `package.json#stylelint` → Mamori 同梱の最小設定。HTML 本体は引き続き htmlhint）
@@ -70,6 +71,7 @@ HTML inline style の扱い（確定）:
 チェック:
 - Java: Checkstyle / PMD / Semgrep
 - JavaScript: ESLint（明示設定 → discovery → `package.json#eslintConfig` を優先し、無ければ Mamori 同梱の最小設定を使用）
+- TypeScript: ESLint（明示設定 → discovery → `package.json#eslintConfig` を優先し、TypeScript では Mamori 同梱の JavaScript 向け最小設定は使用しない）
 - HTML 内 inline script: ESLint（対象は `src` なしで JavaScript と判定されたものに限る。設定解決は明示設定 → discovery → `package.json#eslintConfig` → Mamori 同梱の最小設定。HTML 本体は引き続き htmlhint）
 - CSS: Stylelint（明示設定 → discovery → `package.json#stylelint` を優先し、無ければ Mamori 同梱の最小設定を使用）
 - HTML 内 inline style: Stylelint（対象は CSS と判定されたものに限る。設定解決は明示設定 → discovery → `package.json#stylelint` → Mamori 同梱の最小設定。HTML 本体は引き続き htmlhint）
@@ -79,6 +81,7 @@ HTML inline style の扱い（確定）:
 チェック（デフォルト有効）:
 - Java: Checkstyle / PMD / Semgrep / CPD / SpotBugs
 - JavaScript: ESLint（デフォルト有効・設定でOFF可。設定解決は明示設定 → discovery → `package.json#eslintConfig` → Mamori 同梱の最小設定）
+- TypeScript: ESLint（設定解決は明示設定 → discovery → `package.json#eslintConfig`。TypeScript では Mamori 同梱の JavaScript 向け最小設定は使用しない）
 - HTML 内 inline script: ESLint（デフォルト有効・設定でOFF可。対象は `src` なしで JavaScript と判定されたものに限る。設定解決は明示設定 → discovery → `package.json#eslintConfig` → Mamori 同梱の最小設定。HTML 本体は引き続き htmlhint）
 - CSS: Stylelint（デフォルト有効・設定でOFF可。設定解決は明示設定 → discovery → `package.json#stylelint` → Mamori 同梱の最小設定）
 - HTML 内 inline style: Stylelint（デフォルト有効・設定でOFF可。対象は CSS と判定されたものに限る。設定解決は明示設定 → discovery → `package.json#stylelint` → Mamori 同梱の最小設定。HTML 本体は引き続き htmlhint）
@@ -219,5 +222,5 @@ Git hooks コマンドの通知仕様（確定）:
 
 ## 11. 今後の拡張
 - 手動ツールの追加（Dependency-Check/Trivyの取り込み強化、結果の詳細ビュー）
-- TypeScript/Python等への拡張
+- Python等への拡張
 - Gradle Kotlin DSLの設定抽出精度向上（必要になった時点で対応）

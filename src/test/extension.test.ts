@@ -305,6 +305,59 @@ function writeMavenReportFileWrapper(workspacePath: string, logPath: string, tar
 }
 
 /**
+ * Checkstyle を既定レポートファイルへ出力するテスト用 Maven ラッパーを作成する。
+ * @param workspacePath ワークスペースパスを表す。
+ * @param logPath 実行ログパスを表す。
+ * @param targetFileUri 対象ファイル URI を表す。
+ * @returns 返り値はない。
+ */
+function writeMavenCheckstyleReportFileWrapper(workspacePath: string, logPath: string, targetFileUri: string): void {
+  const checkstyleXml = `<?xml version="1.0"?><checkstyle version="10.0"><file name="${targetFileUri}"><error line="2" column="5" severity="warning" message="Missing Javadoc" source="com.puppycrawl.tools.checkstyle.checks.javadoc.JavadocTypeCheck"/></file></checkstyle>`;
+  const pmdXml = `<?xml version="1.0"?><pmd version="7.0.0"><file name="${targetFileUri}"><violation beginline="3" begincolumn="9" priority="3" rule="UnusedLocalVariable">Unused local variable</violation></file></pmd>`;
+  const wrapperPath = process.platform === 'win32'
+    ? path.join(workspacePath, 'mvnw.cmd')
+    : path.join(workspacePath, 'mvnw');
+  const checkstyleReportPath = path.join(workspacePath, 'target', 'checkstyle-result.xml');
+
+  if (process.platform === 'win32') {
+    const encodedCheckstyleXml = Buffer.from(checkstyleXml, 'utf8').toString('base64');
+    const encodedPmdXml = Buffer.from(pmdXml, 'utf8').toString('base64');
+    fs.writeFileSync(
+      wrapperPath,
+      [
+        '@echo off',
+        `echo %*>>"${logPath}"`,
+        'echo %* | findstr /C:"checkstyle:check" >nul',
+        `if not errorlevel 1 if not exist "${path.dirname(checkstyleReportPath)}" mkdir "${path.dirname(checkstyleReportPath)}"`,
+        `if not errorlevel 1 node -e "require('fs').writeFileSync('${checkstyleReportPath.split('\\').join('\\\\')}', Buffer.from('${encodedCheckstyleXml}','base64').toString('utf8'), 'utf8')"`,
+        'echo %* | findstr /C:"pmd:check" >nul',
+        `if not errorlevel 1 node -e "process.stdout.write(Buffer.from('${encodedPmdXml}','base64').toString('utf8'))"`,
+        'exit /b 0',
+        '',
+      ].join('\r\n'),
+      'utf8',
+    );
+    return;
+  }
+
+  fs.writeFileSync(
+    wrapperPath,
+    [
+      '#!/bin/sh',
+      `printf '%s\n' "$*" >> "${logPath}"`,
+      'case "$*" in',
+      `  *"checkstyle:check"*) mkdir -p '${path.dirname(checkstyleReportPath)}'; printf '%s' '${checkstyleXml}' > '${checkstyleReportPath}' ;;`,
+      `  *"pmd:check"*) printf '%s' '${pmdXml}' ;;`,
+      'esac',
+      'exit 0',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  makeExecutable(wrapperPath);
+}
+
+/**
  * テスト用 Semgrep ラッパーを作成する。
  * @param binDirectory ラッパーディレクトリを表す。
  * @param logPath 実行ログパスを表す。
@@ -526,7 +579,7 @@ function setupSaveIntegrationFixture(workspacePath: string): {
 }
 
 /**
- * JavaScript 保存時統合テスト用 fixture を構築する。
+ * ESLint 保存時統合テスト用 fixture を構築する。
  * @param workspacePath ワークスペースパスを表す。
  * @returns 対象 JavaScript ファイルと関連パスを返す。
  */
@@ -541,7 +594,7 @@ function setupWebSaveIntegrationFixture(workspacePath: string): {
 }
 
 /**
- * JavaScript 保存時統合テスト用 fixture を構築する。
+ * ESLint 保存時統合テスト用 fixture を構築する。
  * @param workspacePath ワークスペースパスを表す。
  * @param options fixture 構築オプションを表す。
  * @returns 対象 JavaScript ファイルと関連パスを返す。
@@ -550,6 +603,7 @@ function setupWebSaveIntegrationFixtureWithOptions(
   workspacePath: string,
   options: {
     createEslintConfig?: boolean;
+    targetFileName?: string;
   } = {},
 ): {
   fixtureDirectory: string;
@@ -561,7 +615,8 @@ function setupWebSaveIntegrationFixtureWithOptions(
   const fixtureDirectory = path.join(workspacePath, '.tmp-web-save-check');
   const sourceDirectory = path.join(fixtureDirectory, 'src');
   const binDirectory = path.join(fixtureDirectory, 'node_modules', '.bin');
-  const javascriptFilePath = path.join(sourceDirectory, 'main.js');
+  const targetFileName = options.targetFileName || 'main.js';
+  const javascriptFilePath = path.join(sourceDirectory, targetFileName);
   const prettierLogPath = path.join(fixtureDirectory, 'prettier.log');
   const eslintLogPath = path.join(fixtureDirectory, 'eslint.log');
   const shouldCreateEslintConfig = options.createEslintConfig !== false;
@@ -595,6 +650,29 @@ function setupWebSaveIntegrationFixtureWithOptions(
     javascriptFilePath,
     prettierLogPath,
     eslintLogPath,
+  };
+}
+
+/**
+ * TypeScript 保存時統合テスト用 fixture を構築する。
+ * @param workspacePath ワークスペースパスを表す。
+ * @returns 対象 TypeScript ファイルと関連パスを返す。
+ */
+function setupTypeScriptSaveIntegrationFixture(workspacePath: string): {
+  fixtureDirectory: string;
+  binDirectory: string;
+  typescriptFilePath: string;
+  eslintLogPath: string;
+} {
+  const fixture = setupWebSaveIntegrationFixtureWithOptions(workspacePath, {
+    targetFileName: 'main.ts',
+  });
+
+  return {
+    fixtureDirectory: fixture.fixtureDirectory,
+    binDirectory: fixture.binDirectory,
+    typescriptFilePath: fixture.javascriptFilePath,
+    eslintLogPath: fixture.eslintLogPath,
   };
 }
 
@@ -1030,6 +1108,92 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
   });
 
   /**
+   * 手動実行で Checkstyle 既定レポートの finding が Diagnostics と通知へ反映されること。
+   * @returns 実行完了を待つ Promise を返す。
+   */
+  test('Publishes Checkstyle diagnostics when manual workspace checks read generated Maven report files', async function() {
+    this.timeout(20000);
+
+    const activeVscodeApi = vscodeApi;
+    const workspaceRoot = activeVscodeApi.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceRoot) {
+      throw new Error('Workspace root was not found');
+    }
+
+    const manualSarifPath = path.join(workspaceRoot, '.mamori', 'out', 'combined.sarif');
+    const checkstyleReportPath = path.join(workspaceRoot, 'target', 'checkstyle-result.xml');
+    const restoreManualSarif = createRestoreAction(manualSarifPath);
+    const restoreCheckstyleReport = createRestoreAction(checkstyleReportPath);
+    const restorePomFile = createRestoreAction(path.join(workspaceRoot, 'pom.xml'));
+    const restoreMavenWrapper = createRestoreAction(
+      process.platform === 'win32'
+        ? path.join(workspaceRoot, 'mvnw.cmd')
+        : path.join(workspaceRoot, 'mvnw'),
+    );
+    const restoreSemgrepWrapper = createRestoreAction(
+      process.platform === 'win32'
+        ? path.join(workspaceRoot, 'bin', 'semgrep.cmd')
+        : path.join(workspaceRoot, 'bin', 'semgrep'),
+    );
+    const messageCapture = captureWindowMessages(activeVscodeApi);
+
+    try {
+      fs.rmSync(manualSarifPath, { force: true });
+      fs.rmSync(checkstyleReportPath, { force: true });
+      const {
+        fixtureDirectory,
+        javaFilePath,
+        mavenLogPath,
+        semgrepLogPath,
+      } = setupSaveIntegrationFixture(workspaceRoot);
+      const restoreMavenLog = createRestoreAction(mavenLogPath);
+      const restoreSemgrepLog = createRestoreAction(semgrepLogPath);
+      fs.rmSync(mavenLogPath, { force: true });
+      fs.rmSync(semgrepLogPath, { force: true });
+
+      try {
+        writeMavenCheckstyleReportFileWrapper(
+          workspaceRoot,
+          mavenLogPath,
+          toWorkspaceRelativeUri(workspaceRoot, javaFilePath),
+        );
+        writeSemgrepWrapper(path.join(workspaceRoot, 'bin'), semgrepLogPath, toWorkspaceRelativeUri(workspaceRoot, javaFilePath));
+
+        setExecutablePathEnvironment(`${path.join(workspaceRoot, 'bin')}${path.delimiter}${originalPath}`);
+        await getMamoriExtension(activeVscodeApi).activate();
+        await activeVscodeApi.commands.executeCommand('mamori-inspector.runWorkspaceCheck');
+
+        await waitFor(() => fs.existsSync(manualSarifPath));
+        await waitFor(() => fs.existsSync(checkstyleReportPath));
+        await waitFor(() => activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(javaFilePath)).some((diagnostic) => (
+          diagnostic.message === 'Missing Javadoc'
+        )));
+        await waitFor(() => messageCapture.informationMessages.length > 0 || messageCapture.errorMessages.length > 0);
+
+        const diagnostics = activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(javaFilePath));
+        const messages = diagnostics.map((diagnostic) => diagnostic.message);
+
+        assert.deepStrictEqual(messageCapture.errorMessages, []);
+        assert.ok(messageCapture.informationMessages.some((message) => /3 件の問題を反映しました。/u.test(message)));
+        assert.ok(messages.includes('Missing Javadoc'));
+        assert.match(fs.readFileSync(mavenLogPath, 'utf8'), /checkstyle:check/u);
+        assert.match(fs.readFileSync(manualSarifPath, 'utf8'), /Missing Javadoc/u);
+      } finally {
+        restoreMavenLog();
+        restoreSemgrepLog();
+        fs.rmSync(fixtureDirectory, { recursive: true, force: true });
+      }
+    } finally {
+      messageCapture.restore();
+      restoreManualSarif();
+      restoreCheckstyleReport();
+      restorePomFile();
+      restoreMavenWrapper();
+      restoreSemgrepWrapper();
+    }
+  });
+
+  /**
    * JavaScript ファイル保存時に Web 系の保存時 finding が Diagnostics へ反映されること。
    * @returns 実行完了を待つ Promise を返す。
    */
@@ -1171,6 +1335,69 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
       restoreMavenWrapper();
       restoreSemgrepWrapper();
       restoreWorkspaceEslintConfig();
+      restoreSaveSarif();
+    }
+  });
+
+  /**
+   * TypeScript ファイル保存時に ESLint finding が SARIF へ反映されること。
+   * @returns 実行完了を待つ Promise を返す。
+   */
+  test('Runs save checks when a TypeScript file is saved', async function() {
+    this.timeout(20000);
+    const activeVscodeApi = vscodeApi;
+    const workspaceRoot = activeVscodeApi.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceRoot) {
+      throw new Error('Workspace root was not found');
+    }
+
+    const saveSarifPath = path.join(workspaceRoot, SAVE_SARIF_OUTPUT);
+    const pomFilePath = path.join(workspaceRoot, 'pom.xml');
+    const mavenWrapperPath = process.platform === 'win32'
+      ? path.join(workspaceRoot, 'mvnw.cmd')
+      : path.join(workspaceRoot, 'mvnw');
+    const semgrepWrapperPath = process.platform === 'win32'
+      ? path.join(workspaceRoot, 'bin', 'semgrep.cmd')
+      : path.join(workspaceRoot, 'bin', 'semgrep');
+    const restorePomFile = createRestoreAction(pomFilePath);
+    const restoreMavenWrapper = createRestoreAction(mavenWrapperPath);
+    const restoreSemgrepWrapper = createRestoreAction(semgrepWrapperPath);
+    const restoreSaveSarif = createRestoreAction(saveSarifPath);
+
+    try {
+      fs.rmSync(pomFilePath, { force: true });
+      fs.rmSync(mavenWrapperPath, { force: true });
+      fs.rmSync(semgrepWrapperPath, { force: true });
+      fs.rmSync(saveSarifPath, { force: true });
+      const {
+        fixtureDirectory,
+        binDirectory,
+        typescriptFilePath,
+        eslintLogPath,
+      } = setupTypeScriptSaveIntegrationFixture(workspaceRoot);
+      const restoreEslintLog = createRestoreAction(eslintLogPath);
+      fs.rmSync(eslintLogPath, { force: true });
+
+      try {
+        setExecutablePathEnvironment(`${binDirectory}${path.delimiter}${originalPath}`);
+        fs.appendFileSync(typescriptFilePath, 'console.log(sample);\n', 'utf8');
+        await runSaveCommandForTest(workspaceRoot, typescriptFilePath, saveSarifPath);
+
+        await waitFor(() => fs.existsSync(saveSarifPath));
+        await waitFor(() => fs.existsSync(eslintLogPath));
+        await waitFor(() => /Unexpected console statement\./u.test(fs.readFileSync(saveSarifPath, 'utf8')));
+
+        assert.ok(fs.existsSync(saveSarifPath));
+        assert.match(fs.readFileSync(saveSarifPath, 'utf8'), /Unexpected console statement\./u);
+        assert.match(fs.readFileSync(eslintLogPath, 'utf8'), /main\.ts/u);
+      } finally {
+        restoreEslintLog();
+        fs.rmSync(fixtureDirectory, { recursive: true, force: true });
+      }
+    } finally {
+      restorePomFile();
+      restoreMavenWrapper();
+      restoreSemgrepWrapper();
       restoreSaveSarif();
     }
   });
