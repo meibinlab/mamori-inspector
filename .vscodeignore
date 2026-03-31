@@ -11,3 +11,6 @@ src/**
 **/.vscode-test.*
 out/test/**
 scripts/**
+*.log
+*.vsix
+target/**

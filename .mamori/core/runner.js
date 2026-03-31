@@ -26,13 +26,29 @@ const { execCommand } = require('../tools/exec');
 // HTML ファイル拡張子一覧を表す
 const HTML_FILE_EXTENSIONS = new Set(['.html', '.htm']);
 
-// PMD レポートの既定相対パス一覧を表す
-const PMD_REPORT_RELATIVE_PATHS = [
-  path.join('target', 'pmd.xml'),
-  path.join('build', 'reports', 'pmd', 'main.xml'),
-  path.join('build', 'reports', 'pmd', 'test.xml'),
-  path.join('build', 'reports', 'pmd', 'pmd.xml'),
-];
+// ツール別の既定レポート相対パス一覧を表す
+const TOOL_REPORT_RELATIVE_PATHS = {
+  checkstyle: [
+    path.join('target', 'checkstyle-result.xml'),
+    path.join('build', 'reports', 'checkstyle', 'main.xml'),
+    path.join('build', 'reports', 'checkstyle', 'test.xml'),
+  ],
+  pmd: [
+    path.join('target', 'pmd.xml'),
+    path.join('build', 'reports', 'pmd', 'main.xml'),
+    path.join('build', 'reports', 'pmd', 'test.xml'),
+    path.join('build', 'reports', 'pmd', 'pmd.xml'),
+  ],
+  cpd: [
+    path.join('target', 'cpd.xml'),
+  ],
+  spotbugs: [
+    path.join('target', 'spotbugsXml.xml'),
+    path.join('build', 'reports', 'spotbugs', 'main.xml'),
+    path.join('build', 'reports', 'spotbugs', 'test.xml'),
+    path.join('build', 'reports', 'spotbugs', 'spotbugs.xml'),
+  ],
+};
 
 // inline script 抽出用の正規表現を表す
 const INLINE_SCRIPT_PATTERN = /<script\b((?:"[^"]*"|'[^']*'|[^'">])*)>([\s\S]*?)<\/script>/giu;
@@ -76,12 +92,18 @@ function captureFileSnapshot(filePath) {
 }
 
 /**
- * PMD の既定レポート候補一覧を返す。
+ * ツールの既定レポート候補一覧を返す。
  * @param {string} moduleRoot モジュールルートを表す。
+ * @param {string} toolName ツール名を表す。
  * @returns {string[]} 既定レポート候補一覧を返す。
  */
-function resolvePmdReportPaths(moduleRoot) {
-  return PMD_REPORT_RELATIVE_PATHS.map((relativePath) => path.join(moduleRoot, relativePath));
+function resolveToolReportPaths(moduleRoot, toolName) {
+  const relativePaths = TOOL_REPORT_RELATIVE_PATHS[toolName];
+  if (!Array.isArray(relativePaths)) {
+    return [];
+  }
+
+  return relativePaths.map((relativePath) => path.join(moduleRoot, relativePath));
 }
 
 /**
@@ -91,11 +113,10 @@ function resolvePmdReportPaths(moduleRoot) {
  * @returns {{reportPaths: string[], reportSnapshots: Record<string, {exists: boolean, mtimeMs: number, size: number}>}|undefined} レポート状態を返す。
  */
 function captureToolReportState(moduleRoot, toolName) {
-  if (toolName !== 'pmd') {
+  const reportPaths = resolveToolReportPaths(moduleRoot, toolName);
+  if (reportPaths.length === 0) {
     return undefined;
   }
-
-  const reportPaths = resolvePmdReportPaths(moduleRoot);
   const reportSnapshots = {};
 
   for (const reportPath of reportPaths) {
@@ -109,7 +130,7 @@ function captureToolReportState(moduleRoot, toolName) {
 }
 
 /**
- * PMD レポートが実行後に更新されたか判定する。
+ * レポートファイルが実行後に更新されたか判定する。
  * @param {string} reportPath レポートパスを表す。
  * @param {{exists: boolean, mtimeMs: number, size: number}|undefined} previousSnapshot 実行前スナップショットを表す。
  * @returns {boolean} 更新されている場合は true を返す。
@@ -129,11 +150,11 @@ function hasUpdatedReportFile(reportPath, previousSnapshot) {
 }
 
 /**
- * 実行後に更新された PMD レポート本文を返す。
+ * 実行後に更新されたレポート本文を返す。
  * @param {{reportPaths?: string[], reportSnapshots?: Record<string, {exists: boolean, mtimeMs: number, size: number}>}} commandResult 実行結果を表す。
- * @returns {string} PMD レポート本文を返す。
+ * @returns {string} レポート本文を返す。
  */
-function loadUpdatedPmdReport(commandResult) {
+function loadUpdatedToolReport(commandResult) {
   const reportPaths = Array.isArray(commandResult.reportPaths)
     ? commandResult.reportPaths
     : [];
@@ -163,30 +184,46 @@ function loadUpdatedPmdReport(commandResult) {
 }
 
 /**
+ * 標準出力または生成レポートから Issue 一覧を抽出する。
+ * @param {{stdout?: string, reportPaths?: string[], reportSnapshots?: Record<string, {exists: boolean, mtimeMs: number, size: number}>}} commandResult 実行結果を表す。
+ * @param {(rawReport: string) => Array<object>} parser レポート解析関数を表す。
+ * @returns {Array<object>} Issue 一覧を返す。
+ */
+function extractIssuesFromStandardOutputOrReport(commandResult, parser) {
+  const standardOutputIssues = parser(commandResult.stdout || '');
+  if (standardOutputIssues.length > 0) {
+    return standardOutputIssues;
+  }
+
+  return parser(loadUpdatedToolReport(commandResult));
+}
+
+/**
  * ツール実行結果から Issue 一覧を抽出する。
  * @param {{tool: string, stdout?: string, reportPaths?: string[], reportSnapshots?: Record<string, {exists: boolean, mtimeMs: number, size: number}>}} commandResult 実行結果を表す。
  * @returns {Array<object>} Issue 一覧を返す。
  */
 function extractIssues(commandResult) {
   if (commandResult.tool === 'checkstyle') {
-    return checkstyleAdapter.parseCheckstyleXml(commandResult.stdout || '');
+    return extractIssuesFromStandardOutputOrReport(
+      commandResult,
+      checkstyleAdapter.parseCheckstyleXml,
+    );
   }
 
   if (commandResult.tool === 'pmd') {
-    const standardOutputIssues = pmdAdapter.parsePmdXml(commandResult.stdout || '');
-    if (standardOutputIssues.length > 0) {
-      return standardOutputIssues;
-    }
-
-    return pmdAdapter.parsePmdXml(loadUpdatedPmdReport(commandResult));
+    return extractIssuesFromStandardOutputOrReport(commandResult, pmdAdapter.parsePmdXml);
   }
 
   if (commandResult.tool === 'cpd') {
-    return cpdAdapter.parseCpdXml(commandResult.stdout || '');
+    return extractIssuesFromStandardOutputOrReport(commandResult, cpdAdapter.parseCpdXml);
   }
 
   if (commandResult.tool === 'spotbugs') {
-    return spotbugsAdapter.parseSpotbugsXml(commandResult.stdout || '');
+    return extractIssuesFromStandardOutputOrReport(
+      commandResult,
+      spotbugsAdapter.parseSpotbugsXml,
+    );
   }
 
   if (commandResult.tool === 'semgrep') {

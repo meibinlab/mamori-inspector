@@ -604,6 +604,59 @@ function writeMavenPmdReportWrapper(binDirectory: string, outputFileName: string
 }
 
 /**
+ * Checkstyle を既定レポートファイルへ出力するテスト用 Maven ラッパーを作成する。
+ * @param binDirectory ラッパーディレクトリを表す。
+ * @param outputFileName 出力ファイル名を表す。
+ * @returns 返り値はない。
+ */
+function writeMavenCheckstyleReportWrapper(binDirectory: string, outputFileName: string): void {
+  const outputPath = path.join(binDirectory, outputFileName);
+  const checkstyleXml = '<?xml version="1.0"?><checkstyle version="10.0"><file name="src/main/java/App.java"><error line="2" column="5" severity="warning" message="Missing Javadoc" source="com.puppycrawl.tools.checkstyle.checks.javadoc.JavadocTypeCheck"/></file></checkstyle>';
+  const pmdXml = '<?xml version="1.0"?><pmd version="7.0.0"><file name="src/main/java/App.java"><violation beginline="3" begincolumn="9" priority="3" rule="UnusedLocalVariable">Unused local variable</violation></file></pmd>';
+  const wrapperPath = process.platform === 'win32'
+    ? path.join(path.dirname(binDirectory), 'mvnw.cmd')
+    : path.join(path.dirname(binDirectory), 'mvnw');
+  const checkstyleReportPath = path.join(path.dirname(binDirectory), 'target', 'checkstyle-result.xml');
+
+  if (process.platform === 'win32') {
+    const encodedCheckstyleXml = Buffer.from(checkstyleXml, 'utf8').toString('base64');
+    const encodedPmdXml = Buffer.from(pmdXml, 'utf8').toString('base64');
+    fs.writeFileSync(
+      wrapperPath,
+      [
+        '@echo off',
+        `echo %*>>"${outputPath}"`,
+        'echo %* | findstr /C:"checkstyle:check" >nul',
+        `if not errorlevel 1 if not exist "${path.dirname(checkstyleReportPath)}" mkdir "${path.dirname(checkstyleReportPath)}"`,
+        `if not errorlevel 1 node -e "require('fs').writeFileSync('${checkstyleReportPath.split('\\').join('\\\\')}', Buffer.from('${encodedCheckstyleXml}','base64').toString('utf8'), 'utf8')"`,
+        'echo %* | findstr /C:"pmd:check" >nul',
+        `if not errorlevel 1 node -e "process.stdout.write(Buffer.from('${encodedPmdXml}','base64').toString('utf8'))"`,
+        'exit /b 0',
+        '',
+      ].join('\r\n'),
+      'utf8',
+    );
+    return;
+  }
+
+  fs.writeFileSync(
+    wrapperPath,
+    [
+      '#!/bin/sh',
+      `printf '%s\n' "$*" >> "${outputPath}"`,
+      'case "$*" in',
+      `  *"checkstyle:check"*) mkdir -p '${path.dirname(checkstyleReportPath)}'; printf '%s' '${checkstyleXml}' > '${checkstyleReportPath}' ;;`,
+      `  *"pmd:check"*) printf '%s' '${pmdXml}' ;;`,
+      'esac',
+      'exit 0',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  fs.chmodSync(wrapperPath, 0o755);
+}
+
+/**
  * pre-commit の Git 再ステージ検証向け Maven ラッパーを作成する。
  * @param binDirectory ラッパーディレクトリを表す。
  * @param outputFileName 出力ファイル名を表す。
@@ -877,6 +930,61 @@ function writeMavenPrepushWrapper(binDirectory: string, outputFileName: string):
 }
 
 /**
+ * CPD と SpotBugs を既定レポートファイルへ出力するテスト用 Maven ラッパーを作成する。
+ * @param binDirectory ラッパーディレクトリを表す。
+ * @param outputFileName 出力ファイル名を表す。
+ * @returns 返り値はない。
+ */
+function writeMavenPrepushReportWrapper(binDirectory: string, outputFileName: string): void {
+  const outputPath = path.join(binDirectory, outputFileName);
+  const cpdXml = '<?xml version="1.0"?><pmd-cpd><duplication lines="6" tokens="40"><file path="src/main/java/App.java" line="8"/><file path="src/main/java/Other.java" line="12"/></duplication></pmd-cpd>';
+  const spotbugsXml = '<?xml version="1.0"?><BugCollection><BugInstance type="NP_NULL_ON_SOME_PATH" priority="2"><LongMessage>Possible null pointer dereference</LongMessage><Class classname="App"/><SourceLine classname="App" sourcepath="src/main/java/App.java" start="14"/></BugInstance></BugCollection>';
+  const wrapperPath = process.platform === 'win32'
+    ? path.join(path.dirname(binDirectory), 'mvnw.cmd')
+    : path.join(path.dirname(binDirectory), 'mvnw');
+  const cpdReportPath = path.join(path.dirname(binDirectory), 'target', 'cpd.xml');
+  const spotbugsReportPath = path.join(path.dirname(binDirectory), 'target', 'spotbugsXml.xml');
+
+  if (process.platform === 'win32') {
+    const encodedCpdXml = Buffer.from(cpdXml, 'utf8').toString('base64');
+    const encodedSpotbugsXml = Buffer.from(spotbugsXml, 'utf8').toString('base64');
+    fs.writeFileSync(
+      wrapperPath,
+      [
+        '@echo off',
+        `echo %*>>"${outputPath}"`,
+        'echo %* | findstr /C:"pmd:cpd-check" >nul',
+        `if not errorlevel 1 if not exist "${path.dirname(cpdReportPath)}" mkdir "${path.dirname(cpdReportPath)}"`,
+        `if not errorlevel 1 node -e "require('fs').writeFileSync('${cpdReportPath.split('\\').join('\\\\')}', Buffer.from('${encodedCpdXml}','base64').toString('utf8'), 'utf8')"`,
+        'echo %* | findstr /C:"spotbugs:check" >nul',
+        `if not errorlevel 1 if not exist "${path.dirname(spotbugsReportPath)}" mkdir "${path.dirname(spotbugsReportPath)}"`,
+        `if not errorlevel 1 node -e "require('fs').writeFileSync('${spotbugsReportPath.split('\\').join('\\\\')}', Buffer.from('${encodedSpotbugsXml}','base64').toString('utf8'), 'utf8')"`,
+        'exit /b 0',
+        '',
+      ].join('\r\n'),
+      'utf8',
+    );
+    return;
+  }
+
+  fs.writeFileSync(
+    wrapperPath,
+    [
+      '#!/bin/sh',
+      `printf '%s\n' "$*" >> "${outputPath}"`,
+      'case "$*" in',
+      `  *"pmd:cpd-check"*) mkdir -p '${path.dirname(cpdReportPath)}'; printf '%s' '${cpdXml}' > '${cpdReportPath}' ;;`,
+      `  *"spotbugs:check"*) mkdir -p '${path.dirname(spotbugsReportPath)}'; printf '%s' '${spotbugsXml}' > '${spotbugsReportPath}' ;;`,
+      'esac',
+      'exit 0',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  fs.chmodSync(wrapperPath, 0o755);
+}
+
+/**
  * pre-push 向け Maven 実行結果に Checkstyle finding を含めるテスト用ラッパーを作成する。
  * @param binDirectory ラッパーディレクトリを表す。
  * @param outputFileName 出力ファイル名を表す。
@@ -1129,6 +1237,36 @@ suite('Mamori CLI Test Suite', () => {
   });
 
   /**
+   * save/file で TypeScript ファイルを ESLint 対象に含めること。
+   * @returns 返り値はない。
+   */
+  test('Builds save command plans for TypeScript files with ESLint targets', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src');
+    const targetFilePath = path.join(sourceDirectory, 'main.ts');
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.writeFileSync(targetFilePath, 'export const sample: number = 1;\n', 'utf8');
+    fs.writeFileSync(path.join(temporaryDirectory, 'eslint.config.mjs'), 'export default [];\n', 'utf8');
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'save',
+      '--scope',
+      'file',
+      '--files',
+      path.relative(temporaryDirectory, targetFilePath),
+    ]);
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /checks=eslint:enabled/u);
+    assert.match(result.stdout, /eslint:eslint --config .*eslint\.config\.mjs/u);
+    assert.match(result.stdout, /main\.ts/u);
+    assert.doesNotMatch(result.stdout, /formatters=prettier:enabled/u);
+  });
+
+  /**
    * save/file で CSS ファイルの Stylelint finding を SARIF 化できること。
    * @returns 返り値はない。
    */
@@ -1246,6 +1384,62 @@ suite('Mamori CLI Test Suite', () => {
     assert.ok(fs.existsSync(sarifOutputPath));
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /tag-pair/u);
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /index\.html/u);
+  });
+
+  /**
+   * save/file で TypeScript ファイルの ESLint finding を SARIF 化できること。
+   * @returns 返り値はない。
+   */
+  test('Reports direct TypeScript ESLint findings during save checks', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src');
+    const typescriptFilePath = path.join(sourceDirectory, 'main.ts');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const eslintLogPath = path.join(nodeBinDirectory, 'eslint.log');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-typescript-save.sarif');
+    const eslintOutput = JSON.stringify([
+      {
+        filePath: typescriptFilePath,
+        messages: [
+          {
+            ruleId: '@typescript-eslint/no-unused-vars',
+            severity: 2,
+            message: 'Unused variable value.',
+            line: 1,
+            column: 7,
+          },
+        ],
+      },
+    ]);
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.writeFileSync(typescriptFilePath, 'const value: number = 1;\n', 'utf8');
+    fs.writeFileSync(path.join(temporaryDirectory, 'eslint.config.mjs'), 'export default [];\n', 'utf8');
+    writeWebCommandWrapper(nodeBinDirectory, 'eslint', 'eslint.log', {
+      stdout: eslintOutput,
+      exitCode: 1,
+    });
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'save',
+      '--scope',
+      'file',
+      '--files',
+      path.relative(temporaryDirectory, typescriptFilePath),
+      '--execute',
+      '--sarif-output',
+      path.relative(temporaryDirectory, sarifOutputPath),
+    ]);
+
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /eslint:failed exitCode=1/u);
+    assert.match(result.stdout, /Unused variable value\./u);
+    assert.match(fs.readFileSync(eslintLogPath, 'utf8'), /main\.ts/u);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /@typescript-eslint\/no-unused-vars/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /main\.ts/u);
   });
 
   /**
@@ -1437,6 +1631,34 @@ suite('Mamori CLI Test Suite', () => {
     assert.match(fs.readFileSync(eslintLogPath, 'utf8'), /ESLINT_USE_FLAT_CONFIG=false/u);
     assert.match(fs.readFileSync(stylelintLogPath, 'utf8'), /--config .*stylelint\.default\.json/u);
     assert.match(fs.readFileSync(htmlhintLogPath, 'utf8'), /--config .*htmlhint\.default\.json/u);
+  });
+
+  /**
+   * 設定未検出の TypeScript ファイルでは JS 向け ESLint fallback を適用しないこと。
+   * @returns 返り値はない。
+   */
+  test('Skips TypeScript ESLint checks when project configuration is not detected', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src');
+    const targetFilePath = path.join(sourceDirectory, 'main.ts');
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.writeFileSync(targetFilePath, 'const value: number = 1;\n', 'utf8');
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'save',
+      '--scope',
+      'file',
+      '--files',
+      path.relative(temporaryDirectory, targetFilePath),
+    ]);
+
+    assert.strictEqual(result.status, 0);
+    assert.doesNotMatch(result.stdout, /commands=eslint:eslint/u);
+    assert.match(result.stdout, /mamori: execution-plan\n  - none/u);
+    assert.match(result.stdout, /mamori: command-plan\n  - none/u);
   });
 
   /**
@@ -2850,6 +3072,75 @@ suite('Mamori CLI Test Suite', () => {
   });
 
   /**
+   * save で生成された Checkstyle 既定レポートから finding を SARIF 化できること。
+   * @returns 返り値はない。
+   */
+  test('Loads Checkstyle findings from generated Maven report files during save checks', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src', 'main', 'java');
+    const targetFilePath = path.join(sourceDirectory, 'App.java');
+    const pomFilePath = path.join(temporaryDirectory, 'pom.xml');
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-checkstyle-report.sarif');
+    const semgrepLogPath = path.join(binDirectory, 'semgrep-checkstyle-report.log');
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.writeFileSync(targetFilePath, 'class App {}\n', 'utf8');
+    fs.writeFileSync(
+      pomFilePath,
+      [
+        '<project>',
+        '  <build>',
+        '    <plugins>',
+        '      <plugin><artifactId>maven-checkstyle-plugin</artifactId></plugin>',
+        '      <plugin><artifactId>maven-pmd-plugin</artifactId></plugin>',
+        '    </plugins>',
+        '  </build>',
+        '</project>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    writeMavenCheckstyleReportWrapper(binDirectory, 'mvn-checkstyle-report.log');
+    writeSemgrepSarifWrapper(binDirectory, 'semgrep-checkstyle-report.log');
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      [
+        'run',
+        '--mode',
+        'save',
+        '--scope',
+        'file',
+        '--files',
+        path.relative(temporaryDirectory, targetFilePath),
+        '--execute',
+        '--sarif-output',
+        path.relative(temporaryDirectory, sarifOutputPath),
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(binDirectory),
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /mamori: execution-result/u);
+    assert.match(result.stdout, /checkstyle:ok exitCode=0/u);
+    assert.match(result.stdout, /pmd:ok exitCode=0/u);
+    assert.match(result.stdout, /semgrep:ok exitCode=0/u);
+    assert.match(result.stdout, /issues=3/u);
+    assert.match(result.stdout, /Missing Javadoc/u);
+    assert.match(result.stdout, /Unused local variable/u);
+    assert.match(fs.readFileSync(semgrepLogPath, 'utf8'), /App\.java/u);
+    assert.ok(fs.existsSync(path.join(temporaryDirectory, 'target', 'checkstyle-result.xml')));
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Missing Javadoc/u);
+  });
+
+  /**
    * pre-commit で Web formatter 成功後に既存ロジックで再ステージされること。
    * @returns 返り値はない。
    */
@@ -3618,6 +3909,76 @@ suite('Mamori CLI Test Suite', () => {
     assert.ok(fs.existsSync(sarifOutputPath));
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Missing Javadoc/u);
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /JavadocTypeCheck/u);
+  });
+
+  /**
+   * pre-push で生成された CPD と SpotBugs の既定レポートから finding を SARIF 化できること。
+   * @returns 返り値はない。
+   */
+  test('Loads CPD and SpotBugs findings from generated Maven report files during prepush checks', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src', 'main', 'java');
+    const classDirectory = path.join(temporaryDirectory, 'target', 'classes');
+    const pomFilePath = path.join(temporaryDirectory, 'pom.xml');
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-prepush-report-files.sarif');
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.mkdirSync(classDirectory, { recursive: true });
+    fs.writeFileSync(path.join(sourceDirectory, 'App.java'), 'class App {}\n', 'utf8');
+    fs.writeFileSync(path.join(sourceDirectory, 'Other.java'), 'class Other {}\n', 'utf8');
+    fs.writeFileSync(path.join(classDirectory, 'App.class'), 'compiled', 'utf8');
+    fs.writeFileSync(
+      pomFilePath,
+      [
+        '<project>',
+        '  <build>',
+        '    <plugins>',
+        '      <plugin><artifactId>maven-checkstyle-plugin</artifactId></plugin>',
+        '      <plugin><artifactId>maven-pmd-plugin</artifactId></plugin>',
+        '      <plugin><artifactId>spotless-maven-plugin</artifactId></plugin>',
+        '      <plugin><artifactId>spotbugs-maven-plugin</artifactId></plugin>',
+        '    </plugins>',
+        '  </build>',
+        '</project>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    writeMavenPrepushReportWrapper(binDirectory, 'mvn-prepush-report-files.log');
+    writeSemgrepSarifWrapper(binDirectory, 'semgrep-prepush-report-files.log');
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      [
+        'run',
+        '--mode',
+        'prepush',
+        '--scope',
+        'workspace',
+        '--execute',
+        '--sarif-output',
+        path.relative(temporaryDirectory, sarifOutputPath),
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(binDirectory),
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /cpd:ok exitCode=0/u);
+    assert.match(result.stdout, /spotbugs:ok exitCode=0/u);
+    assert.match(result.stdout, /Duplicated block detected/u);
+    assert.match(result.stdout, /Possible null pointer dereference/u);
+    assert.match(result.stdout, /issues=4/u);
+    assert.ok(fs.existsSync(path.join(temporaryDirectory, 'target', 'cpd.xml')));
+    assert.ok(fs.existsSync(path.join(temporaryDirectory, 'target', 'spotbugsXml.xml')));
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Duplicated block detected/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Possible null pointer dereference/u);
   });
 
   /**
