@@ -252,6 +252,59 @@ function writeMavenWrapper(workspacePath: string, logPath: string, targetFileUri
 }
 
 /**
+ * PMD を既定レポートファイルへ出力するテスト用 Maven ラッパーを作成する。
+ * @param workspacePath ワークスペースパスを表す。
+ * @param logPath 実行ログパスを表す。
+ * @param targetFileUri 対象ファイル URI を表す。
+ * @returns 返り値はない。
+ */
+function writeMavenReportFileWrapper(workspacePath: string, logPath: string, targetFileUri: string): void {
+  const checkstyleXml = `<?xml version="1.0"?><checkstyle version="10.0"><file name="${targetFileUri}"><error line="2" column="5" severity="warning" message="Missing Javadoc" source="com.puppycrawl.tools.checkstyle.checks.javadoc.JavadocTypeCheck"/></file></checkstyle>`;
+  const pmdXml = `<?xml version="1.0"?><pmd version="7.0.0"><file name="${targetFileUri}"><violation beginline="3" begincolumn="9" priority="3" rule="UnusedLocalVariable">Unused local variable</violation></file></pmd>`;
+  const wrapperPath = process.platform === 'win32'
+    ? path.join(workspacePath, 'mvnw.cmd')
+    : path.join(workspacePath, 'mvnw');
+  const pmdReportPath = path.join(workspacePath, 'target', 'pmd.xml');
+
+  if (process.platform === 'win32') {
+    const encodedCheckstyleXml = Buffer.from(checkstyleXml, 'utf8').toString('base64');
+    const encodedPmdXml = Buffer.from(pmdXml, 'utf8').toString('base64');
+    fs.writeFileSync(
+      wrapperPath,
+      [
+        '@echo off',
+        `echo %*>>"${logPath}"`,
+        'echo %* | findstr /C:"checkstyle:check" >nul',
+        `if not errorlevel 1 node -e "process.stdout.write(Buffer.from('${encodedCheckstyleXml}','base64').toString('utf8'))"`,
+        'echo %* | findstr /C:"pmd:check" >nul',
+        `if not errorlevel 1 if not exist "${path.dirname(pmdReportPath)}" mkdir "${path.dirname(pmdReportPath)}"`,
+        `if not errorlevel 1 node -e "require('fs').writeFileSync('${pmdReportPath.split('\\').join('\\\\')}', Buffer.from('${encodedPmdXml}','base64').toString('utf8'), 'utf8')"`,
+        'exit /b 0',
+        '',
+      ].join('\r\n'),
+      'utf8',
+    );
+    return;
+  }
+
+  fs.writeFileSync(
+    wrapperPath,
+    [
+      '#!/bin/sh',
+      `printf '%s\n' "$*" >> "${logPath}"`,
+      'case "$*" in',
+      `  *"checkstyle:check"*) printf '%s' '${checkstyleXml}' ;;`,
+      `  *"pmd:check"*) mkdir -p '${path.dirname(pmdReportPath)}'; printf '%s' '${pmdXml}' > '${pmdReportPath}' ;;`,
+      'esac',
+      'exit 0',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  makeExecutable(wrapperPath);
+}
+
+/**
  * テスト用 Semgrep ラッパーを作成する。
  * @param binDirectory ラッパーディレクトリを表す。
  * @param logPath 実行ログパスを表す。
@@ -891,6 +944,88 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
       restoreMavenWrapper();
       restoreSemgrepWrapper();
       restoreSaveSarif();
+    }
+  });
+
+  /**
+   * 手動実行で PMD 既定レポートの finding が Diagnostics と通知へ反映されること。
+   * @returns 実行完了を待つ Promise を返す。
+   */
+  test('Publishes PMD diagnostics when manual workspace checks read generated Maven report files', async function() {
+    this.timeout(20000);
+
+    const activeVscodeApi = vscodeApi;
+    const workspaceRoot = activeVscodeApi.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceRoot) {
+      throw new Error('Workspace root was not found');
+    }
+
+    const manualSarifPath = path.join(workspaceRoot, '.mamori', 'out', 'combined.sarif');
+    const pmdReportPath = path.join(workspaceRoot, 'target', 'pmd.xml');
+    const restoreManualSarif = createRestoreAction(manualSarifPath);
+    const restorePmdReport = createRestoreAction(pmdReportPath);
+    const restorePomFile = createRestoreAction(path.join(workspaceRoot, 'pom.xml'));
+    const restoreMavenWrapper = createRestoreAction(
+      process.platform === 'win32'
+        ? path.join(workspaceRoot, 'mvnw.cmd')
+        : path.join(workspaceRoot, 'mvnw'),
+    );
+    const restoreSemgrepWrapper = createRestoreAction(
+      process.platform === 'win32'
+        ? path.join(workspaceRoot, 'bin', 'semgrep.cmd')
+        : path.join(workspaceRoot, 'bin', 'semgrep'),
+    );
+    const messageCapture = captureWindowMessages(activeVscodeApi);
+
+    try {
+      fs.rmSync(manualSarifPath, { force: true });
+      fs.rmSync(pmdReportPath, { force: true });
+      const {
+        fixtureDirectory,
+        javaFilePath,
+        mavenLogPath,
+        semgrepLogPath,
+      } = setupSaveIntegrationFixture(workspaceRoot);
+      const restoreMavenLog = createRestoreAction(mavenLogPath);
+      const restoreSemgrepLog = createRestoreAction(semgrepLogPath);
+      fs.rmSync(mavenLogPath, { force: true });
+      fs.rmSync(semgrepLogPath, { force: true });
+
+      try {
+        writeMavenReportFileWrapper(workspaceRoot, mavenLogPath, toWorkspaceRelativeUri(workspaceRoot, javaFilePath));
+        writeSemgrepWrapper(path.join(workspaceRoot, 'bin'), semgrepLogPath, toWorkspaceRelativeUri(workspaceRoot, javaFilePath));
+
+        setExecutablePathEnvironment(`${path.join(workspaceRoot, 'bin')}${path.delimiter}${originalPath}`);
+        await getMamoriExtension(activeVscodeApi).activate();
+        await activeVscodeApi.commands.executeCommand('mamori-inspector.runWorkspaceCheck');
+
+        await waitFor(() => fs.existsSync(manualSarifPath));
+        await waitFor(() => fs.existsSync(pmdReportPath));
+        await waitFor(() => activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(javaFilePath)).some((diagnostic) => (
+          diagnostic.message === 'Unused local variable'
+        )));
+        await waitFor(() => messageCapture.informationMessages.length > 0 || messageCapture.errorMessages.length > 0);
+
+        const diagnostics = activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(javaFilePath));
+        const messages = diagnostics.map((diagnostic) => diagnostic.message);
+
+        assert.deepStrictEqual(messageCapture.errorMessages, []);
+        assert.ok(messageCapture.informationMessages.some((message) => /3 件の問題を反映しました。/u.test(message)));
+        assert.ok(messages.includes('Unused local variable'));
+        assert.match(fs.readFileSync(mavenLogPath, 'utf8'), /pmd:check/u);
+        assert.match(fs.readFileSync(manualSarifPath, 'utf8'), /Unused local variable/u);
+      } finally {
+        restoreMavenLog();
+        restoreSemgrepLog();
+        fs.rmSync(fixtureDirectory, { recursive: true, force: true });
+      }
+    } finally {
+      messageCapture.restore();
+      restoreManualSarif();
+      restorePmdReport();
+      restorePomFile();
+      restoreMavenWrapper();
+      restoreSemgrepWrapper();
     }
   });
 
