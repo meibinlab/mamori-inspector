@@ -1299,6 +1299,81 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
   });
 
   /**
+   * 手動実行で Checkstyle finding が Diagnostics と通知へ反映されること。
+   * @returns 実行完了を待つ Promise を返す。
+   */
+  test('Publishes Checkstyle diagnostics when manual workspace checks find Java issues', async function() {
+    this.timeout(20000);
+
+    const activeVscodeApi = vscodeApi;
+    const workspaceRoot = activeVscodeApi.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceRoot) {
+      throw new Error('Workspace root was not found');
+    }
+
+    const manualSarifPath = path.join(workspaceRoot, '.mamori', 'out', 'combined.sarif');
+    const restoreManualSarif = createRestoreAction(manualSarifPath);
+    const restorePomFile = createRestoreAction(path.join(workspaceRoot, 'pom.xml'));
+    const restoreMavenWrapper = createRestoreAction(
+      process.platform === 'win32'
+        ? path.join(workspaceRoot, 'mvnw.cmd')
+        : path.join(workspaceRoot, 'mvnw'),
+    );
+    const restoreSemgrepWrapper = createRestoreAction(
+      process.platform === 'win32'
+        ? path.join(workspaceRoot, 'bin', 'semgrep.cmd')
+        : path.join(workspaceRoot, 'bin', 'semgrep'),
+    );
+    const messageCapture = captureWindowMessages(activeVscodeApi);
+
+    try {
+      fs.rmSync(manualSarifPath, { force: true });
+      const {
+        fixtureDirectory,
+        javaFilePath,
+        mavenLogPath,
+        semgrepLogPath,
+      } = setupSaveIntegrationFixture(workspaceRoot);
+      const restoreMavenLog = createRestoreAction(mavenLogPath);
+      const restoreSemgrepLog = createRestoreAction(semgrepLogPath);
+      fs.rmSync(mavenLogPath, { force: true });
+      fs.rmSync(semgrepLogPath, { force: true });
+
+      try {
+        setExecutablePathEnvironment(`${path.join(workspaceRoot, 'bin')}${path.delimiter}${originalPath}`);
+        await getMamoriExtension(activeVscodeApi).activate();
+        await activeVscodeApi.commands.executeCommand('mamori-inspector.runWorkspaceCheck');
+
+        await waitFor(() => fs.existsSync(manualSarifPath));
+        await waitFor(() => fs.existsSync(mavenLogPath) && fs.existsSync(semgrepLogPath));
+        await waitFor(() => activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(javaFilePath)).length === 3);
+        await waitFor(() => messageCapture.informationMessages.length > 0 || messageCapture.errorMessages.length > 0);
+
+        const diagnostics = activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(javaFilePath));
+        const messages = diagnostics.map((diagnostic) => diagnostic.message);
+
+        assert.deepStrictEqual(messageCapture.errorMessages, []);
+        assert.ok(messageCapture.informationMessages.some((message) => /3 件の問題を反映しました。/u.test(message)));
+        assert.strictEqual(diagnostics.length, 3);
+        assert.ok(messages.includes('Missing Javadoc'));
+        assert.match(fs.readFileSync(mavenLogPath, 'utf8'), /checkstyle:check/u);
+        assert.ok(fs.existsSync(manualSarifPath));
+        assert.match(fs.readFileSync(manualSarifPath, 'utf8'), /Missing Javadoc/u);
+      } finally {
+        restoreMavenLog();
+        restoreSemgrepLog();
+        fs.rmSync(fixtureDirectory, { recursive: true, force: true });
+      }
+    } finally {
+      messageCapture.restore();
+      restorePomFile();
+      restoreMavenWrapper();
+      restoreSemgrepWrapper();
+      restoreManualSarif();
+    }
+  });
+
+  /**
    * 手動実行で SARIF が生成されない場合でも失敗せず 0 件として完了できること。
    * @returns 実行完了を待つ Promise を返す。
    */

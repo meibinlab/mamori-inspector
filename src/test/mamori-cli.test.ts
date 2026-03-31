@@ -824,6 +824,62 @@ function writeMavenPrepushWrapper(binDirectory: string, outputFileName: string):
 }
 
 /**
+ * pre-push 向け Maven 実行結果に Checkstyle finding を含めるテスト用ラッパーを作成する。
+ * @param binDirectory ラッパーディレクトリを表す。
+ * @param outputFileName 出力ファイル名を表す。
+ * @returns 返り値はない。
+ */
+function writeMavenPrepushCheckstyleWrapper(binDirectory: string, outputFileName: string): void {
+  const outputPath = path.join(binDirectory, outputFileName);
+  const checkstyleXml = '<?xml version="1.0"?><checkstyle version="10.0"><file name="src/main/java/App.java"><error line="2" column="5" severity="warning" message="Missing Javadoc" source="com.puppycrawl.tools.checkstyle.checks.javadoc.JavadocTypeCheck"/></file></checkstyle>';
+  const cpdXml = '<?xml version="1.0"?><pmd-cpd><duplication lines="6" tokens="40"><file path="src/main/java/App.java" line="8"/><file path="src/main/java/Other.java" line="12"/></duplication></pmd-cpd>';
+  const spotbugsXml = '<?xml version="1.0"?><BugCollection><BugInstance type="NP_NULL_ON_SOME_PATH" priority="2"><LongMessage>Possible null pointer dereference</LongMessage><Class classname="App"/><SourceLine classname="App" sourcepath="src/main/java/App.java" start="14"/></BugInstance></BugCollection>';
+  const wrapperPath = process.platform === 'win32'
+    ? path.join(path.dirname(binDirectory), 'mvnw.cmd')
+    : path.join(path.dirname(binDirectory), 'mvnw');
+
+  if (process.platform === 'win32') {
+    const encodedCheckstyleXml = Buffer.from(checkstyleXml, 'utf8').toString('base64');
+    const encodedCpdXml = Buffer.from(cpdXml, 'utf8').toString('base64');
+    const encodedSpotbugsXml = Buffer.from(spotbugsXml, 'utf8').toString('base64');
+    fs.writeFileSync(
+      wrapperPath,
+      [
+        '@echo off',
+        `echo %*>>"${outputPath}"`,
+        'echo %* | findstr /C:"checkstyle:check" >nul',
+        `if not errorlevel 1 node -e "process.stdout.write(Buffer.from('${encodedCheckstyleXml}','base64').toString('utf8'))"`,
+        'echo %* | findstr /C:"pmd:cpd-check" >nul',
+        `if not errorlevel 1 node -e "process.stdout.write(Buffer.from('${encodedCpdXml}','base64').toString('utf8'))"`,
+        'echo %* | findstr /C:"spotbugs:check" >nul',
+        `if not errorlevel 1 node -e "process.stdout.write(Buffer.from('${encodedSpotbugsXml}','base64').toString('utf8'))"`,
+        'exit /b 0',
+        '',
+      ].join('\r\n'),
+      'utf8',
+    );
+    return;
+  }
+
+  fs.writeFileSync(
+    wrapperPath,
+    [
+      '#!/bin/sh',
+      `printf '%s\n' "$*" >> "${outputPath}"`,
+      'case "$*" in',
+      `  *"checkstyle:check"*) printf '%s' '${checkstyleXml}' ;;`,
+      `  *"pmd:cpd-check"*) printf '%s' '${cpdXml}' ;;`,
+      `  *"spotbugs:check"*) printf '%s' '${spotbugsXml}' ;;`,
+      'esac',
+      'exit 0',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  fs.chmodSync(wrapperPath, 0o755);
+}
+
+/**
  * Semgrep 用の SARIF 出力ラッパーを作成する。
  * @param binDirectory ラッパーディレクトリを表す。
  * @param outputFileName 出力ファイル名を表す。
@@ -3375,6 +3431,71 @@ suite('Mamori CLI Test Suite', () => {
     assert.ok(fs.existsSync(sarifOutputPath));
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Duplicated block detected/u);
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Possible null pointer dereference/u);
+  });
+
+  /**
+   * pre-push 実行で Checkstyle finding が SARIF に含まれること。
+   * @returns 返り値はない。
+   */
+  test('Includes Checkstyle findings in prepush Maven SARIF output', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src', 'main', 'java');
+    const classDirectory = path.join(temporaryDirectory, 'target', 'classes');
+    const pomFilePath = path.join(temporaryDirectory, 'pom.xml');
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-prepush-checkstyle.sarif');
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.mkdirSync(classDirectory, { recursive: true });
+    fs.writeFileSync(path.join(sourceDirectory, 'App.java'), 'class App {}\n', 'utf8');
+    fs.writeFileSync(path.join(sourceDirectory, 'Other.java'), 'class Other {}\n', 'utf8');
+    fs.writeFileSync(path.join(classDirectory, 'App.class'), 'compiled', 'utf8');
+    fs.writeFileSync(
+      pomFilePath,
+      [
+        '<project>',
+        '  <build>',
+        '    <plugins>',
+        '      <plugin><artifactId>maven-checkstyle-plugin</artifactId></plugin>',
+        '      <plugin><artifactId>maven-pmd-plugin</artifactId></plugin>',
+        '      <plugin><artifactId>spotless-maven-plugin</artifactId></plugin>',
+        '      <plugin><artifactId>spotbugs-maven-plugin</artifactId></plugin>',
+        '    </plugins>',
+        '  </build>',
+        '</project>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    writeMavenPrepushCheckstyleWrapper(binDirectory, 'mvn-prepush-checkstyle.log');
+    writeSemgrepSarifWrapper(binDirectory, 'semgrep-prepush-checkstyle.log');
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      [
+        'run',
+        '--mode',
+        'prepush',
+        '--scope',
+        'workspace',
+        '--execute',
+        '--sarif-output',
+        path.relative(temporaryDirectory, sarifOutputPath),
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(binDirectory),
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /Missing Javadoc/u);
+    assert.match(fs.readFileSync(path.join(binDirectory, 'mvn-prepush-checkstyle.log'), 'utf8'), /checkstyle:check/u);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Missing Javadoc/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /JavadocTypeCheck/u);
   });
 
   /**
