@@ -8,6 +8,16 @@
 
 - なし
 
+## [0.2.1] - 2026-03-31
+
+### Added
+- manual/workspace で Checkstyle finding が Problems に反映される拡張結合テストを追加しました。
+- prepush/workspace で Checkstyle finding が SARIF に含まれることを確認する CLI 統合テストを追加しました。
+
+### Fixed
+- SARIF ファイルが未生成の場合でも、拡張が読み込みエラーで失敗せず空の finding として扱うようにしました。
+- 保存時と手動実行の Diagnostics 反映に関する回帰テストを補強しました。
+
 ## [0.2.0] - 2026-03-23
 
 ### Added
