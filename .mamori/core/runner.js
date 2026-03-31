@@ -26,6 +26,14 @@ const { execCommand } = require('../tools/exec');
 // HTML ファイル拡張子一覧を表す
 const HTML_FILE_EXTENSIONS = new Set(['.html', '.htm']);
 
+// PMD レポートの既定相対パス一覧を表す
+const PMD_REPORT_RELATIVE_PATHS = [
+  path.join('target', 'pmd.xml'),
+  path.join('build', 'reports', 'pmd', 'main.xml'),
+  path.join('build', 'reports', 'pmd', 'test.xml'),
+  path.join('build', 'reports', 'pmd', 'pmd.xml'),
+];
+
 // inline script 抽出用の正規表現を表す
 const INLINE_SCRIPT_PATTERN = /<script\b((?:"[^"]*"|'[^']*'|[^'">])*)>([\s\S]*?)<\/script>/giu;
 
@@ -46,8 +54,117 @@ function createInitialRunResult() {
 }
 
 /**
+ * ファイルの現在スナップショットを返す。
+ * @param {string} filePath 対象ファイルパスを表す。
+ * @returns {{exists: boolean, mtimeMs: number, size: number}} スナップショットを返す。
+ */
+function captureFileSnapshot(filePath) {
+  try {
+    const stats = fs.statSync(filePath);
+    return {
+      exists: true,
+      mtimeMs: stats.mtimeMs,
+      size: stats.size,
+    };
+  } catch {
+    return {
+      exists: false,
+      mtimeMs: 0,
+      size: 0,
+    };
+  }
+}
+
+/**
+ * PMD の既定レポート候補一覧を返す。
+ * @param {string} moduleRoot モジュールルートを表す。
+ * @returns {string[]} 既定レポート候補一覧を返す。
+ */
+function resolvePmdReportPaths(moduleRoot) {
+  return PMD_REPORT_RELATIVE_PATHS.map((relativePath) => path.join(moduleRoot, relativePath));
+}
+
+/**
+ * ツール実行前のレポート状態を収集する。
+ * @param {string} moduleRoot モジュールルートを表す。
+ * @param {string} toolName ツール名を表す。
+ * @returns {{reportPaths: string[], reportSnapshots: Record<string, {exists: boolean, mtimeMs: number, size: number}>}|undefined} レポート状態を返す。
+ */
+function captureToolReportState(moduleRoot, toolName) {
+  if (toolName !== 'pmd') {
+    return undefined;
+  }
+
+  const reportPaths = resolvePmdReportPaths(moduleRoot);
+  const reportSnapshots = {};
+
+  for (const reportPath of reportPaths) {
+    reportSnapshots[reportPath] = captureFileSnapshot(reportPath);
+  }
+
+  return {
+    reportPaths,
+    reportSnapshots,
+  };
+}
+
+/**
+ * PMD レポートが実行後に更新されたか判定する。
+ * @param {string} reportPath レポートパスを表す。
+ * @param {{exists: boolean, mtimeMs: number, size: number}|undefined} previousSnapshot 実行前スナップショットを表す。
+ * @returns {boolean} 更新されている場合は true を返す。
+ */
+function hasUpdatedReportFile(reportPath, previousSnapshot) {
+  const currentSnapshot = captureFileSnapshot(reportPath);
+  if (!currentSnapshot.exists) {
+    return false;
+  }
+
+  if (!previousSnapshot || !previousSnapshot.exists) {
+    return true;
+  }
+
+  return currentSnapshot.mtimeMs !== previousSnapshot.mtimeMs
+    || currentSnapshot.size !== previousSnapshot.size;
+}
+
+/**
+ * 実行後に更新された PMD レポート本文を返す。
+ * @param {{reportPaths?: string[], reportSnapshots?: Record<string, {exists: boolean, mtimeMs: number, size: number}>}} commandResult 実行結果を表す。
+ * @returns {string} PMD レポート本文を返す。
+ */
+function loadUpdatedPmdReport(commandResult) {
+  const reportPaths = Array.isArray(commandResult.reportPaths)
+    ? commandResult.reportPaths
+    : [];
+  let selectedReportPath;
+  let selectedReportMtime = -1;
+
+  for (const reportPath of reportPaths) {
+    const previousSnapshot = commandResult.reportSnapshots
+      ? commandResult.reportSnapshots[reportPath]
+      : undefined;
+    if (!hasUpdatedReportFile(reportPath, previousSnapshot)) {
+      continue;
+    }
+
+    const stats = fs.statSync(reportPath);
+    if (stats.mtimeMs > selectedReportMtime) {
+      selectedReportMtime = stats.mtimeMs;
+      selectedReportPath = reportPath;
+    }
+  }
+
+  if (!selectedReportPath) {
+    return '';
+  }
+
+  return fs.readFileSync(selectedReportPath, 'utf8');
+}
+
+/**
  * ツール実行結果から Issue 一覧を抽出する。
- * @param {{tool: string, stdout?: string}} commandResult 実行結果を表す。
+ * @param {{tool: string, stdout?: string, reportPaths?: string[], reportSnapshots?: Record<string, {exists: boolean, mtimeMs: number, size: number}>}} commandResult 実行結果を表す。
  * @returns {Array<object>} Issue 一覧を返す。
  */
 function extractIssues(commandResult) {
@@ -56,7 +173,12 @@ function extractIssues(commandResult) {
   }
 
   if (commandResult.tool === 'pmd') {
-    return pmdAdapter.parsePmdXml(commandResult.stdout || '');
+    const standardOutputIssues = pmdAdapter.parsePmdXml(commandResult.stdout || '');
+    if (standardOutputIssues.length > 0) {
+      return standardOutputIssues;
+    }
+
+    return pmdAdapter.parsePmdXml(loadUpdatedPmdReport(commandResult));
   }
 
   if (commandResult.tool === 'cpd') {
@@ -725,6 +847,7 @@ async function executeCommandEntry(moduleRoot, commandEntry, executor) {
     ...(commandEntry.env || {}),
   };
   const commandEnvironment = buildCommandEnvironment(commandEntry.cwd, baseEnvironment);
+  const toolReportState = captureToolReportState(commandEntry.cwd || moduleRoot, commandEntry.tool);
   let preparedCommand;
   let commandResult;
 
@@ -789,6 +912,8 @@ async function executeCommandEntry(moduleRoot, commandEntry, executor) {
       stdout: result.stdout,
       stderr: result.stderr,
       filePathMappings: preparedCommand.filePathMappings,
+      reportPaths: toolReportState ? toolReportState.reportPaths : undefined,
+      reportSnapshots: toolReportState ? toolReportState.reportSnapshots : undefined,
     };
     return commandResult;
   } catch (error) {
