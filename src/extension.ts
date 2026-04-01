@@ -7,7 +7,11 @@ import * as fs from 'fs';
 // Node のパス操作 API を表す
 import * as path from 'path';
 // hooks 成功通知の整形処理を表す
-import { reportHooksCommandSuccess, type MamoriHooksAction } from './hooks-command-report';
+import {
+  reportHooksCommandSuccess,
+  type HooksCommandMessages,
+  type MamoriHooksAction,
+} from './hooks-command-report';
 // SARIF Diagnostics 変換器を表す
 import { loadSarifFindings, SarifFinding } from './sarif-diagnostics';
 // 保存時チェックのスケジューラーを表す
@@ -51,6 +55,220 @@ const AUTO_SAVE_NON_QUEUE_EXTENSIONS = new Set([
 const SAVE_DEBOUNCE_MILLISECONDS = 400;
 // 自己再帰抑止時間を表す
 const SAVE_SUPPRESSION_MILLISECONDS = 1500;
+
+/** ローカライズ埋め込み引数を表す。 */
+type LocalizationArguments = Array<string | number | boolean> | Record<string, string | number | boolean>;
+
+/**
+ * 既定英語文言をローカライズする。
+ * @param message 既定文言を表す。
+ * @param comment 翻訳向け補足を表す。
+ * @param args 埋め込み引数を表す。
+ * @returns ローカライズ済み文言を返す。
+ */
+function localize(
+  message: string,
+  comment: string | string[],
+  args?: LocalizationArguments,
+): string {
+  return vscode.l10n.t({ message, comment, args });
+}
+
+/**
+ * ワークスペース未選択時の警告文言を返す。
+ * @returns 警告文言を返す。
+ */
+function getOpenWorkspaceMessage(): string {
+  return localize(
+    'Mamori Inspector: Open a workspace first.',
+    'Warning message shown when a command requires an open workspace.',
+  );
+}
+
+/**
+ * ワークスペース選択プレースホルダーを返す。
+ * @returns プレースホルダー文言を返す。
+ */
+function getWorkspaceSelectionPlaceholder(): string {
+  return localize(
+    'Select the workspace for Mamori Inspector.',
+    'Placeholder text shown when the user must choose a workspace folder.',
+  );
+}
+
+/**
+ * hooks 進捗タイトルを返す。
+ * @param action hooks 操作種別を表す。
+ * @returns 進捗タイトルを返す。
+ */
+function getHooksProgressTitle(action: MamoriHooksAction): string {
+  return action === 'install'
+    ? localize(
+      'Installing Mamori Inspector Git hooks',
+      'Progress notification title while installing Git hooks.',
+    )
+    : localize(
+      'Uninstalling Mamori Inspector Git hooks',
+      'Progress notification title while uninstalling Git hooks.',
+    );
+}
+
+/**
+ * hooks 失敗通知文言を返す。
+ * @param action hooks 操作種別を表す。
+ * @param details 失敗詳細を表す。
+ * @returns エラー通知文言を返す。
+ */
+function getHooksFailureMessage(action: MamoriHooksAction, details: string): string {
+  return action === 'install'
+    ? localize(
+      'Mamori Inspector: Failed to install Git hooks. {0}',
+      'Error message shown when installing Git hooks fails.',
+      [details],
+    )
+    : localize(
+      'Mamori Inspector: Failed to uninstall Git hooks. {0}',
+      'Error message shown when uninstalling Git hooks fails.',
+      [details],
+    );
+}
+
+/**
+ * hooks 成功通知文言を返す。
+ * @returns hooks 通知文言を返す。
+ */
+function getHooksCommandMessages(): HooksCommandMessages {
+  return {
+    installSuccessMessage: localize(
+      'Mamori Inspector: Installed Git hooks.',
+      'Information message shown after Git hooks are installed successfully.',
+    ),
+    uninstallSuccessMessage: localize(
+      'Mamori Inspector: Uninstalled Git hooks.',
+      'Information message shown after Git hooks are uninstalled successfully.',
+    ),
+    buildWarningMessage: (warnings: string) => localize(
+      'Mamori Inspector: Git hooks were processed, but some hooks were left unchanged. {0}',
+      'Warning message shown when Git hooks processing succeeds with skipped hooks.',
+      [warnings],
+    ),
+  };
+}
+
+/**
+ * 保守コマンド進捗タイトルを返す。
+ * @param action 保守コマンド種別を表す。
+ * @returns 進捗タイトルを返す。
+ */
+function getMaintenanceProgressTitle(action: MamoriMaintenanceAction): string {
+  return action === 'setup'
+    ? localize(
+      'Setting up Mamori Inspector managed tools',
+      'Progress notification title while managed tools are being set up.',
+    )
+    : localize(
+      'Clearing Mamori Inspector cache',
+      'Progress notification title while the extension cache is being cleared.',
+    );
+}
+
+/**
+ * 保守コマンド成功通知文言を返す。
+ * @param action 保守コマンド種別を表す。
+ * @returns 情報通知文言を返す。
+ */
+function getMaintenanceSuccessMessage(action: MamoriMaintenanceAction): string {
+  return action === 'setup'
+    ? localize(
+      'Mamori Inspector: Set up managed tools.',
+      'Information message shown after managed tools are set up successfully.',
+    )
+    : localize(
+      'Mamori Inspector: Cleared the cache.',
+      'Information message shown after the extension cache is cleared successfully.',
+    );
+}
+
+/**
+ * 保守コマンド失敗通知文言を返す。
+ * @param action 保守コマンド種別を表す。
+ * @param details 失敗詳細を表す。
+ * @returns エラー通知文言を返す。
+ */
+function getMaintenanceFailureMessage(action: MamoriMaintenanceAction, details: string): string {
+  return action === 'setup'
+    ? localize(
+      'Mamori Inspector: Failed to set up managed tools. {0}',
+      'Error message shown when managed tools setup fails.',
+      [details],
+    )
+    : localize(
+      'Mamori Inspector: Failed to clear the cache. {0}',
+      'Error message shown when cache clearing fails.',
+      [details],
+    );
+}
+
+/**
+ * 保存時チェック結果のステータスバー文言を返す。
+ * @param diagnosticsCount 診断件数を表す。
+ * @returns ステータスバー文言を返す。
+ */
+function getSaveCheckStatusMessage(diagnosticsCount: number): string {
+  return localize(
+    'Mamori Inspector: Reflected {0} save-check diagnostics.',
+    'Status bar message shown after save-check diagnostics are published.',
+    [diagnosticsCount],
+  );
+}
+
+/**
+ * 利用可能ワークスペースなしの警告文言を返す。
+ * @returns 警告文言を返す。
+ */
+function getNoAvailableWorkspaceMessage(): string {
+  return localize(
+    'Mamori Inspector: No available workspace folders were found.',
+    'Warning message shown when all workspace folders are missing.',
+  );
+}
+
+/**
+ * 手動実行の進捗タイトルを返す。
+ * @returns 進捗タイトルを返す。
+ */
+function getWorkspaceCheckProgressTitle(): string {
+  return localize(
+    'Running Mamori Inspector',
+    'Progress notification title while a manual workspace check is running.',
+  );
+}
+
+/**
+ * 手動実行成功通知文言を返す。
+ * @param diagnosticsCount 診断件数を表す。
+ * @returns 情報通知文言を返す。
+ */
+function getWorkspaceCheckSuccessMessage(diagnosticsCount: number): string {
+  return localize(
+    'Mamori Inspector: Reflected {0} diagnostics.',
+    'Information message shown after a manual workspace check publishes diagnostics.',
+    [diagnosticsCount],
+  );
+}
+
+/**
+ * 手動実行失敗通知文言を返す。
+ * @param details 失敗詳細を表す。
+ * @returns エラー通知文言を返す。
+ */
+function getWorkspaceCheckFailureMessage(details: string): string {
+  return localize(
+    'Mamori Inspector: Execution failed. {0}',
+    'Error message shown when a manual workspace check fails.',
+    [details],
+  );
+}
 
 /**
  * Mamori CLI 実行条件を表す。
@@ -385,7 +603,7 @@ async function resolveWorkspaceFolderForSingleTargetCommand(): Promise<vscode.Wo
     })),
     {
       ignoreFocusOut: true,
-      placeHolder: 'Mamori Inspector の対象ワークスペースを選択してください。',
+      placeHolder: getWorkspaceSelectionPlaceholder(),
     },
   );
 
@@ -407,7 +625,7 @@ function createManageHooksCommand(
   return async() => {
     const workspaceFolder = await resolveWorkspaceFolderForSingleTargetCommand();
     if (!workspaceFolder) {
-      void vscode.window.showWarningMessage('Mamori Inspector: ワークスペースを開いてください。');
+      void vscode.window.showWarningMessage(getOpenWorkspaceMessage());
       return;
     }
 
@@ -416,9 +634,7 @@ function createManageHooksCommand(
       await vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
-          title: action === 'install'
-            ? 'Mamori Inspector の Git hooks をインストール中'
-            : 'Mamori Inspector の Git hooks をアンインストール中',
+          title: getHooksProgressTitle(action),
           cancellable: false,
         },
         async() => {
@@ -430,14 +646,19 @@ function createManageHooksCommand(
         },
       );
 
-      reportHooksCommandSuccess(action, commandResult ? commandResult.stdout : '', outputChannel, vscode.window);
+      reportHooksCommandSuccess(
+        action,
+        commandResult ? commandResult.stdout : '',
+        outputChannel,
+        vscode.window,
+        getHooksCommandMessages(),
+      );
     } catch (error) {
+      const details = error instanceof Error ? error.message : String(error);
       outputChannel.appendLine(
-        `Mamori Inspector hooks ${action} failed: ${error instanceof Error ? error.message : String(error)}`,
+        `Mamori Inspector hooks ${action} failed: ${details}`,
       );
-      void vscode.window.showErrorMessage(
-        `Mamori Inspector: Git hooks の${action === 'install' ? 'インストール' : 'アンインストール'}に失敗しました。${error instanceof Error ? error.message : String(error)}`,
-      );
+      void vscode.window.showErrorMessage(getHooksFailureMessage(action, details));
     }
   };
 }
@@ -457,13 +678,11 @@ function createManageMaintenanceCommand(
   return async() => {
     const workspaceFolder = await resolveWorkspaceFolderForSingleTargetCommand();
     if (!workspaceFolder) {
-      void vscode.window.showWarningMessage('Mamori Inspector: ワークスペースを開いてください。');
+      void vscode.window.showWarningMessage(getOpenWorkspaceMessage());
       return;
     }
 
-    const progressTitle = action === 'setup'
-      ? 'Mamori Inspector の必要ツールを準備中'
-      : 'Mamori Inspector のキャッシュを削除中';
+    const progressTitle = getMaintenanceProgressTitle(action);
 
     try {
       let commandResult: MamoriCliCommandResult | undefined;
@@ -485,20 +704,13 @@ function createManageMaintenanceCommand(
       if (commandResult && commandResult.stdout.trim() !== '') {
         outputChannel.appendLine(commandResult.stdout.trim());
       }
-      void vscode.window.showInformationMessage(
-        action === 'setup'
-          ? 'Mamori Inspector: 必要ツールを準備しました。'
-          : 'Mamori Inspector: キャッシュを削除しました。',
-      );
+      void vscode.window.showInformationMessage(getMaintenanceSuccessMessage(action));
     } catch (error) {
+      const details = error instanceof Error ? error.message : String(error);
       outputChannel.appendLine(
-        `Mamori Inspector maintenance ${action} failed: ${error instanceof Error ? error.message : String(error)}`,
+        `Mamori Inspector maintenance ${action} failed: ${details}`,
       );
-      void vscode.window.showErrorMessage(
-        action === 'setup'
-          ? `Mamori Inspector: 必要ツールの準備に失敗しました。${error instanceof Error ? error.message : String(error)}`
-          : `Mamori Inspector: キャッシュ削除に失敗しました。${error instanceof Error ? error.message : String(error)}`,
-      );
+      void vscode.window.showErrorMessage(getMaintenanceFailureMessage(action, details));
     }
   };
 }
@@ -658,7 +870,7 @@ async function runSaveCheck(
     }, extensionRootPath);
     const diagnosticsCount = publishDiagnostics(workspaceFolder, diagnosticCollection, sarifPath);
     void vscode.window.setStatusBarMessage(
-      `Mamori Inspector: ${diagnosticsCount} 件の保存時チェック結果を反映しました。`,
+      getSaveCheckStatusMessage(diagnosticsCount),
       3000,
     );
   } catch (error) {
@@ -683,14 +895,14 @@ function createRunWorkspaceCheckCommand(
   return async() => {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders || workspaceFolders.length === 0) {
-      void vscode.window.showWarningMessage('Mamori Inspector: ワークスペースを開いてください。');
+      void vscode.window.showWarningMessage(getOpenWorkspaceMessage());
       return;
     }
 
     const existingWorkspaceFolders = filterExistingWorkspaceFolders(workspaceFolders, outputChannel);
     if (existingWorkspaceFolders.length === 0) {
       diagnosticCollection.clear();
-      void vscode.window.showWarningMessage('Mamori Inspector: 利用可能なワークスペースがありません。');
+      void vscode.window.showWarningMessage(getNoAvailableWorkspaceMessage());
       return;
     }
 
@@ -702,7 +914,7 @@ function createRunWorkspaceCheckCommand(
       await vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
-          title: 'Mamori Inspector を実行中',
+          title: getWorkspaceCheckProgressTitle(),
           cancellable: false,
         },
         async(progress) => {
@@ -729,17 +941,14 @@ function createRunWorkspaceCheckCommand(
       }
 
       const diagnosticsCount = publishCollectedDiagnostics(diagnosticCollection, diagnosticsByUri);
-      void vscode.window.showInformationMessage(
-        `Mamori Inspector: ${diagnosticsCount} 件の問題を反映しました。`,
-      );
+      void vscode.window.showInformationMessage(getWorkspaceCheckSuccessMessage(diagnosticsCount));
     } catch (error) {
+      const details = error instanceof Error ? error.message : String(error);
       diagnosticCollection.clear();
       outputChannel.appendLine(
-        `Mamori Inspector workspace check failed: ${error instanceof Error ? error.message : String(error)}`,
+        `Mamori Inspector workspace check failed: ${details}`,
       );
-      void vscode.window.showErrorMessage(
-        `Mamori Inspector: 実行に失敗しました。${error instanceof Error ? error.message : String(error)}`,
-      );
+      void vscode.window.showErrorMessage(getWorkspaceCheckFailureMessage(details));
     }
   };
 }
