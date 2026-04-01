@@ -60,6 +60,18 @@ function delay(milliseconds: number): Promise<void> {
 }
 
 /**
+ * 診断件数反映通知の検証用正規表現を返す。
+ * @param diagnosticsCount 診断件数を表す。
+ * @returns 英日どちらの通知文言にも一致する正規表現を返す。
+ */
+function getDiagnosticsReflectedPattern(diagnosticsCount: number): RegExp {
+  return new RegExp(
+    `(?:Mamori Inspector: Reflected ${diagnosticsCount} diagnostics\\.|${diagnosticsCount} 件の問題を反映しました。)`,
+    'u',
+  );
+}
+
+/**
  * VS Code API を安全に読み込む。
  * @returns 読み込めた場合は VS Code API を返す。
  */
@@ -903,10 +915,10 @@ suite('Extension Utility Test Suite', () => {
       'Mamori Inspector hooks install warnings: pre-commit already exists and was left unchanged | pre-push already exists and was left unchanged',
     ]);
     assert.deepStrictEqual(warningMessages, [
-      'Mamori Inspector: Git hooks は処理しましたが、一部は変更しませんでした。pre-commit already exists and was left unchanged / pre-push already exists and was left unchanged',
+      'Mamori Inspector: Git hooks were processed, but some hooks were left unchanged. pre-commit already exists and was left unchanged / pre-push already exists and was left unchanged',
     ]);
     assert.deepStrictEqual(informationMessages, [
-      'Mamori Inspector: Git hooks をインストールしました。',
+      'Mamori Inspector: Installed Git hooks.',
     ]);
   });
 
@@ -933,10 +945,10 @@ suite('Extension Utility Test Suite', () => {
       'Mamori Inspector hooks uninstall warnings: pre-commit is not managed by Mamori Inspector and was left unchanged',
     ]);
     assert.deepStrictEqual(warningMessages, [
-      'Mamori Inspector: Git hooks は処理しましたが、一部は変更しませんでした。pre-commit is not managed by Mamori Inspector and was left unchanged',
+      'Mamori Inspector: Git hooks were processed, but some hooks were left unchanged. pre-commit is not managed by Mamori Inspector and was left unchanged',
     ]);
     assert.deepStrictEqual(informationMessages, [
-      'Mamori Inspector: Git hooks をアンインストールしました。',
+      'Mamori Inspector: Uninstalled Git hooks.',
     ]);
   });
 
@@ -962,7 +974,7 @@ suite('Extension Utility Test Suite', () => {
     assert.deepStrictEqual(outputLines, []);
     assert.deepStrictEqual(warningMessages, []);
     assert.deepStrictEqual(informationMessages, [
-      'Mamori Inspector: Git hooks をインストールしました。',
+      'Mamori Inspector: Installed Git hooks.',
     ]);
   });
 });
@@ -1157,7 +1169,7 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
         const messages = diagnostics.map((diagnostic) => diagnostic.message);
 
         assert.deepStrictEqual(messageCapture.errorMessages, []);
-        assert.ok(messageCapture.informationMessages.some((message) => /3 件の問題を反映しました。/u.test(message)));
+        assert.ok(messageCapture.informationMessages.some((message) => getDiagnosticsReflectedPattern(3).test(message)));
         assert.ok(messages.includes('Unused local variable'));
         assert.match(fs.readFileSync(mavenLogPath, 'utf8'), /pmd:check/u);
         assert.match(fs.readFileSync(manualSarifPath, 'utf8'), /Unused local variable/u);
@@ -1243,7 +1255,7 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
         const messages = diagnostics.map((diagnostic) => diagnostic.message);
 
         assert.deepStrictEqual(messageCapture.errorMessages, []);
-        assert.ok(messageCapture.informationMessages.some((message) => /3 件の問題を反映しました。/u.test(message)));
+        assert.ok(messageCapture.informationMessages.some((message) => getDiagnosticsReflectedPattern(3).test(message)));
         assert.ok(messages.includes('Missing Javadoc'));
         assert.match(fs.readFileSync(mavenLogPath, 'utf8'), /checkstyle:check/u);
         assert.match(fs.readFileSync(manualSarifPath, 'utf8'), /Missing Javadoc/u);
@@ -1784,7 +1796,7 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
         const messages = diagnostics.map((diagnostic) => diagnostic.message);
 
         assert.deepStrictEqual(messageCapture.errorMessages, []);
-        assert.ok(messageCapture.informationMessages.some((message) => /3 件の問題を反映しました。/u.test(message)));
+        assert.ok(messageCapture.informationMessages.some((message) => getDiagnosticsReflectedPattern(3).test(message)));
         assert.strictEqual(diagnostics.length, 3);
         assert.ok(messages.includes('Missing Javadoc'));
         assert.match(fs.readFileSync(mavenLogPath, 'utf8'), /checkstyle:check/u);
@@ -1843,7 +1855,7 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
 
       assert.deepStrictEqual(messageCapture.errorMessages, []);
       assert.strictEqual(messageCapture.informationMessages.length, 1);
-      assert.match(messageCapture.informationMessages[0] || '', /0 件の問題を反映しました。/u);
+      assert.match(messageCapture.informationMessages[0] || '', getDiagnosticsReflectedPattern(0));
       assert.ok(!fs.existsSync(manualSarifPath));
     } finally {
       messageCapture.restore();

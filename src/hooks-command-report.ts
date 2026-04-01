@@ -4,6 +4,18 @@
 export type MamoriHooksAction = 'install' | 'uninstall';
 
 /**
+ * hooks 通知文言を表す。
+ */
+export interface HooksCommandMessages {
+  /** install 成功時の情報通知を表す。 */
+  installSuccessMessage: string;
+  /** uninstall 成功時の情報通知を表す。 */
+  uninstallSuccessMessage: string;
+  /** 警告通知メッセージを構築する。 */
+  buildWarningMessage: (warnings: string) => string;
+}
+
+/**
  * hooks warning の出力先を表す。
  */
 export interface HooksOutputWriter {
@@ -68,19 +80,26 @@ export function reportHooksCommandSuccess(
   stdout: string,
   outputWriter: HooksOutputWriter,
   messagePresenter: HooksMessagePresenter,
+  messages: HooksCommandMessages = {
+    installSuccessMessage: 'Mamori Inspector: Installed Git hooks.',
+    uninstallSuccessMessage: 'Mamori Inspector: Uninstalled Git hooks.',
+    buildWarningMessage: (warnings: string) => (
+      `Mamori Inspector: Git hooks were processed, but some hooks were left unchanged. ${warnings}`
+    ),
+  },
 ): void {
   const warnings = extractHooksWarnings(stdout);
 
   if (warnings.length > 0) {
     outputWriter.appendLine(`Mamori Inspector hooks ${action} warnings: ${warnings.join(' | ')}`);
     void messagePresenter.showWarningMessage(
-      `Mamori Inspector: Git hooks は処理しましたが、一部は変更しませんでした。${warnings.join(' / ')}`,
+      messages.buildWarningMessage(warnings.join(' / ')),
     );
   }
 
   void messagePresenter.showInformationMessage(
     action === 'install'
-      ? 'Mamori Inspector: Git hooks をインストールしました。'
-      : 'Mamori Inspector: Git hooks をアンインストールしました。',
+      ? messages.installSuccessMessage
+      : messages.uninstallSuccessMessage,
   );
 }
