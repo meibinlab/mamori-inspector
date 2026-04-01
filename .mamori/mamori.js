@@ -18,6 +18,8 @@ const { installGitHooks, uninstallGitHooks } = require('./hooks/install');
 const { runResolvedConfiguration } = require('./core/runner');
 // SARIF 出力器を表す
 const { buildCombinedSarif, writeSarifFile } = require('./core/sarif');
+// ツール自動導入器を表す
+const { clearManagedToolCaches, ensureWorkspaceTooling } = require('./tools/provision');
 
 // コマンドライン引数を取得する
 const args = process.argv.slice(2);
@@ -66,12 +68,14 @@ function printHelp() {
       '    [--sarif-output <path>]',
       '    [--semgrep-config <path>] [--semgrep-rule <rule>[,<rule>...]]',
       '    [--eslint-config <path>] [--stylelint-config <path>] [--htmlhint-config <path>]',
+      '  mamori.js setup',
+      '  mamori.js cache-clear',
       '  mamori.js hooks <install|uninstall>',
       '  mamori.js help',
       '',
       'Notes:',
-      '  This is a minimal bootstrap for configuration resolution.',
-      '  Build definition extraction and tool execution are intentionally not implemented yet.',
+      '  setup downloads managed tools into .mamori/tools and .mamori/node.',
+      '  run automatically provisions missing managed tools before execution.',
       '',
     ].join('\n'),
   );
@@ -740,6 +744,32 @@ async function runMinimal() {
 }
 
 /**
+ * setup サブコマンドを実行する。
+ * @returns {Promise<number>} 終了コードを返す。
+ */
+async function runSetupCommand() {
+  const results = await ensureWorkspaceTooling(process.cwd());
+  process.stdout.write('mamori: setup completed\n');
+  process.stdout.write(
+    `mamori: setup tools=${results.map((entry) => `${entry.tool}:${entry.location}`).join(' | ')}\n`,
+  );
+  return 0;
+}
+
+/**
+ * cache-clear サブコマンドを実行する。
+ * @returns {number} 終了コードを返す。
+ */
+function runCacheClearCommand() {
+  const removedDirectories = clearManagedToolCaches(process.cwd());
+  process.stdout.write('mamori: cache-clear completed\n');
+  process.stdout.write(
+    `mamori: cache-clear removed=${removedDirectories.length > 0 ? removedDirectories.join(', ') : '(none)'}\n`,
+  );
+  return 0;
+}
+
+/**
  * hooks サブコマンドを実行する。
  * @returns {number} 終了コードを返す。
  */
@@ -783,6 +813,19 @@ switch (command) {
         process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
         exit(2);
       });
+    break;
+  case 'setup':
+    runSetupCommand()
+      .then((code) => {
+        exit(code);
+      })
+      .catch((error) => {
+        process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+        exit(2);
+      });
+    break;
+  case 'cache-clear':
+    exit(runCacheClearCommand());
     break;
   case 'hooks':
     exit(runHooksCommand());

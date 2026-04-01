@@ -12,12 +12,30 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 ## 初期セットアップ時の注意
 - 保存時検証は、拡張をインストールしたあとに対応ファイルを保存すると自動で開始します。
 - Git hook 検証は、拡張をインストールしただけでは開始しません。管理対象の hook を明示的にインストールする必要があります。
+- 初回の検証実行前に管理ツール一式を先に取得したい場合は、`Mamori Inspector: Setup Managed Tools` を一度実行します。
 - `precommit/staged` は、ステージ済みファイルを `git diff --cached --name-only --diff-filter=ACMR` で解決するため、`PATH` 上の Git CLI が必要です。
 - Web checker の設定は、明示設定、検出した設定ファイル、`package.json` の設定、bundled minimal config の順で解決します。
 - JavaScript ファイルと HTML の inline script チェックは、プロジェクト設定が検出できない場合、bundled minimal ESLint config にフォールバックします。bundled fallback は互換性を優先した保守的な core rule だけを使います。
 - TypeScript ファイルは、明示設定、ワークスペース探索、または `package.json#eslintConfig` で ESLint 設定を解決できた場合にのみチェックします。Mamori の JavaScript 向け bundled fallback は TypeScript には適用しません。
 - CSS、SCSS、Sass のチェックと HTML の inline style チェックは、プロジェクト設定が検出できない場合、bundled minimal Stylelint config にフォールバックします。
 - HTML のチェックは、プロジェクト設定が検出できない場合、bundled minimal htmlhint config にフォールバックします。
+
+## 管理ツールの自動導入
+- Mamori は `run` 実行時に不足している管理ツールを自動導入し、ワークスペース配下の `.mamori/tools` と `.mamori/node` に保存します。
+- 初回実行前にまとめて取得したい場合は `Mamori Inspector: Setup Managed Tools` を使います。
+- `.mamori/tools` と `.mamori/node` を削除して次回実行時に再取得したい場合は `Mamori Inspector: Clear Managed Tool Cache` を使います。
+- CLI では `mamori.js setup` と `mamori.js cache-clear` が同じ役割を持ちます。
+
+| ツール群 | 管理バージョン | 導入先 | 補足 |
+| ---- | ---- | ---- | ---- |
+| Maven | 3.9.11 | `.mamori/tools/maven/<version>` | `PATH` 上に `mvn` がない場合に使用します。 |
+| Gradle | 8.14.4 | `.mamori/tools/gradle/<version>` | `PATH` 上に `gradle` がない場合に使用します。 |
+| Semgrep | 1.151.0 | `.mamori/tools/python/packages` | `PATH` 上に `semgrep` がない場合に `pip` で導入します。 |
+| Prettier / ESLint / Stylelint / htmlhint | 導入時点の npm 取得版 | `.mamori/node/node_modules/.bin` | プロジェクト直下の `node_modules/.bin` に対象ツールがない場合に使用します。 |
+
+- Web ツールは、最寄りのプロジェクト `node_modules/.bin` を優先し、見つからない場合のみ `.mamori/node` にフォールバックします。
+- Maven、Gradle、Semgrep は、まず `PATH` 上の既存コマンドを使い、見つからない場合だけ管理コピーを導入します。
+- 管理対象の Node ツール導入には `PATH` 上の `npm` が必要です。管理対象の Semgrep 導入には `py`、`python`、`python3` のいずれかの Python ランチャーが必要です。
 
 ## 現在の挙動
 - Java、JavaScript、JavaScript React、TypeScript、TypeScript React、CSS、SCSS、Sass、HTML ファイルは、保存時にデバウンスと再帰抑止付きのバックグラウンドチェックを自動実行します。
@@ -39,8 +57,11 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 - `prepush/workspace` は、一時的な JavaScript ファイルを使って HTML の inline script ブロックも ESLint の対象に含め、結果は元の HTML 上の位置に報告します。
 - `manual/workspace` は、重い手動ツールを追加するまで、現時点では軽量な Java チェック計画を再利用します。
 - コマンド `Mamori Inspector: Run Workspace Check` は、ワークスペース全体の手動チェックを実行し、生成された SARIF から Diagnostics を公開します。
+- コマンド `Mamori Inspector: Setup Managed Tools` は、管理対象の Maven、Gradle、Semgrep、Prettier、ESLint、Stylelint、htmlhint をワークスペースキャッシュへ導入します。
+- コマンド `Mamori Inspector: Clear Managed Tool Cache` は、`.mamori/tools` と `.mamori/node` の管理キャッシュを削除します。
 - コマンド `Mamori Inspector: Install Git Hooks` と `Mamori Inspector: Uninstall Git Hooks` は、CLI と同じランナーを呼び出し、`.git/hooks/pre-commit` と `.git/hooks/pre-push` を管理します。
 - Maven と Gradle の build 定義を解析して、Checkstyle、PMD、Spotless、CPD、SpotBugs などの Java ツール設定を解決します。
+- `mamori.js setup` は VS Code の setup コマンドと同じ管理ツール一式を準備し、`mamori.js cache-clear` は VS Code の cache-clear コマンドと同じキャッシュ削除を行います。
 - `mamori.js hooks install` と `mamori.js hooks uninstall` は、`.git/hooks` 配下の管理対象 `pre-commit` と `pre-push` を作成または削除します。
 
 ## HTML 内の JS / CSS チェック

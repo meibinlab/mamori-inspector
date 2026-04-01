@@ -77,6 +77,11 @@ interface MamoriCliCommandResult {
 }
 
 /**
+ * Mamori CLI の保守コマンド種別を表す。
+ */
+type MamoriMaintenanceAction = 'setup' | 'cache-clear';
+
+/**
  * URI ごとの Diagnostics 収集結果を表す。
  */
 interface DiagnosticsByUriEntry {
@@ -133,6 +138,41 @@ function getMamoriCliExecutablePath(): string {
 }
 
 /**
+ * Mamori CLI 失敗時に表示する詳細メッセージを返す。
+ * @param stdout 標準出力を表す。
+ * @param stderr 標準エラー出力を表す。
+ * @param code 終了コードを表す。
+ * @returns 利用者向けの失敗詳細を返す。
+ */
+function getMamoriCliFailureMessage(stdout: string, stderr: string, code: number | null): string {
+  const normalizedStderr = stderr.trim();
+  if (normalizedStderr !== '') {
+    return normalizedStderr;
+  }
+
+  const normalizedStdout = stdout.trim();
+  if (normalizedStdout === '') {
+    return `Mamori CLI exited with code ${String(code)}`;
+  }
+
+  const warningMatch = normalizedStdout.match(/(?:^|\r?\n)\s*warnings=(.+)$/mu);
+  if (warningMatch && warningMatch[1]) {
+    return warningMatch[1].trim();
+  }
+
+  const errorMatch = normalizedStdout.match(/(?:^|\r?\n)\s*-\s+([^\r\n]+:error message=.+)$/mu);
+  if (errorMatch && errorMatch[1]) {
+    return errorMatch[1].trim();
+  }
+
+  const lines = normalizedStdout
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => line !== '');
+  return lines.at(-1) || `Mamori CLI exited with code ${String(code)}`;
+}
+
+/**
  * ワークスペース向けの既定 SARIF パスを返す。
  * @param workspaceFolder ワークスペースフォルダーを表す。
  * @returns SARIF パスを返す。
@@ -172,6 +212,15 @@ function buildMamoriCliArguments(options: MamoriCliRunOptions): string[] {
  */
 function buildMamoriHooksArguments(action: MamoriHooksAction): string[] {
   return ['hooks', action];
+}
+
+/**
+ * Mamori 保守コマンドの引数一覧を構築する。
+ * @param action 保守コマンド種別を表す。
+ * @returns CLI 引数一覧を返す。
+ */
+function buildMamoriMaintenanceArguments(action: MamoriMaintenanceAction): string[] {
+  return [action];
 }
 
 /**
@@ -275,7 +324,7 @@ function runMamoriCliCommand(
         resolve({ stdout, stderr });
         return;
       }
-      reject(new Error(stderr || `Mamori CLI exited with code ${String(code)}`));
+      reject(new Error(getMamoriCliFailureMessage(stdout, stderr, code ?? null)));
     });
   });
 }
@@ -388,6 +437,67 @@ function createManageHooksCommand(
       );
       void vscode.window.showErrorMessage(
         `Mamori Inspector: Git hooks の${action === 'install' ? 'インストール' : 'アンインストール'}に失敗しました。${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  };
+}
+
+/**
+ * setup / cache-clear 管理コマンドを作成する。
+ * @param action 保守コマンド種別を表す。
+ * @param outputChannel 出力チャネルを表す。
+ * @param extensionRootPath 拡張ルートパスを表す。
+ * @returns コマンド本体を返す。
+ */
+function createManageMaintenanceCommand(
+  action: MamoriMaintenanceAction,
+  outputChannel: vscode.OutputChannel,
+  extensionRootPath: string,
+): () => Promise<void> {
+  return async() => {
+    const workspaceFolder = await resolveWorkspaceFolderForSingleTargetCommand();
+    if (!workspaceFolder) {
+      void vscode.window.showWarningMessage('Mamori Inspector: ワークスペースを開いてください。');
+      return;
+    }
+
+    const progressTitle = action === 'setup'
+      ? 'Mamori Inspector の必要ツールを準備中'
+      : 'Mamori Inspector のキャッシュを削除中';
+
+    try {
+      let commandResult: MamoriCliCommandResult | undefined;
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: progressTitle,
+          cancellable: false,
+        },
+        async() => {
+          commandResult = await runMamoriCliCommand(
+            workspaceFolder,
+            buildMamoriMaintenanceArguments(action),
+            extensionRootPath,
+          );
+        },
+      );
+
+      if (commandResult && commandResult.stdout.trim() !== '') {
+        outputChannel.appendLine(commandResult.stdout.trim());
+      }
+      void vscode.window.showInformationMessage(
+        action === 'setup'
+          ? 'Mamori Inspector: 必要ツールを準備しました。'
+          : 'Mamori Inspector: キャッシュを削除しました。',
+      );
+    } catch (error) {
+      outputChannel.appendLine(
+        `Mamori Inspector maintenance ${action} failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      void vscode.window.showErrorMessage(
+        action === 'setup'
+          ? `Mamori Inspector: 必要ツールの準備に失敗しました。${error instanceof Error ? error.message : String(error)}`
+          : `Mamori Inspector: キャッシュ削除に失敗しました。${error instanceof Error ? error.message : String(error)}`,
       );
     }
   };
@@ -678,6 +788,18 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand(
       'mamori-inspector.uninstallGitHooks',
       createManageHooksCommand('uninstall', outputChannel, extensionRootPath),
+    ),
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'mamori-inspector.setupTools',
+      createManageMaintenanceCommand('setup', outputChannel, extensionRootPath),
+    ),
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'mamori-inspector.clearToolCache',
+      createManageMaintenanceCommand('cache-clear', outputChannel, extensionRootPath),
     ),
   );
   context.subscriptions.push(
