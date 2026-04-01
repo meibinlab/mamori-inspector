@@ -177,6 +177,28 @@ function runProcess(command, args, options = {}) {
 }
 
 /**
+ * 子プロセス失敗時の表示用メッセージを返す。
+ * @param {{stdout: string, stderr: string, error?: Error}} result 実行結果を表す。
+ * @param {string} fallbackMessage 代替メッセージを表す。
+ * @returns {string} 表示用メッセージを返す。
+ */
+function getProcessFailureMessage(result, fallbackMessage) {
+  if (result.error && typeof result.error.message === 'string' && result.error.message.trim() !== '') {
+    return result.error.message.trim();
+  }
+
+  if (result.stderr.trim() !== '') {
+    return result.stderr.trim();
+  }
+
+  if (result.stdout.trim() !== '') {
+    return result.stdout.trim();
+  }
+
+  return fallbackMessage;
+}
+
+/**
  * Windows を含む実行環境に応じたプロセス起動情報を返す。
  * @param {string} command 実行コマンドを表す。
  * @param {string[]} args 引数一覧を表す。
@@ -556,27 +578,34 @@ function ensureManagedNodeTools(workspaceRoot, env = process.env) {
 
   ensureNodePackageManifest(directories.nodeRoot);
   const npmCommand = resolveNpmCommand(workspaceRoot, env);
-  const packageSpecs = missingTools.map((toolName) => NODE_TOOL_PACKAGES[toolName].packageName);
-  const result = runProcess(
-    npmCommand,
-    [
-      'install',
-      '--prefix',
-      directories.nodeRoot,
-      '--no-save',
-      '--no-package-lock',
-      '--no-fund',
-      '--no-audit',
-      ...packageSpecs,
-    ],
-    {
-      cwd: workspaceRoot,
-      env,
-    },
-  );
+  for (const toolName of missingTools) {
+    const packageSpec = NODE_TOOL_PACKAGES[toolName].packageName;
+    const result = runProcess(
+      npmCommand,
+      [
+        'install',
+        '--prefix',
+        directories.nodeRoot,
+        '--no-save',
+        '--no-package-lock',
+        '--no-fund',
+        '--no-audit',
+        packageSpec,
+      ],
+      {
+        cwd: workspaceRoot,
+        env,
+      },
+    );
 
-  if (result.error || result.status !== 0) {
-    throw new Error(result.stderr.trim() || result.stdout.trim() || 'failed to install managed Node tools');
+    if (result.error || result.status !== 0) {
+      throw new Error(
+        `failed to install managed Node tool ${toolName}: ${getProcessFailureMessage(
+          result,
+          'managed Node tool installation failed',
+        )}`,
+      );
+    }
   }
 }
 

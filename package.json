@@ -3,7 +3,7 @@
   "displayName": "Mamori Inspector",
   "description": "Unified code inspection platform for VS Code",
   "publisher": "meibinlab",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "license": "MIT",
   "engines": {
     "vscode": "^1.109.0"
@@ -73,7 +73,8 @@
     "package:vsix": "vsce package",
     "publish:vsce": "vsce publish",
     "test": "mocha --ui tdd \"out/test/**/*.test.js\"",
-    "test:integration": "node ./scripts/run-vscode-test.mjs"
+    "test:integration": "node ./scripts/run-vscode-test.mjs",
+    "test:managed-tools": "npm run test -- --grep \"Sets up managed tools|Reports child process npm errors during managed tool setup|Reports the failing managed Node tool when npm installation fails during setup\""
   },
   "devDependencies": {
     "@vscode/vsce": "^3.6.1",
