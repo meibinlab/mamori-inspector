@@ -102,6 +102,24 @@ function buildTestPath(binDirectory: string): string {
 }
 
 /**
+ * Windows の zip 展開検証で必要な PowerShell を含む PATH を構築する。
+ * @param binDirectory ラッパーディレクトリを表す。
+ * @returns PATH 文字列を返す。
+ */
+function buildWindowsArchiveTestPath(binDirectory: string): string {
+  if (process.platform !== 'win32') {
+    return binDirectory;
+  }
+
+  const systemRoot = process.env.SystemRoot;
+  const powershellDirectory = systemRoot
+    ? path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0')
+    : '';
+
+  return [binDirectory, powershellDirectory].filter((value) => Boolean(value)).join(path.delimiter);
+}
+
+/**
  * テスト用の Windows コマンドラッパーを作成する。
  * @param binDirectory ラッパーディレクトリを表す。
  * @param commandName コマンド名を表す。
@@ -181,6 +199,80 @@ function createManagedToolSourceDirectory(
   );
   fs.chmodSync(wrapperPath, 0o755);
   return distributionDirectory;
+}
+
+/**
+ * PowerShell の単一引用符文字列として安全な文字列へ変換する。
+ * @param value 変換対象文字列を表す。
+ * @returns 変換後文字列を返す。
+ */
+function escapePowerShellSingleQuotedString(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
+/**
+ * PowerShell の EncodedCommand 用文字列へ変換する。
+ * @param commandText PowerShell コマンド文字列を表す。
+ * @returns Base64 エンコード済み文字列を返す。
+ */
+function encodePowerShellCommand(commandText: string): string {
+  return Buffer.from(commandText, 'utf16le').toString('base64');
+}
+
+/**
+ * テスト用の管理配布物ソースを返す。
+ * Windows では zip 配布物を生成し、それ以外ではディレクトリを返す。
+ * @param workingDirectory 作業ディレクトリを表す。
+ * @param directoryName 配布物ディレクトリ名を表す。
+ * @param commandName 実行コマンド名を表す。
+ * @param outputFileName 実行ログファイル名を表す。
+ * @returns 配布物の絶対パスを返す。
+ */
+function createManagedToolSource(
+  workingDirectory: string,
+  directoryName: string,
+  commandName: string,
+  outputFileName: string,
+): string {
+  const sourceDirectory = createManagedToolSourceDirectory(
+    workingDirectory,
+    directoryName,
+    commandName,
+    outputFileName,
+  );
+
+  if (process.platform !== 'win32') {
+    return sourceDirectory;
+  }
+
+  const archivePath = path.join(workingDirectory, 'tool-sources', `${directoryName}.zip`);
+  const commandText = [
+    `$sourceDirectory = '${escapePowerShellSingleQuotedString(sourceDirectory)}'`,
+    `$archivePath = '${escapePowerShellSingleQuotedString(archivePath)}'`,
+    'if (Test-Path -LiteralPath $archivePath) { Remove-Item -LiteralPath $archivePath -Force }',
+    'Compress-Archive -Path (Join-Path -Path $sourceDirectory -ChildPath "*") -DestinationPath $archivePath -Force',
+  ].join('; ');
+  const result = spawnSync(
+    'powershell',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-EncodedCommand',
+      encodePowerShellCommand(commandText),
+    ],
+    {
+      encoding: 'utf8',
+      windowsHide: true,
+    },
+  );
+
+  if (result.status !== 0) {
+    throw new Error(result.stderr || result.stdout || `failed to create archive: ${archivePath}`);
+  }
+
+  return archivePath;
 }
 
 /**
@@ -4197,16 +4289,17 @@ suite('Mamori CLI Test Suite', () => {
    * setup で管理対象ツールを `.mamori` 配下へ導入できること。
    * @returns 返り値はない。
    */
-  test('Sets up managed tools into the workspace cache directories', () => {
+  test('Sets up managed tools into the workspace cache directories', function() {
+    this.timeout(15000);
     const temporaryDirectory = createTemporaryDirectory();
     const binDirectory = createCommandBinDirectory(temporaryDirectory);
-    const mavenSourceDirectory = createManagedToolSourceDirectory(
+    const mavenSourceDirectory = createManagedToolSource(
       temporaryDirectory,
       'maven-distribution',
       'mvn',
       'maven-setup.log',
     );
-    const gradleSourceDirectory = createManagedToolSourceDirectory(
+    const gradleSourceDirectory = createManagedToolSource(
       temporaryDirectory,
       'gradle-distribution',
       'gradle',
@@ -4262,14 +4355,15 @@ suite('Mamori CLI Test Suite', () => {
    * mvn が存在しないときに管理配布物を自動導入して実行できること。
    * @returns 返り値はない。
    */
-  test('Auto provisions Maven when mvn is not available', () => {
+  test('Auto provisions Maven when mvn is not available', function() {
+    this.timeout(15000);
     const temporaryDirectory = createTemporaryDirectory();
     const sourceDirectory = path.join(temporaryDirectory, 'src', 'main', 'java');
     const targetFilePath = path.join(sourceDirectory, 'App.java');
     const pomFilePath = path.join(temporaryDirectory, 'pom.xml');
     const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-auto-maven.sarif');
     const binDirectory = createCommandBinDirectory(temporaryDirectory);
-    const mavenSourceDirectory = createManagedToolSourceDirectory(
+    const mavenSourceDirectory = createManagedToolSource(
       temporaryDirectory,
       'maven-auto-distribution',
       'mvn',
@@ -4310,7 +4404,7 @@ suite('Mamori CLI Test Suite', () => {
       {
         env: {
           ...process.env,
-          PATH: binDirectory,
+          PATH: buildWindowsArchiveTestPath(binDirectory),
           MAMORI_TOOL_MAVEN_SOURCE_URL: toFileUrl(mavenSourceDirectory),
         },
       },
@@ -4340,14 +4434,15 @@ suite('Mamori CLI Test Suite', () => {
    * gradle が存在しないときに管理配布物を自動導入して実行できること。
    * @returns 返り値はない。
    */
-  test('Auto provisions Gradle when gradle is not available', () => {
+  test('Auto provisions Gradle when gradle is not available', function() {
+    this.timeout(15000);
     const temporaryDirectory = createTemporaryDirectory();
     const sourceDirectory = path.join(temporaryDirectory, 'src', 'main', 'java');
     const targetFilePath = path.join(sourceDirectory, 'App.java');
     const buildFilePath = path.join(temporaryDirectory, 'build.gradle');
     const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-auto-gradle.sarif');
     const binDirectory = createCommandBinDirectory(temporaryDirectory);
-    const gradleSourceDirectory = createManagedToolSourceDirectory(
+    const gradleSourceDirectory = createManagedToolSource(
       temporaryDirectory,
       'gradle-auto-distribution',
       'gradle',
@@ -4384,7 +4479,7 @@ suite('Mamori CLI Test Suite', () => {
       {
         env: {
           ...process.env,
-          PATH: binDirectory,
+          PATH: buildWindowsArchiveTestPath(binDirectory),
           MAMORI_TOOL_GRADLE_SOURCE_URL: toFileUrl(gradleSourceDirectory),
         },
       },
@@ -4414,16 +4509,17 @@ suite('Mamori CLI Test Suite', () => {
    * cache-clear で管理キャッシュを削除できること。
    * @returns 返り値はない。
    */
-  test('Clears managed tool caches from the workspace', () => {
+  test('Clears managed tool caches from the workspace', function() {
+    this.timeout(15000);
     const temporaryDirectory = createTemporaryDirectory();
     const binDirectory = createCommandBinDirectory(temporaryDirectory);
-    const mavenSourceDirectory = createManagedToolSourceDirectory(
+    const mavenSourceDirectory = createManagedToolSource(
       temporaryDirectory,
       'maven-cache-clear-distribution',
       'mvn',
       'maven-cache-clear.log',
     );
-    const gradleSourceDirectory = createManagedToolSourceDirectory(
+    const gradleSourceDirectory = createManagedToolSource(
       temporaryDirectory,
       'gradle-cache-clear-distribution',
       'gradle',
