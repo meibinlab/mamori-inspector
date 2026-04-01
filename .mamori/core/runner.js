@@ -22,6 +22,8 @@ const stylelintAdapter = require('../adapters/stylelint');
 const semgrepAdapter = require('../adapters/semgrep');
 // コマンド実行器を表す
 const { execCommand } = require('../tools/exec');
+// ツール自動導入器を表す
+const { resolveCommandEntryRuntime } = require('../tools/provision');
 
 // HTML ファイル拡張子一覧を表す
 const HTML_FILE_EXTENSIONS = new Set(['.html', '.htm']);
@@ -878,15 +880,17 @@ function canResolveCommand(command, cwd, env) {
  * @param {(command: string, args: string[], options?: object) => Promise<{exitCode: number, stdout: string, stderr: string}>} executor 実行器を表す。
  * @returns {Promise<{moduleRoot: string, tool: string, status: string, command?: string, args?: string[], exitCode?: number, stdout?: string, stderr?: string, message?: string}>} 実行結果を返す。
  */
-async function executeCommandEntry(moduleRoot, commandEntry, executor) {
+async function executeCommandEntry(workspaceRoot, moduleRoot, commandEntry, executor) {
   const baseEnvironment = {
     ...process.env,
     ...(commandEntry.env || {}),
   };
-  const commandEnvironment = buildCommandEnvironment(commandEntry.cwd, baseEnvironment);
   const toolReportState = captureToolReportState(commandEntry.cwd || moduleRoot, commandEntry.tool);
   let preparedCommand;
   let commandResult;
+  let runtimeCommand = commandEntry.command;
+  let runtimeArguments = [];
+  let commandEnvironment = buildCommandEnvironment(commandEntry.cwd, baseEnvironment);
 
   if (!commandEntry.enabled) {
     return buildSkippedCommandResult(moduleRoot, commandEntry);
@@ -906,20 +910,33 @@ async function executeCommandEntry(moduleRoot, commandEntry, executor) {
       return commandResult;
     }
 
-    if (!canResolveCommand(commandEntry.command, commandEntry.cwd, commandEnvironment)) {
+    const runtime = await resolveCommandEntryRuntime(
+      workspaceRoot,
+      moduleRoot,
+      commandEntry,
+      baseEnvironment,
+    );
+    runtimeCommand = runtime.command;
+    commandEnvironment = buildCommandEnvironment(commandEntry.cwd, {
+      ...baseEnvironment,
+      ...(runtime.env || {}),
+    });
+    runtimeArguments = [...(runtime.prependArgs || []), ...preparedCommand.args];
+
+    if (!canResolveCommand(runtimeCommand, commandEntry.cwd, commandEnvironment)) {
       commandResult = {
         moduleRoot,
         tool: commandEntry.tool,
         phase: commandEntry.phase,
         status: 'error',
-        command: commandEntry.command,
-        args: preparedCommand.args,
-        message: `command not found: ${commandEntry.command}`,
+        command: runtimeCommand,
+        args: runtimeArguments,
+        message: `command not found: ${runtimeCommand}`,
       };
       return commandResult;
     }
 
-    const result = await executor(commandEntry.command, preparedCommand.args, {
+    const result = await executor(runtimeCommand, runtimeArguments, {
       cwd: commandEntry.cwd,
       env: commandEnvironment,
       timeoutMs: 30000,
@@ -931,9 +948,9 @@ async function executeCommandEntry(moduleRoot, commandEntry, executor) {
         tool: commandEntry.tool,
         phase: commandEntry.phase,
         status: 'error',
-        command: commandEntry.command,
-        args: preparedCommand.args,
-        message: result.stderr.trim() || `failed to start ${commandEntry.command}`,
+        command: runtimeCommand,
+        args: runtimeArguments,
+        message: result.stderr.trim() || `failed to start ${runtimeCommand}`,
       };
       return commandResult;
     }
@@ -943,8 +960,8 @@ async function executeCommandEntry(moduleRoot, commandEntry, executor) {
       tool: commandEntry.tool,
       phase: commandEntry.phase,
       status: result.exitCode === 0 ? 'ok' : 'failed',
-      command: commandEntry.command,
-      args: preparedCommand.args,
+      command: runtimeCommand,
+      args: runtimeArguments,
       exitCode: result.exitCode,
       stdout: result.stdout,
       stderr: result.stderr,
@@ -959,9 +976,9 @@ async function executeCommandEntry(moduleRoot, commandEntry, executor) {
       tool: commandEntry.tool,
       phase: commandEntry.phase,
       status: 'error',
-      command: commandEntry.command,
-      args: preparedCommand && Array.isArray(preparedCommand.args)
-        ? preparedCommand.args
+      command: runtimeCommand,
+      args: runtimeArguments.length > 0
+        ? runtimeArguments
         : (commandEntry.args || []),
       message: error instanceof Error ? error.message : String(error),
     };
@@ -994,7 +1011,12 @@ async function runResolvedConfiguration(resolution, options = {}) {
   for (const modulePlan of modules) {
     const commands = Array.isArray(modulePlan.commands) ? modulePlan.commands : [];
     for (const commandEntry of commands) {
-      const commandResult = await executeCommandEntry(modulePlan.moduleRoot, commandEntry, executor);
+      const commandResult = await executeCommandEntry(
+        resolution.cwd || modulePlan.moduleRoot,
+        modulePlan.moduleRoot,
+        commandEntry,
+        executor,
+      );
       result.commandResults.push(commandResult);
 
       if (commandResult.warning) {

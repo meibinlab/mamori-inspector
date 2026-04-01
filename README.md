@@ -12,12 +12,30 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 ## Initial Setup Notes
 - Save-time validation starts automatically after the extension is installed and a supported file is saved.
 - Git hook validation does not start automatically on extension installation. You must install the managed hooks explicitly.
+- If you want to pre-download the managed toolchain before the first validation run, execute `Mamori Inspector: Setup Managed Tools` once.
 - `precommit/staged` requires the Git CLI on `PATH` because staged files are resolved with `git diff --cached --name-only --diff-filter=ACMR`.
 - For web checkers, Mamori resolves configuration in this order: explicit setting, discovered config file, `package.json` setting, bundled minimal config.
 - JavaScript files and HTML inline script checks fall back to the bundled minimal ESLint config when project configuration is not detected. The bundled fallback is intentionally conservative and uses compatibility-oriented core rules.
 - TypeScript files use ESLint only when project configuration is provided explicitly, discovered from the workspace, or resolved from `package.json`. Mamori does not apply the bundled JavaScript ESLint fallback to TypeScript files.
 - CSS and SCSS and Sass checks, and HTML inline style checks, fall back to the bundled minimal Stylelint config when project configuration is not detected.
 - HTML checks fall back to the bundled minimal htmlhint config when project configuration is not detected.
+
+## Managed Tool Provisioning
+- Mamori automatically provisions missing managed tools during `run` execution and stores them under `.mamori/tools` and `.mamori/node` in the workspace.
+- Use `Mamori Inspector: Setup Managed Tools` when you want to download the managed toolchain in advance.
+- Use `Mamori Inspector: Clear Managed Tool Cache` when you want to remove `.mamori/tools` and `.mamori/node` and force a fresh download on the next run.
+- CLI equivalents are `mamori.js setup` and `mamori.js cache-clear`.
+
+| Tool group | Managed version | Install location | Notes |
+| ---- | ---- | ---- | ---- |
+| Maven | 3.9.11 | `.mamori/tools/maven/<version>` | Used when `mvn` is not available on `PATH`. |
+| Gradle | 8.14.4 | `.mamori/tools/gradle/<version>` | Used when `gradle` is not available on `PATH`. |
+| Semgrep | 1.151.0 | `.mamori/tools/python/packages` | Installed with `pip` when `semgrep` is not available on `PATH`. |
+| Prettier / ESLint / Stylelint / htmlhint | npm latest at install time | `.mamori/node/node_modules/.bin` | Installed with `npm` and used when a project-local `node_modules/.bin` tool is not available. |
+
+- For web tools, Mamori prefers the nearest project `node_modules/.bin` executable and falls back to `.mamori/node` only when the project copy is missing.
+- For Maven, Gradle, and Semgrep, Mamori uses an existing command on `PATH` first and only installs the managed copy when the command is missing.
+- Managed Node tool installation requires `npm` on `PATH`. Managed Semgrep installation requires a usable Python launcher such as `py`, `python`, or `python3`.
 
 ## Current Behavior
 - Java, JavaScript, JavaScript React, TypeScript, TypeScript React, CSS, SCSS, Sass, and HTML files trigger an automatic background check on save with debounce and recursion suppression.
@@ -39,8 +57,11 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 - `prepush/workspace` includes HTML inline script blocks in ESLint by using temporary JavaScript files and reporting findings on the original HTML locations.
 - `manual/workspace` currently reuses the lightweight Java check plan until the heavy manual tools are added.
 - The command `Mamori Inspector: Run Workspace Check` executes a workspace-wide manual check and publishes diagnostics from the generated SARIF.
+- The command `Mamori Inspector: Setup Managed Tools` downloads the managed Maven, Gradle, Semgrep, Prettier, ESLint, Stylelint, and htmlhint toolchain into the workspace cache.
+- The command `Mamori Inspector: Clear Managed Tool Cache` removes the managed cache directories under `.mamori/tools` and `.mamori/node`.
 - The commands `Mamori Inspector: Install Git Hooks` and `Mamori Inspector: Uninstall Git Hooks` call the same runner as the CLI and manage `.git/hooks/pre-commit` and `.git/hooks/pre-push`.
 - Maven and Gradle build definitions are inspected to resolve Java tooling such as Checkstyle, PMD, Spotless, CPD, and SpotBugs.
+- `mamori.js setup` prepares the same managed toolchain as the VS Code setup command, and `mamori.js cache-clear` removes the same cache directories as the VS Code cache-clear command.
 - `mamori.js hooks install` and `mamori.js hooks uninstall` create or remove managed `pre-commit` and `pre-push` hooks under `.git/hooks`.
 
 ## HTML Inline JS And CSS Checks

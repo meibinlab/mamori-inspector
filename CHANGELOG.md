@@ -8,6 +8,20 @@
 
 - なし
 
+## [0.2.4] - 2026-04-01
+
+### Added
+- 管理対象ツールの事前セットアップとキャッシュ削除を行う `setup` / `cache-clear` CLI と VS Code コマンドを追加しました。
+- Maven、Gradle、Semgrep、Prettier、ESLint、Stylelint、htmlhint の自動導入とキャッシュ配置を確認する回帰テストを追加しました。
+
+### Changed
+- README、README.ja に、管理ツールの自動導入先、優先順位、セットアップ手順を追記しました。
+- 手動実行失敗時の VS Code 通知で、CLI が出力した warning の詳細を利用者へ表示するようにしました。
+
+### Fixed
+- `mvn`、`gradle`、Node 系 checker、Semgrep が見つからない環境でも、実行前に必要な管理ツールを導入して継続できるようにしました。
+- 実行不要なコマンドで先に自動導入が走ってしまう問題を解消し、HTML 系チェックの回帰を防ぐようにしました。
+
 ## [0.2.3] - 2026-04-01
 
 ### Added

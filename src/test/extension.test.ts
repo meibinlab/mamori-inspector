@@ -1853,6 +1853,53 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
   });
 
   /**
+   * 手動実行失敗時に CLI の詳細 warning を通知へ含めること。
+   * @returns 実行完了を待つ Promise を返す。
+   */
+  test('Reports CLI warning details when manual workspace execution fails', async function() {
+    this.timeout(20000);
+
+    const activeVscodeApi = vscodeApi;
+    const workspaceRoot = activeVscodeApi.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceRoot) {
+      throw new Error('Workspace root was not found');
+    }
+
+    const cliScriptPath = path.join(workspaceRoot, '.mamori', 'mamori.js');
+    const restoreCliScript = createRestoreAction(cliScriptPath);
+    const messageCapture = captureWindowMessages(activeVscodeApi);
+
+    try {
+      fs.writeFileSync(
+        cliScriptPath,
+        [
+          '#!/usr/bin/env node',
+          "process.stdout.write('mamori: execution-result\\n');",
+          "process.stdout.write('  summary=executed:1 failed:1 skipped:0\\n');",
+          "process.stdout.write('  warnings=semgrep failed to start in D:/workspace/sample: command not found: semgrep\\n');",
+          'process.exit(2);',
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+      makeExecutable(cliScriptPath);
+
+      await getMamoriExtension(activeVscodeApi).activate();
+      await activeVscodeApi.commands.executeCommand('mamori-inspector.runWorkspaceCheck');
+
+      await waitFor(() => messageCapture.errorMessages.length > 0 || messageCapture.informationMessages.length > 0);
+
+      assert.deepStrictEqual(messageCapture.informationMessages, []);
+      assert.strictEqual(messageCapture.errorMessages.length, 1);
+      assert.match(messageCapture.errorMessages[0] || '', /semgrep failed to start/u);
+      assert.match(messageCapture.errorMessages[0] || '', /command not found: semgrep/u);
+    } finally {
+      messageCapture.restore();
+      restoreCliScript();
+    }
+  });
+
+  /**
    * 手動実行で追加ワークスペースの Java finding も集約できること。
    * @returns 実行完了を待つ Promise を返す。
    */

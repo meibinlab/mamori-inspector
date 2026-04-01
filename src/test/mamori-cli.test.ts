@@ -8,6 +8,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 // パス操作 API を表す
 import * as path from 'path';
+// file URL 変換 API を表す
+import { pathToFileURL } from 'url';
 
 /**
  * Mamori CLI の実行結果を表す。
@@ -124,6 +126,137 @@ function writeCommandWrapper(binDirectory: string, commandName: string, outputFi
   fs.writeFileSync(
     wrapperPath,
     `#!/bin/sh\nprintf '%s\n' "$*" >> "${outputPath}"\nexit 0\n`,
+    'utf8',
+  );
+  fs.chmodSync(wrapperPath, 0o755);
+}
+
+/**
+ * ローカル配布物ディレクトリを作成する。
+ * @param workingDirectory 作業ディレクトリを表す。
+ * @param directoryName 配布物ディレクトリ名を表す。
+ * @param commandName 実行コマンド名を表す。
+ * @param outputFileName 実行ログファイル名を表す。
+ * @returns 配布物ディレクトリの絶対パスを返す。
+ */
+function createManagedToolSourceDirectory(
+  workingDirectory: string,
+  directoryName: string,
+  commandName: string,
+  outputFileName: string,
+): string {
+  const distributionDirectory = path.join(workingDirectory, 'tool-sources', directoryName);
+  const binDirectory = path.join(distributionDirectory, 'bin');
+  const wrapperPath = process.platform === 'win32'
+    ? path.join(binDirectory, `${commandName}.cmd`)
+    : path.join(binDirectory, commandName);
+
+  fs.mkdirSync(binDirectory, { recursive: true });
+
+  if (process.platform === 'win32') {
+    fs.writeFileSync(
+      wrapperPath,
+      [
+        '@echo off',
+        'set SCRIPT_DIR=%~dp0',
+        `echo %*>>"%SCRIPT_DIR%${outputFileName}"`,
+        'exit /b 0',
+        '',
+      ].join('\r\n'),
+      'utf8',
+    );
+    return distributionDirectory;
+  }
+
+  fs.writeFileSync(
+    wrapperPath,
+    [
+      '#!/bin/sh',
+      'SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)',
+      `printf '%s\n' "$*" >> "$SCRIPT_DIR/${outputFileName}"`,
+      'exit 0',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  fs.chmodSync(wrapperPath, 0o755);
+  return distributionDirectory;
+}
+
+/**
+ * パスを file URL へ変換する。
+ * @param filePath 対象パスを表す。
+ * @returns file URL 文字列を返す。
+ */
+function toFileUrl(filePath: string): string {
+  return pathToFileURL(filePath).toString();
+}
+
+/**
+ * テスト用の npm ラッパーを作成する。
+ * @param binDirectory ラッパーディレクトリを表す。
+ * @param outputFileName 出力ファイル名を表す。
+ * @returns 返り値はない。
+ */
+function writeNpmInstallWrapper(binDirectory: string, outputFileName: string): void {
+  const outputPath = path.join(binDirectory, outputFileName);
+  const helperScriptPath = path.join(binDirectory, 'npm-install-wrapper.js');
+  const wrapperPath = process.platform === 'win32'
+    ? path.join(binDirectory, 'npm.cmd')
+    : path.join(binDirectory, 'npm');
+
+  fs.writeFileSync(
+    helperScriptPath,
+    [
+      'const fs = require("fs");',
+      'const path = require("path");',
+      `const outputPath = ${JSON.stringify(outputPath)};`,
+      'const args = process.argv.slice(2);',
+      'fs.appendFileSync(outputPath, `${args.join(" ")}\\n`, "utf8");',
+      'const prefixIndex = args.indexOf("--prefix");',
+      'if (prefixIndex < 0 || !args[prefixIndex + 1]) {',
+      '  process.stderr.write("missing --prefix");',
+      '  process.exit(2);',
+      '}',
+      'const prefixPath = args[prefixIndex + 1];',
+      'const nodeBinDirectory = path.join(prefixPath, "node_modules", ".bin");',
+      'fs.mkdirSync(nodeBinDirectory, { recursive: true });',
+      'for (const argument of args) {',
+      '  if (argument === "install" || argument.startsWith("-")) {',
+      '    continue;',
+      '  }',
+      '  if (argument === prefixPath) {',
+      '    continue;',
+      '  }',
+      '  const packageName = argument.split("@", 1)[0];',
+      '  const executableName = process.platform === "win32" ? `${packageName}.cmd` : packageName;',
+      '  const executablePath = path.join(nodeBinDirectory, executableName);',
+      '  const packageLogPath = path.join(prefixPath, `${packageName}.log`);',
+      '  if (process.platform === "win32") {',
+      '    fs.writeFileSync(executablePath, `@echo off\\r\\necho %*>>"${packageLogPath}"\\r\\nexit /b 0\\r\\n`, "utf8");',
+      '  } else {',
+      '    fs.writeFileSync(executablePath, `#!/bin/sh\\nprintf \'%s\\n\' "$*" >> "${packageLogPath}"\\nexit 0\\n`, "utf8");',
+      '    fs.chmodSync(executablePath, 0o755);',
+      '  }',
+      '}',
+      'process.exit(0);',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+
+  if (process.platform === 'win32') {
+    fs.writeFileSync(
+      wrapperPath,
+      `@echo off\r\nnode "${helperScriptPath}" %*\r\nexit /b %ERRORLEVEL%\r\n`,
+      'utf8',
+    );
+    return;
+  }
+
+  fs.writeFileSync(
+    wrapperPath,
+    `#!/bin/sh\nnode '${helperScriptPath}' "$@"\n`,
     'utf8',
   );
   fs.chmodSync(wrapperPath, 0o755);
@@ -4058,5 +4191,275 @@ suite('Mamori CLI Test Suite', () => {
     assert.ok(fs.existsSync(sarifOutputPath));
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Duplicated block detected/u);
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Dead store to local variable/u);
+  });
+
+  /**
+   * setup で管理対象ツールを `.mamori` 配下へ導入できること。
+   * @returns 返り値はない。
+   */
+  test('Sets up managed tools into the workspace cache directories', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const mavenSourceDirectory = createManagedToolSourceDirectory(
+      temporaryDirectory,
+      'maven-distribution',
+      'mvn',
+      'maven-setup.log',
+    );
+    const gradleSourceDirectory = createManagedToolSourceDirectory(
+      temporaryDirectory,
+      'gradle-distribution',
+      'gradle',
+      'gradle-setup.log',
+    );
+
+    writeNpmInstallWrapper(binDirectory, 'npm-setup.log');
+    writeCommandWrapper(binDirectory, 'semgrep', 'semgrep-setup.log');
+
+    const semgrepCommandPath = path.join(
+      binDirectory,
+      process.platform === 'win32' ? 'semgrep.cmd' : 'semgrep',
+    );
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      ['setup'],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(binDirectory),
+          MAMORI_TOOL_MAVEN_SOURCE_URL: toFileUrl(mavenSourceDirectory),
+          MAMORI_TOOL_GRADLE_SOURCE_URL: toFileUrl(gradleSourceDirectory),
+          MAMORI_TOOL_SEMGREP_COMMAND: semgrepCommandPath,
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /mamori: setup completed/u);
+    assert.ok(fs.existsSync(path.join(temporaryDirectory, '.mamori', 'tools', 'maven', '3.9.11', 'bin')));
+    assert.ok(fs.existsSync(path.join(temporaryDirectory, '.mamori', 'tools', 'gradle', '8.14.4', 'bin')));
+    assert.ok(fs.existsSync(path.join(
+      temporaryDirectory,
+      '.mamori',
+      'node',
+      'node_modules',
+      '.bin',
+      process.platform === 'win32' ? 'eslint.cmd' : 'eslint',
+    )));
+    assert.ok(fs.existsSync(path.join(
+      temporaryDirectory,
+      '.mamori',
+      'node',
+      'node_modules',
+      '.bin',
+      process.platform === 'win32' ? 'prettier.cmd' : 'prettier',
+    )));
+    assert.match(fs.readFileSync(path.join(binDirectory, 'npm-setup.log'), 'utf8'), /install/u);
+  });
+
+  /**
+   * mvn が存在しないときに管理配布物を自動導入して実行できること。
+   * @returns 返り値はない。
+   */
+  test('Auto provisions Maven when mvn is not available', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src', 'main', 'java');
+    const targetFilePath = path.join(sourceDirectory, 'App.java');
+    const pomFilePath = path.join(temporaryDirectory, 'pom.xml');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-auto-maven.sarif');
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const mavenSourceDirectory = createManagedToolSourceDirectory(
+      temporaryDirectory,
+      'maven-auto-distribution',
+      'mvn',
+      'maven-auto.log',
+    );
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.writeFileSync(targetFilePath, 'class App {}\n', 'utf8');
+    fs.writeFileSync(
+      pomFilePath,
+      [
+        '<project>',
+        '  <build>',
+        '    <plugins>',
+        '      <plugin><artifactId>maven-checkstyle-plugin</artifactId></plugin>',
+        '      <plugin><artifactId>maven-pmd-plugin</artifactId></plugin>',
+        '    </plugins>',
+        '  </build>',
+        '</project>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    writeCommandWrapper(binDirectory, 'semgrep', 'semgrep-auto-maven.log');
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      [
+        'run',
+        '--mode',
+        'manual',
+        '--scope',
+        'workspace',
+        '--execute',
+        '--sarif-output',
+        path.relative(temporaryDirectory, sarifOutputPath),
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: binDirectory,
+          MAMORI_TOOL_MAVEN_SOURCE_URL: toFileUrl(mavenSourceDirectory),
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /checkstyle:ok exitCode=0/u);
+    assert.match(result.stdout, /pmd:ok exitCode=0/u);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(
+      fs.readFileSync(
+        path.join(temporaryDirectory, '.mamori', 'tools', 'maven', '3.9.11', 'bin', 'maven-auto.log'),
+        'utf8',
+      ),
+      /checkstyle:check/u,
+    );
+    assert.match(
+      fs.readFileSync(
+        path.join(temporaryDirectory, '.mamori', 'tools', 'maven', '3.9.11', 'bin', 'maven-auto.log'),
+        'utf8',
+      ),
+      /pmd:check/u,
+    );
+  });
+
+  /**
+   * gradle が存在しないときに管理配布物を自動導入して実行できること。
+   * @returns 返り値はない。
+   */
+  test('Auto provisions Gradle when gradle is not available', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src', 'main', 'java');
+    const targetFilePath = path.join(sourceDirectory, 'App.java');
+    const buildFilePath = path.join(temporaryDirectory, 'build.gradle');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-auto-gradle.sarif');
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const gradleSourceDirectory = createManagedToolSourceDirectory(
+      temporaryDirectory,
+      'gradle-auto-distribution',
+      'gradle',
+      'gradle-auto.log',
+    );
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.writeFileSync(targetFilePath, 'class App {}\n', 'utf8');
+    fs.writeFileSync(
+      buildFilePath,
+      [
+        'plugins {',
+        '  id "checkstyle"',
+        '  id "pmd"',
+        '}',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    writeCommandWrapper(binDirectory, 'semgrep', 'semgrep-auto-gradle.log');
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      [
+        'run',
+        '--mode',
+        'manual',
+        '--scope',
+        'workspace',
+        '--execute',
+        '--sarif-output',
+        path.relative(temporaryDirectory, sarifOutputPath),
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: binDirectory,
+          MAMORI_TOOL_GRADLE_SOURCE_URL: toFileUrl(gradleSourceDirectory),
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /checkstyle:ok exitCode=0/u);
+    assert.match(result.stdout, /pmd:ok exitCode=0/u);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(
+      fs.readFileSync(
+        path.join(temporaryDirectory, '.mamori', 'tools', 'gradle', '8.14.4', 'bin', 'gradle-auto.log'),
+        'utf8',
+      ),
+      /checkstyleMain/u,
+    );
+    assert.match(
+      fs.readFileSync(
+        path.join(temporaryDirectory, '.mamori', 'tools', 'gradle', '8.14.4', 'bin', 'gradle-auto.log'),
+        'utf8',
+      ),
+      /pmdMain/u,
+    );
+  });
+
+  /**
+   * cache-clear で管理キャッシュを削除できること。
+   * @returns 返り値はない。
+   */
+  test('Clears managed tool caches from the workspace', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const mavenSourceDirectory = createManagedToolSourceDirectory(
+      temporaryDirectory,
+      'maven-cache-clear-distribution',
+      'mvn',
+      'maven-cache-clear.log',
+    );
+    const gradleSourceDirectory = createManagedToolSourceDirectory(
+      temporaryDirectory,
+      'gradle-cache-clear-distribution',
+      'gradle',
+      'gradle-cache-clear.log',
+    );
+
+    writeNpmInstallWrapper(binDirectory, 'npm-cache-clear.log');
+    writeCommandWrapper(binDirectory, 'semgrep', 'semgrep-cache-clear.log');
+
+    const semgrepCommandPath = path.join(
+      binDirectory,
+      process.platform === 'win32' ? 'semgrep.cmd' : 'semgrep',
+    );
+
+    const setupResult = runMamoriCli(
+      temporaryDirectory,
+      ['setup'],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(binDirectory),
+          MAMORI_TOOL_MAVEN_SOURCE_URL: toFileUrl(mavenSourceDirectory),
+          MAMORI_TOOL_GRADLE_SOURCE_URL: toFileUrl(gradleSourceDirectory),
+          MAMORI_TOOL_SEMGREP_COMMAND: semgrepCommandPath,
+        },
+      },
+    );
+
+    assert.strictEqual(setupResult.status, 0);
+    assert.ok(fs.existsSync(path.join(temporaryDirectory, '.mamori', 'tools')));
+    assert.ok(fs.existsSync(path.join(temporaryDirectory, '.mamori', 'node')));
+
+    const cacheClearResult = runMamoriCli(temporaryDirectory, ['cache-clear']);
+    assert.strictEqual(cacheClearResult.status, 0);
+    assert.match(cacheClearResult.stdout, /mamori: cache-clear completed/u);
+    assert.ok(!fs.existsSync(path.join(temporaryDirectory, '.mamori', 'tools')));
+    assert.ok(!fs.existsSync(path.join(temporaryDirectory, '.mamori', 'node')));
   });
 });

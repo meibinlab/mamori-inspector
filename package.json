@@ -3,7 +3,7 @@
   "displayName": "Mamori Inspector",
   "description": "Unified code inspection platform for VS Code",
   "publisher": "meibinlab",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "license": "MIT",
   "engines": {
     "vscode": "^1.109.0"
@@ -45,6 +45,14 @@
       {
         "command": "mamori-inspector.runWorkspaceCheck",
         "title": "Mamori Inspector: Run Workspace Check"
+      },
+      {
+        "command": "mamori-inspector.setupTools",
+        "title": "Mamori Inspector: Setup Managed Tools"
+      },
+      {
+        "command": "mamori-inspector.clearToolCache",
+        "title": "Mamori Inspector: Clear Managed Tool Cache"
       },
       {
         "command": "mamori-inspector.installGitHooks",
