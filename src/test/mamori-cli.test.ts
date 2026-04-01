@@ -32,6 +32,20 @@ interface MamoriCliOptions {
 }
 
 /**
+ * npm ラッパーの失敗注入設定を表す。
+ */
+interface NpmInstallWrapperOptions {
+  /** 失敗させるパッケージ名を表す。 */
+  failPackageName?: string;
+  /** 標準エラー出力に流す文言を表す。 */
+  stderrMessage?: string;
+  /** 標準出力に流す文言を表す。 */
+  stdoutMessage?: string;
+  /** 失敗時の終了コードを表す。 */
+  exitCode?: number;
+}
+
+/**
  * テスト用一時ディレクトリを作成する。
  * @returns 作成した一時ディレクトリの絶対パスを返す。
  */
@@ -301,7 +315,11 @@ function toFileUrl(filePath: string): string {
  * @param outputFileName 出力ファイル名を表す。
  * @returns 返り値はない。
  */
-function writeNpmInstallWrapper(binDirectory: string, outputFileName: string): void {
+function writeNpmInstallWrapper(
+  binDirectory: string,
+  outputFileName: string,
+  options: NpmInstallWrapperOptions = {},
+): void {
   const outputPath = path.join(binDirectory, outputFileName);
   const helperScriptPath = path.join(binDirectory, 'npm-install-wrapper.js');
   const wrapperPath = process.platform === 'win32'
@@ -314,12 +332,25 @@ function writeNpmInstallWrapper(binDirectory: string, outputFileName: string): v
       'const fs = require("fs");',
       'const path = require("path");',
       `const outputPath = ${JSON.stringify(outputPath)};`,
+      `const failPackageName = ${JSON.stringify(options.failPackageName || '')};`,
+      `const stderrMessage = ${JSON.stringify(options.stderrMessage || '')};`,
+      `const stdoutMessage = ${JSON.stringify(options.stdoutMessage || '')};`,
+      `const exitCode = ${String(options.exitCode || 1)};`,
       'const args = process.argv.slice(2);',
       'fs.appendFileSync(outputPath, `${args.join(" ")}\\n`, "utf8");',
       'const prefixIndex = args.indexOf("--prefix");',
       'if (prefixIndex < 0 || !args[prefixIndex + 1]) {',
       '  process.stderr.write("missing --prefix");',
       '  process.exit(2);',
+      '}',
+      'if (failPackageName !== "" && args.includes(failPackageName)) {',
+      '  if (stdoutMessage !== "") {',
+      '    process.stdout.write(stdoutMessage);',
+      '  }',
+      '  if (stderrMessage !== "") {',
+      '    process.stderr.write(stderrMessage);',
+      '  }',
+      '  process.exit(exitCode);',
       '}',
       'const prefixPath = args[prefixIndex + 1];',
       'const nodeBinDirectory = path.join(prefixPath, "node_modules", ".bin");',
@@ -4422,6 +4453,115 @@ suite('Mamori CLI Test Suite', () => {
       '.bin',
       process.platform === 'win32' ? 'eslint.cmd' : 'eslint',
     )));
+  });
+
+  /**
+   * npm 実行の子プロセス失敗理由を setup エラーへ含めること。
+   * @returns 返り値はない。
+   */
+  test('Reports child process npm errors during managed tool setup', function() {
+    this.timeout(15000);
+    const temporaryDirectory = createTemporaryDirectory();
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const mavenSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'maven-error-distribution',
+      'mvn',
+      'maven-error.log',
+    );
+    const gradleSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'gradle-error-distribution',
+      'gradle',
+      'gradle-error.log',
+    );
+
+    writeCommandWrapper(binDirectory, 'semgrep', 'semgrep-error.log');
+
+    const semgrepCommandPath = path.join(
+      binDirectory,
+      process.platform === 'win32' ? 'semgrep.cmd' : 'semgrep',
+    );
+    const missingNpmCommandPath = path.join(
+      temporaryDirectory,
+      process.platform === 'win32' ? 'missing-npm.cmd' : 'missing-npm',
+    );
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      ['setup'],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(binDirectory),
+          MAMORI_TOOL_NPM_COMMAND: missingNpmCommandPath,
+          MAMORI_TOOL_MAVEN_SOURCE_URL: toFileUrl(mavenSourceDirectory),
+          MAMORI_TOOL_GRADLE_SOURCE_URL: toFileUrl(gradleSourceDirectory),
+          MAMORI_TOOL_SEMGREP_COMMAND: semgrepCommandPath,
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 2);
+    if (process.platform === 'win32') {
+      assert.match(result.stderr, /missing-npm\.cmd/u);
+    } else {
+      assert.match(result.stderr, /spawnSync/u);
+      assert.match(result.stderr, /ENOENT/u);
+    }
+    assert.doesNotMatch(result.stderr, /failed to install managed Node tools\s*$/u);
+  });
+
+  /**
+   * setup 時に失敗した managed Node ツール名をエラーへ含めること。
+   * @returns 返り値はない。
+   */
+  test('Reports the failing managed Node tool when npm installation fails during setup', function() {
+    this.timeout(15000);
+    const temporaryDirectory = createTemporaryDirectory();
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const mavenSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'maven-package-failure-distribution',
+      'mvn',
+      'maven-package-failure.log',
+    );
+    const gradleSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'gradle-package-failure-distribution',
+      'gradle',
+      'gradle-package-failure.log',
+    );
+
+    writeNpmInstallWrapper(binDirectory, 'npm-package-failure.log', {
+      failPackageName: 'eslint',
+      stderrMessage: 'eslint install failed',
+      exitCode: 23,
+    });
+    writeCommandWrapper(binDirectory, 'semgrep', 'semgrep-package-failure.log');
+
+    const semgrepCommandPath = path.join(
+      binDirectory,
+      process.platform === 'win32' ? 'semgrep.cmd' : 'semgrep',
+    );
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      ['setup'],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(binDirectory),
+          MAMORI_TOOL_MAVEN_SOURCE_URL: toFileUrl(mavenSourceDirectory),
+          MAMORI_TOOL_GRADLE_SOURCE_URL: toFileUrl(gradleSourceDirectory),
+          MAMORI_TOOL_SEMGREP_COMMAND: semgrepCommandPath,
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 2);
+    assert.match(result.stderr, /failed to install managed Node tool eslint/u);
+    assert.match(result.stderr, /eslint install failed/u);
   });
 
   /**
