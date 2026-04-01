@@ -159,11 +159,12 @@ function buildPathAugmentedRuntime(commandName, executablePath, env) {
  * @returns {{status: number|null, stdout: string, stderr: string, error?: Error}} 実行結果を返す。
  */
 function runProcess(command, args, options = {}) {
-  const result = spawnSync(command, args, {
+  const invocation = getProcessInvocation(command, args, options.env || process.env);
+  const result = spawnSync(invocation.command, invocation.args, {
     cwd: options.cwd,
     env: options.env,
     encoding: 'utf8',
-    shell: process.platform === 'win32',
+    shell: invocation.shell,
     windowsHide: true,
   });
 
@@ -173,6 +174,41 @@ function runProcess(command, args, options = {}) {
     stderr: result.stderr || '',
     error: result.error,
   };
+}
+
+/**
+ * Windows を含む実行環境に応じたプロセス起動情報を返す。
+ * @param {string} command 実行コマンドを表す。
+ * @param {string[]} args 引数一覧を表す。
+ * @param {NodeJS.ProcessEnv} env 環境変数を表す。
+ * @returns {{command: string, args: string[], shell: boolean}} 起動情報を返す。
+ */
+function getProcessInvocation(command, args, env) {
+  if (process.platform !== 'win32') {
+    return { command, args, shell: false };
+  }
+
+  const extension = path.extname(command).toLowerCase();
+  if (extension !== '.cmd' && extension !== '.bat') {
+    return { command, args, shell: false };
+  }
+
+  return {
+    command: quoteWindowsShellCommand(command),
+    args,
+    shell: true,
+  };
+}
+
+/**
+ * shell 経由で実行する Windows コマンドを安全にクォートする。
+ * @param {string} command クォート対象コマンドを表す。
+ * @returns {string} クォート済みコマンド文字列を返す。
+ */
+function quoteWindowsShellCommand(command) {
+  return /[\s"]/u.test(command)
+    ? `"${command.replace(/"/g, '""')}"`
+    : command;
 }
 
 /**
