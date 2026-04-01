@@ -416,6 +416,49 @@ function writeSemgrepWrapper(binDirectory: string, logPath: string, targetFileUr
 }
 
 /**
+ * finding を出さない Semgrep ラッパーを作成する。
+ * @param binDirectory ラッパーディレクトリを表す。
+ * @param logPath 実行ログパスを表す。
+ * @returns 返り値はない。
+ */
+function writeEmptySemgrepWrapper(binDirectory: string, logPath: string): void {
+  const wrapperPath = process.platform === 'win32'
+    ? path.join(binDirectory, 'semgrep.cmd')
+    : path.join(binDirectory, 'semgrep');
+  const sarif = JSON.stringify({
+    version: '2.1.0',
+    runs: [
+      {
+        tool: { driver: { name: 'semgrep' } },
+        results: [],
+      },
+    ],
+  });
+
+  if (process.platform === 'win32') {
+    fs.writeFileSync(
+      wrapperPath,
+      `@echo off\r\necho %*>>"${logPath}"\r\necho ${sarif}\r\nexit /b 0\r\n`,
+      'utf8',
+    );
+    return;
+  }
+
+  fs.writeFileSync(
+    wrapperPath,
+    [
+      '#!/bin/sh',
+      `printf '%s\n' "$*" >> "${logPath}"`,
+      `printf '%s\n' '${sarif}'`,
+      'exit 0',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  makeExecutable(wrapperPath);
+}
+
+/**
  * ログ出力専用の Web コマンドラッパーを作成する。
  * @param binDirectory ラッパーディレクトリを表す。
  * @param commandName コマンド名を表す。
@@ -575,6 +618,32 @@ function setupSaveIntegrationFixture(workspacePath: string): {
     javaFilePath,
     mavenLogPath,
     semgrepLogPath,
+  };
+}
+
+/**
+ * PMD レポートから最初の violation を返す。
+ * @param reportPath PMD レポートパスを表す。
+ * @returns 最初の violation 情報を返す。
+ */
+function findFirstPmdViolation(reportPath: string): {
+  filePath: string;
+  message: string;
+} | undefined {
+  if (!fs.existsSync(reportPath)) {
+    return undefined;
+  }
+
+  const reportContent = fs.readFileSync(reportPath, 'utf8');
+  const fileMatch = reportContent.match(/<file name="([^"]+\.java)">/u);
+  const violationMatch = reportContent.match(/<violation[^>]*>[\s\r\n]*([^<\r\n][^<]*)[\s\r\n]*<\/violation>/u);
+  if (!fileMatch || !violationMatch) {
+    return undefined;
+  }
+
+  return {
+    filePath: fileMatch[1],
+    message: violationMatch[1].trim(),
   };
 }
 
@@ -1780,6 +1849,184 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
       messageCapture.restore();
       restoreCliScript();
       restoreManualSarif();
+    }
+  });
+
+  /**
+   * 手動実行で追加ワークスペースの Java finding も集約できること。
+   * @returns 実行完了を待つ Promise を返す。
+   */
+  test('Publishes diagnostics for additional workspace folders during manual workspace checks', async function() {
+    this.timeout(30000);
+
+    const activeVscodeApi = vscodeApi;
+    const primaryWorkspaceRoot = activeVscodeApi.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!primaryWorkspaceRoot) {
+      throw new Error('Workspace root was not found');
+    }
+
+    const secondaryWorkspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mamori-multi-root-'));
+    const manualSarifPath = path.join(secondaryWorkspaceRoot, '.mamori', 'out', 'combined.sarif');
+    const messageCapture = captureWindowMessages(activeVscodeApi);
+    const updateSucceeded = activeVscodeApi.workspace.updateWorkspaceFolders(
+      activeVscodeApi.workspace.workspaceFolders?.length || 0,
+      0,
+      {
+        uri: activeVscodeApi.Uri.file(secondaryWorkspaceRoot),
+        name: 'mamori-multi-root-fixture',
+      },
+    );
+
+    if (!updateSucceeded) {
+      messageCapture.restore();
+      fs.rmSync(secondaryWorkspaceRoot, { recursive: true, force: true });
+      throw new Error('Failed to add workspace folder');
+    }
+
+    try {
+      await waitFor(() => (activeVscodeApi.workspace.workspaceFolders?.length || 0) >= 2);
+
+      const {
+        fixtureDirectory,
+        javaFilePath,
+        mavenLogPath,
+        semgrepLogPath,
+      } = setupSaveIntegrationFixture(secondaryWorkspaceRoot);
+      const restoreMavenLog = createRestoreAction(mavenLogPath);
+      const restoreSemgrepLog = createRestoreAction(semgrepLogPath);
+      fs.rmSync(mavenLogPath, { force: true });
+      fs.rmSync(semgrepLogPath, { force: true });
+      fs.rmSync(manualSarifPath, { force: true });
+
+      try {
+        setExecutablePathEnvironment(`${path.join(secondaryWorkspaceRoot, 'bin')}${path.delimiter}${originalPath}`);
+        await getMamoriExtension(activeVscodeApi).activate();
+        await activeVscodeApi.commands.executeCommand('mamori-inspector.runWorkspaceCheck');
+
+        await waitFor(() => fs.existsSync(manualSarifPath));
+        await waitFor(() => fs.existsSync(mavenLogPath) && fs.existsSync(semgrepLogPath));
+        await waitFor(() => activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(javaFilePath)).length === 3);
+        await waitFor(() => messageCapture.informationMessages.length > 0 || messageCapture.errorMessages.length > 0);
+
+        const diagnostics = activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(javaFilePath));
+        const messages = diagnostics.map((diagnostic) => diagnostic.message);
+
+        assert.deepStrictEqual(messageCapture.errorMessages, []);
+        assert.ok(messageCapture.informationMessages.length >= 1);
+        assert.strictEqual(diagnostics.length, 3);
+        assert.ok(messages.includes('Missing Javadoc'));
+        assert.ok(messages.includes('Unused local variable'));
+        assert.ok(messages.includes('Potential issue'));
+        assert.match(fs.readFileSync(mavenLogPath, 'utf8'), /checkstyle:check/u);
+        assert.match(fs.readFileSync(mavenLogPath, 'utf8'), /pmd:check/u);
+        assert.match(fs.readFileSync(manualSarifPath, 'utf8'), /Unused local variable/u);
+      } finally {
+        restoreMavenLog();
+        restoreSemgrepLog();
+        fs.rmSync(fixtureDirectory, { recursive: true, force: true });
+      }
+    } finally {
+      messageCapture.restore();
+      const workspaceFolders = activeVscodeApi.workspace.workspaceFolders || [];
+      const secondaryWorkspaceIndex = workspaceFolders.findIndex(
+        (workspaceFolder) => workspaceFolder.uri.fsPath === secondaryWorkspaceRoot,
+      );
+      if (secondaryWorkspaceIndex >= 0) {
+        activeVscodeApi.workspace.updateWorkspaceFolders(secondaryWorkspaceIndex, 1);
+        await waitFor(() => !(activeVscodeApi.workspace.workspaceFolders || []).some(
+          (workspaceFolder) => workspaceFolder.uri.fsPath === secondaryWorkspaceRoot,
+        ));
+      }
+      fs.rmSync(secondaryWorkspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  /**
+   * 外部実プロジェクトを追加した multi-root 手動実行でも PMD finding を反映できること。
+   * @returns 実行完了を待つ Promise を返す。
+   */
+  test('Publishes PMD diagnostics for an external project during manual workspace checks', async function() {
+    this.timeout(120000);
+
+    const realProjectRoot = process.env.MAMORI_REAL_PROJECT_ROOT;
+    if (!realProjectRoot || !fs.existsSync(realProjectRoot)) {
+      this.skip();
+      return;
+    }
+
+    const pmdReportPath = path.join(realProjectRoot, 'target', 'pmd.xml');
+    const firstViolation = findFirstPmdViolation(pmdReportPath);
+    if (!firstViolation || !fs.existsSync(firstViolation.filePath)) {
+      this.skip();
+      return;
+    }
+
+    const activeVscodeApi = vscodeApi;
+    const semgrepBinDirectory = path.join(realProjectRoot, 'bin');
+    const semgrepLogPath = path.join(semgrepBinDirectory, 'semgrep.log');
+    const semgrepWrapperPath = process.platform === 'win32'
+      ? path.join(semgrepBinDirectory, 'semgrep.cmd')
+      : path.join(semgrepBinDirectory, 'semgrep');
+    const manualSarifPath = path.join(realProjectRoot, '.mamori', 'out', 'combined.sarif');
+    const restoreSemgrepWrapper = createRestoreAction(semgrepWrapperPath);
+    const restoreSemgrepLog = createRestoreAction(semgrepLogPath);
+    const messageCapture = captureWindowMessages(activeVscodeApi);
+    const alreadyOpened = (activeVscodeApi.workspace.workspaceFolders || []).some(
+      (workspaceFolder) => workspaceFolder.uri.fsPath === realProjectRoot,
+    );
+    const updateSucceeded = activeVscodeApi.workspace.updateWorkspaceFolders(
+      activeVscodeApi.workspace.workspaceFolders?.length || 0,
+      0,
+      {
+        uri: activeVscodeApi.Uri.file(realProjectRoot),
+        name: 'mamori-real-project',
+      },
+    );
+
+    if (!updateSucceeded && !alreadyOpened) {
+      messageCapture.restore();
+      throw new Error('Failed to add external project workspace folder');
+    }
+
+    try {
+      await waitFor(() => (activeVscodeApi.workspace.workspaceFolders?.length || 0) >= 2);
+      fs.mkdirSync(semgrepBinDirectory, { recursive: true });
+      fs.rmSync(semgrepLogPath, { force: true });
+      writeEmptySemgrepWrapper(semgrepBinDirectory, semgrepLogPath);
+      fs.rmSync(manualSarifPath, { force: true });
+      setExecutablePathEnvironment(`${semgrepBinDirectory}${path.delimiter}${originalPath}`);
+
+      await getMamoriExtension(activeVscodeApi).activate();
+      await activeVscodeApi.commands.executeCommand('mamori-inspector.runWorkspaceCheck');
+
+      await waitFor(() => fs.existsSync(manualSarifPath), 120000);
+      await waitFor(() => messageCapture.informationMessages.length > 0 || messageCapture.errorMessages.length > 0, 120000);
+      await waitFor(
+        () => activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(firstViolation.filePath)).some(
+          (diagnostic) => diagnostic.message === firstViolation.message,
+        ),
+        120000,
+      );
+
+      const diagnostics = activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(firstViolation.filePath));
+      const messages = diagnostics.map((diagnostic) => diagnostic.message);
+      const sarifFindings = loadSarifFindings(manualSarifPath);
+
+      assert.deepStrictEqual(messageCapture.errorMessages, []);
+      assert.ok(messageCapture.informationMessages.length >= 1);
+      assert.ok(messages.includes(firstViolation.message));
+      assert.ok(sarifFindings.some((finding) => finding.message === firstViolation.message));
+    } finally {
+      messageCapture.restore();
+      restoreSemgrepWrapper();
+      restoreSemgrepLog();
+      const workspaceFolders = activeVscodeApi.workspace.workspaceFolders || [];
+      const secondaryWorkspaceIndex = workspaceFolders.findIndex(
+        (workspaceFolder) => workspaceFolder.uri.fsPath === realProjectRoot,
+      );
+      if (secondaryWorkspaceIndex >= 0) {
+        activeVscodeApi.workspace.updateWorkspaceFolders(secondaryWorkspaceIndex, 1);
+      }
     }
   });
 });

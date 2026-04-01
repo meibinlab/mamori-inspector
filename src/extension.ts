@@ -2,6 +2,8 @@
 import * as vscode from 'vscode';
 // 子プロセス実行 API を表す
 import { spawn } from 'child_process';
+// Node のファイルシステム API を表す
+import * as fs from 'fs';
 // Node のパス操作 API を表す
 import * as path from 'path';
 // hooks 成功通知の整形処理を表す
@@ -75,12 +77,59 @@ interface MamoriCliCommandResult {
 }
 
 /**
- * ワークスペース向けの Mamori CLI パスを返す。
+ * URI ごとの Diagnostics 収集結果を表す。
+ */
+interface DiagnosticsByUriEntry {
+  /** 対象 URI を表す。 */
+  uri: vscode.Uri;
+  /** Diagnostics 一覧を表す。 */
+  diagnostics: vscode.Diagnostic[];
+}
+
+/**
+ * ワークスペース直下の Mamori CLI パスを返す。
  * @param workspaceFolder ワークスペースフォルダーを表す。
  * @returns CLI スクリプトパスを返す。
  */
-function getMamoriCliPath(workspaceFolder: vscode.WorkspaceFolder): string {
+function getWorkspaceMamoriCliPath(workspaceFolder: vscode.WorkspaceFolder): string {
   return path.join(workspaceFolder.uri.fsPath, '.mamori', 'mamori.js');
+}
+
+/**
+ * 拡張同梱の Mamori CLI パスを返す。
+ * @param extensionRootPath 拡張ルートパスを表す。
+ * @returns CLI スクリプトパスを返す。
+ */
+function getBundledMamoriCliPath(extensionRootPath: string): string {
+  return path.join(extensionRootPath, '.mamori', 'mamori.js');
+}
+
+/**
+ * 実行に利用する Mamori CLI パスを返す。
+ * @param workspaceFolder ワークスペースフォルダーを表す。
+ * @param extensionRootPath 拡張ルートパスを表す。
+ * @returns 利用する CLI スクリプトパスを返す。
+ */
+function getMamoriCliPath(workspaceFolder: vscode.WorkspaceFolder, extensionRootPath: string): string {
+  const workspaceCliPath = getWorkspaceMamoriCliPath(workspaceFolder);
+  if (fs.existsSync(workspaceCliPath)) {
+    return workspaceCliPath;
+  }
+
+  return getBundledMamoriCliPath(extensionRootPath);
+}
+
+/**
+ * Mamori CLI の実行に使う親プロセスを返す。
+ * @returns 実行ファイルパスを返す。
+ */
+function getMamoriCliExecutablePath(): string {
+  const configuredExecutablePath = process.env.MAMORI_CLI_NODE_PATH;
+  if (configuredExecutablePath && fs.existsSync(configuredExecutablePath)) {
+    return configuredExecutablePath;
+  }
+
+  return process.execPath;
 }
 
 /**
@@ -164,8 +213,9 @@ function toDocumentUri(workspaceFolder: vscode.WorkspaceFolder, finding: SarifFi
 function runMamoriCli(
   workspaceFolder: vscode.WorkspaceFolder,
   options: MamoriCliRunOptions,
+  extensionRootPath: string,
 ): Promise<MamoriCliCommandResult> {
-  return runMamoriCliCommand(workspaceFolder, buildMamoriCliArguments(options));
+  return runMamoriCliCommand(workspaceFolder, buildMamoriCliArguments(options), extensionRootPath);
 }
 
 /**
@@ -177,15 +227,31 @@ function runMamoriCli(
 function runMamoriCliCommand(
   workspaceFolder: vscode.WorkspaceFolder,
   argumentsList: string[],
+  extensionRootPath: string,
 ): Promise<MamoriCliCommandResult> {
-  const cliPath = getMamoriCliPath(workspaceFolder);
+  const cliPath = getMamoriCliPath(workspaceFolder, extensionRootPath);
+  const cliExecutablePath = getMamoriCliExecutablePath();
 
   return new Promise((resolve, reject) => {
+    if (!fs.existsSync(workspaceFolder.uri.fsPath)) {
+      reject(new Error(`Workspace folder was not found: ${workspaceFolder.uri.fsPath}`));
+      return;
+    }
+
+    if (!fs.existsSync(cliPath)) {
+      reject(new Error(`Mamori CLI was not found: ${cliPath}`));
+      return;
+    }
+
     const child = spawn(
-      process.execPath,
+      cliExecutablePath,
       [cliPath, ...argumentsList],
       {
         cwd: workspaceFolder.uri.fsPath,
+        env: {
+          ...process.env,
+          ELECTRON_RUN_AS_NODE: '1',
+        },
         windowsHide: true,
       },
     );
@@ -215,17 +281,82 @@ function runMamoriCliCommand(
 }
 
 /**
+ * 存在するワークスペースフォルダーだけを返す。
+ * @param workspaceFolders ワークスペースフォルダー一覧を表す。
+ * @param outputChannel 出力チャネルを表す。
+ * @returns 存在するワークスペースフォルダー一覧を返す。
+ */
+function filterExistingWorkspaceFolders(
+  workspaceFolders: readonly vscode.WorkspaceFolder[],
+  outputChannel: vscode.OutputChannel,
+): vscode.WorkspaceFolder[] {
+  const existingWorkspaceFolders: vscode.WorkspaceFolder[] = [];
+
+  for (const workspaceFolder of workspaceFolders) {
+    if (fs.existsSync(workspaceFolder.uri.fsPath)) {
+      existingWorkspaceFolders.push(workspaceFolder);
+      continue;
+    }
+
+    outputChannel.appendLine(
+      `Mamori Inspector skipped missing workspace folder: ${workspaceFolder.uri.fsPath}`,
+    );
+  }
+
+  return existingWorkspaceFolders;
+}
+
+/**
+ * 単一ワークスペース対象の操作に使うフォルダーを返す。
+ * @returns 選択されたワークスペースフォルダーを返す。
+ */
+async function resolveWorkspaceFolderForSingleTargetCommand(): Promise<vscode.WorkspaceFolder | undefined> {
+  const workspaceFolders = vscode.workspace.workspaceFolders;
+  if (!workspaceFolders || workspaceFolders.length === 0) {
+    return undefined;
+  }
+
+  if (workspaceFolders.length === 1) {
+    return workspaceFolders[0];
+  }
+
+  const activeDocumentUri = vscode.window.activeTextEditor?.document.uri;
+  if (activeDocumentUri) {
+    const activeWorkspaceFolder = getWorkspaceFolderForUri(activeDocumentUri);
+    if (activeWorkspaceFolder) {
+      return activeWorkspaceFolder;
+    }
+  }
+
+  const selectedItem = await vscode.window.showQuickPick(
+    workspaceFolders.map((workspaceFolder) => ({
+      label: workspaceFolder.name,
+      description: workspaceFolder.uri.fsPath,
+      workspaceFolder,
+    })),
+    {
+      ignoreFocusOut: true,
+      placeHolder: 'Mamori Inspector の対象ワークスペースを選択してください。',
+    },
+  );
+
+  return selectedItem?.workspaceFolder;
+}
+
+/**
  * hooks 管理コマンドを作成する。
  * @param action hooks 操作種別を表す。
  * @param outputChannel 出力チャネルを表す。
+ * @param extensionRootPath 拡張ルートパスを表す。
  * @returns コマンド本体を返す。
  */
 function createManageHooksCommand(
   action: MamoriHooksAction,
   outputChannel: vscode.OutputChannel,
+  extensionRootPath: string,
 ): () => Promise<void> {
   return async() => {
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    const workspaceFolder = await resolveWorkspaceFolderForSingleTargetCommand();
     if (!workspaceFolder) {
       void vscode.window.showWarningMessage('Mamori Inspector: ワークスペースを開いてください。');
       return;
@@ -242,7 +373,11 @@ function createManageHooksCommand(
           cancellable: false,
         },
         async() => {
-          commandResult = await runMamoriCliCommand(workspaceFolder, buildMamoriHooksArguments(action));
+          commandResult = await runMamoriCliCommand(
+            workspaceFolder,
+            buildMamoriHooksArguments(action),
+            extensionRootPath,
+          );
         },
       );
 
@@ -259,20 +394,17 @@ function createManageHooksCommand(
 }
 
 /**
- * SARIF の内容を DiagnosticsCollection へ反映する。
+ * SARIF の内容を URI ごとの Diagnostics へ変換する。
  * @param workspaceFolder ワークスペースフォルダーを表す。
- * @param diagnosticCollection 診断コレクションを表す。
- * @returns 反映件数を返す。
+ * @param sarifPath SARIF パスを表す。
+ * @returns URI ごとの Diagnostics 一覧を返す。
  */
-function publishDiagnostics(
+function buildDiagnosticsByUri(
   workspaceFolder: vscode.WorkspaceFolder,
-  diagnosticCollection: vscode.DiagnosticCollection,
   sarifPath: string,
-): number {
+): Map<string, DiagnosticsByUriEntry> {
   const findings = loadSarifFindings(sarifPath);
-  const diagnosticsByUri = new Map<string, { uri: vscode.Uri; diagnostics: vscode.Diagnostic[] }>();
-
-  diagnosticCollection.clear();
+  const diagnosticsByUri = new Map<string, DiagnosticsByUriEntry>();
 
   for (const finding of findings) {
     const documentUri = toDocumentUri(workspaceFolder, finding);
@@ -300,6 +432,41 @@ function publishDiagnostics(
     diagnosticsByUri.set(documentUri.toString(), existing);
   }
 
+  return diagnosticsByUri;
+}
+
+/**
+ * URI ごとの Diagnostics を集約する。
+ * @param target 集約先を表す。
+ * @param source 集約元を表す。
+ * @returns 返り値はない。
+ */
+function mergeDiagnosticsByUri(
+  target: Map<string, DiagnosticsByUriEntry>,
+  source: Map<string, DiagnosticsByUriEntry>,
+): void {
+  for (const [uriKey, entry] of source.entries()) {
+    const existing = target.get(uriKey) || {
+      uri: entry.uri,
+      diagnostics: [],
+    };
+    existing.diagnostics.push(...entry.diagnostics);
+    target.set(uriKey, existing);
+  }
+}
+
+/**
+ * 集約済み Diagnostics を DiagnosticsCollection へ反映する。
+ * @param diagnosticCollection 診断コレクションを表す。
+ * @param diagnosticsByUri URI ごとの Diagnostics を表す。
+ * @returns 反映件数を返す。
+ */
+function publishCollectedDiagnostics(
+  diagnosticCollection: vscode.DiagnosticCollection,
+  diagnosticsByUri: Map<string, DiagnosticsByUriEntry>,
+): number {
+  diagnosticCollection.clear();
+
   let totalDiagnostics = 0;
   for (const entry of diagnosticsByUri.values()) {
     diagnosticCollection.set(entry.uri, entry.diagnostics);
@@ -307,6 +474,23 @@ function publishDiagnostics(
   }
 
   return totalDiagnostics;
+}
+
+/**
+ * SARIF の内容を DiagnosticsCollection へ反映する。
+ * @param workspaceFolder ワークスペースフォルダーを表す。
+ * @param diagnosticCollection 診断コレクションを表す。
+ * @returns 反映件数を返す。
+ */
+function publishDiagnostics(
+  workspaceFolder: vscode.WorkspaceFolder,
+  diagnosticCollection: vscode.DiagnosticCollection,
+  sarifPath: string,
+): number {
+  return publishCollectedDiagnostics(
+    diagnosticCollection,
+    buildDiagnosticsByUri(workspaceFolder, sarifPath),
+  );
 }
 
 /**
@@ -351,6 +535,7 @@ async function runSaveCheck(
   filePath: string,
   diagnosticCollection: vscode.DiagnosticCollection,
   outputChannel: vscode.OutputChannel,
+  extensionRootPath: string,
 ): Promise<void> {
   const sarifPath = getSarifOutputPath(workspaceFolder, SAVE_SARIF_OUTPUT);
 
@@ -360,7 +545,7 @@ async function runSaveCheck(
       scope: 'file',
       files: [filePath],
       sarifOutputPath: sarifPath,
-    });
+    }, extensionRootPath);
     const diagnosticsCount = publishDiagnostics(workspaceFolder, diagnosticCollection, sarifPath);
     void vscode.window.setStatusBarMessage(
       `Mamori Inspector: ${diagnosticsCount} 件の保存時チェック結果を反映しました。`,
@@ -376,41 +561,72 @@ async function runSaveCheck(
 /**
  * ワークスペースチェックコマンドを作成する。
  * @param diagnosticCollection 診断コレクションを表す。
+ * @param outputChannel 出力チャネルを表す。
+ * @param extensionRootPath 拡張ルートパスを表す。
  * @returns コマンド本体を返す。
  */
 function createRunWorkspaceCheckCommand(
   diagnosticCollection: vscode.DiagnosticCollection,
+  outputChannel: vscode.OutputChannel,
+  extensionRootPath: string,
 ): () => Promise<void> {
   return async() => {
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-    if (!workspaceFolder) {
+    const workspaceFolders = vscode.workspace.workspaceFolders;
+    if (!workspaceFolders || workspaceFolders.length === 0) {
       void vscode.window.showWarningMessage('Mamori Inspector: ワークスペースを開いてください。');
       return;
     }
 
+    const existingWorkspaceFolders = filterExistingWorkspaceFolders(workspaceFolders, outputChannel);
+    if (existingWorkspaceFolders.length === 0) {
+      diagnosticCollection.clear();
+      void vscode.window.showWarningMessage('Mamori Inspector: 利用可能なワークスペースがありません。');
+      return;
+    }
+
     try {
-      const sarifPath = getSarifOutputPath(workspaceFolder, MANUAL_SARIF_OUTPUT);
+      const sarifOutputs = existingWorkspaceFolders.map((workspaceFolder) => ({
+        workspaceFolder,
+        sarifPath: getSarifOutputPath(workspaceFolder, MANUAL_SARIF_OUTPUT),
+      }));
       await vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
           title: 'Mamori Inspector を実行中',
           cancellable: false,
         },
-        async() => {
-          await runMamoriCli(workspaceFolder, {
-            mode: 'manual',
-            scope: 'workspace',
-            sarifOutputPath: sarifPath,
-          });
+        async(progress) => {
+          for (const [index, sarifOutput] of sarifOutputs.entries()) {
+            progress.report({
+              increment: 100 / sarifOutputs.length,
+              message: `${sarifOutput.workspaceFolder.name} (${String(index + 1)}/${String(sarifOutputs.length)})`,
+            });
+            await runMamoriCli(sarifOutput.workspaceFolder, {
+              mode: 'manual',
+              scope: 'workspace',
+              sarifOutputPath: sarifOutput.sarifPath,
+            }, extensionRootPath);
+          }
         },
       );
 
-      const diagnosticsCount = publishDiagnostics(workspaceFolder, diagnosticCollection, sarifPath);
+      const diagnosticsByUri = new Map<string, DiagnosticsByUriEntry>();
+      for (const sarifOutput of sarifOutputs) {
+        mergeDiagnosticsByUri(
+          diagnosticsByUri,
+          buildDiagnosticsByUri(sarifOutput.workspaceFolder, sarifOutput.sarifPath),
+        );
+      }
+
+      const diagnosticsCount = publishCollectedDiagnostics(diagnosticCollection, diagnosticsByUri);
       void vscode.window.showInformationMessage(
         `Mamori Inspector: ${diagnosticsCount} 件の問題を反映しました。`,
       );
     } catch (error) {
       diagnosticCollection.clear();
+      outputChannel.appendLine(
+        `Mamori Inspector workspace check failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
       void vscode.window.showErrorMessage(
         `Mamori Inspector: 実行に失敗しました。${error instanceof Error ? error.message : String(error)}`,
       );
@@ -426,6 +642,7 @@ function createRunWorkspaceCheckCommand(
 export function activate(context: vscode.ExtensionContext): void {
   const diagnosticCollection = vscode.languages.createDiagnosticCollection(DIAGNOSTIC_COLLECTION_NAME);
   const outputChannel = vscode.window.createOutputChannel('Mamori Inspector');
+  const extensionRootPath = context.extensionUri.fsPath;
   const saveCheckScheduler = new SaveCheckScheduler({
     debounceMilliseconds: SAVE_DEBOUNCE_MILLISECONDS,
     suppressionMilliseconds: SAVE_SUPPRESSION_MILLISECONDS,
@@ -436,7 +653,7 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
 
-      await runSaveCheck(workspaceFolder, filePath, diagnosticCollection, outputChannel);
+      await runSaveCheck(workspaceFolder, filePath, diagnosticCollection, outputChannel, extensionRootPath);
     },
   });
 
@@ -448,19 +665,19 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand(
       'mamori-inspector.runWorkspaceCheck',
-      createRunWorkspaceCheckCommand(diagnosticCollection),
+      createRunWorkspaceCheckCommand(diagnosticCollection, outputChannel, extensionRootPath),
     ),
   );
   context.subscriptions.push(
     vscode.commands.registerCommand(
       'mamori-inspector.installGitHooks',
-      createManageHooksCommand('install', outputChannel),
+      createManageHooksCommand('install', outputChannel, extensionRootPath),
     ),
   );
   context.subscriptions.push(
     vscode.commands.registerCommand(
       'mamori-inspector.uninstallGitHooks',
-      createManageHooksCommand('uninstall', outputChannel),
+      createManageHooksCommand('uninstall', outputChannel, extensionRootPath),
     ),
   );
   context.subscriptions.push(
