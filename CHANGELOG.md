@@ -8,6 +8,15 @@
 
 - なし
 
+## [0.2.5] - 2026-04-01
+
+### Changed
+- Windows で管理配布物の zip 展開を行う際、PowerShell の引数解決に依存しない実行方式へ変更しました。
+
+### Fixed
+- `Mamori Inspector: Setup Managed Tools` などの管理ツール準備で、`Expand-Archive` の `LiteralPath` が空扱いになって失敗する問題を解消しました。
+- Windows の管理配布物テストを zip 展開経路込みで検証するようにし、Maven と Gradle の自動導入回帰を防ぐようにしました。
+
 ## [0.2.4] - 2026-04-01
 
 ### Added

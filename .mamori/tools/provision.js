@@ -176,6 +176,24 @@ function runProcess(command, args, options = {}) {
 }
 
 /**
+ * PowerShell の単一引用符文字列として安全な文字列へ変換する。
+ * @param {string} value 変換対象文字列を表す。
+ * @returns {string} 変換後文字列を返す。
+ */
+function escapePowerShellSingleQuotedString(value) {
+  return value.replace(/'/g, "''");
+}
+
+/**
+ * PowerShell の EncodedCommand 用文字列へ変換する。
+ * @param {string} commandText PowerShell コマンド文字列を表す。
+ * @returns {string} Base64 エンコード済み文字列を返す。
+ */
+function encodePowerShellCommand(commandText) {
+  return Buffer.from(commandText, 'utf16le').toString('base64');
+}
+
+/**
  * URL からファイルをダウンロードする。
  * @param {string} sourceUrl ダウンロード元 URL を表す。
  * @param {string} destinationPath 保存先パスを表す。
@@ -251,6 +269,11 @@ function extractArchive(archivePath, destinationDirectory, archiveType) {
 
   let result;
   if (archiveType === 'zip' && process.platform === 'win32') {
+    const commandText = [
+      `$archivePath = '${escapePowerShellSingleQuotedString(archivePath)}'`,
+      `$destinationDirectory = '${escapePowerShellSingleQuotedString(destinationDirectory)}'`,
+      'Expand-Archive -LiteralPath $archivePath -DestinationPath $destinationDirectory -Force',
+    ].join('; ');
     result = runProcess(
       'powershell',
       [
@@ -258,10 +281,8 @@ function extractArchive(archivePath, destinationDirectory, archiveType) {
         '-NonInteractive',
         '-ExecutionPolicy',
         'Bypass',
-        '-Command',
-        'Expand-Archive -LiteralPath $args[0] -DestinationPath $args[1] -Force',
-        archivePath,
-        destinationDirectory,
+        '-EncodedCommand',
+        encodePowerShellCommand(commandText),
       ],
     );
   } else if (archiveType === 'zip') {
