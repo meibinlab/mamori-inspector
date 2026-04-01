@@ -82,6 +82,17 @@ function createCommandBinDirectory(workingDirectory: string): string {
 }
 
 /**
+ * テスト用の空白を含むコマンドラッパーディレクトリを作成する。
+ * @param workingDirectory 作業ディレクトリを表す。
+ * @returns ラッパーディレクトリの絶対パスを返す。
+ */
+function createSpacedCommandBinDirectory(workingDirectory: string): string {
+  const binDirectory = path.join(workingDirectory, 'bin with space');
+  fs.mkdirSync(binDirectory, { recursive: true });
+  return binDirectory;
+}
+
+/**
  * テスト用の node_modules/.bin ディレクトリを作成する。
  * @param workingDirectory 作業ディレクトリを表す。
  * @returns ラッパーディレクトリの絶対パスを返す。
@@ -4349,6 +4360,68 @@ suite('Mamori CLI Test Suite', () => {
       process.platform === 'win32' ? 'prettier.cmd' : 'prettier',
     )));
     assert.match(fs.readFileSync(path.join(binDirectory, 'npm-setup.log'), 'utf8'), /install/u);
+  });
+
+  /**
+   * 空白を含む npm 実行パスでも setup が成功すること。
+   * @returns 返り値はない。
+   */
+  test('Sets up managed tools when npm command path contains spaces', function() {
+    const temporaryDirectory = createTemporaryDirectory();
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const spacedBinDirectory = createSpacedCommandBinDirectory(temporaryDirectory);
+    const mavenSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'maven-space-distribution',
+      'mvn',
+      'maven-space.log',
+    );
+    const gradleSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'gradle-space-distribution',
+      'gradle',
+      'gradle-space.log',
+    );
+
+    this.timeout(15000);
+    writeNpmInstallWrapper(spacedBinDirectory, 'npm-space.log');
+    writeCommandWrapper(binDirectory, 'semgrep', 'semgrep-space.log');
+
+    const semgrepCommandPath = path.join(
+      binDirectory,
+      process.platform === 'win32' ? 'semgrep.cmd' : 'semgrep',
+    );
+    const npmCommandPath = path.join(
+      spacedBinDirectory,
+      process.platform === 'win32' ? 'npm.cmd' : 'npm',
+    );
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      ['setup'],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(binDirectory),
+          MAMORI_TOOL_NPM_COMMAND: npmCommandPath,
+          MAMORI_TOOL_MAVEN_SOURCE_URL: toFileUrl(mavenSourceDirectory),
+          MAMORI_TOOL_GRADLE_SOURCE_URL: toFileUrl(gradleSourceDirectory),
+          MAMORI_TOOL_SEMGREP_COMMAND: semgrepCommandPath,
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /mamori: setup completed/u);
+    assert.match(fs.readFileSync(path.join(spacedBinDirectory, 'npm-space.log'), 'utf8'), /install/u);
+    assert.ok(fs.existsSync(path.join(
+      temporaryDirectory,
+      '.mamori',
+      'node',
+      'node_modules',
+      '.bin',
+      process.platform === 'win32' ? 'eslint.cmd' : 'eslint',
+    )));
   });
 
   /**

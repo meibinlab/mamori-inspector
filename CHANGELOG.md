@@ -8,6 +8,15 @@
 
 - なし
 
+## [0.2.6] - 2026-04-01
+
+### Added
+- Windows で空白を含む npm 実行パスを使った setup 回帰テストを追加しました。
+
+### Fixed
+- `Mamori Inspector: Setup Managed Tools` で、`C:\Program` がコマンドとして解釈されて失敗する問題を解消しました。
+- Windows の `.cmd` / `.bat` 実行を見直し、管理対象 Node ツールの自動導入が空白を含む実行パスでも継続できるようにしました。
+
 ## [0.2.5] - 2026-04-01
 
 ### Changed
