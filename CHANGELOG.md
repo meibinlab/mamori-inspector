@@ -6,6 +6,12 @@
 
 ## [Unreleased]
 
+## [0.2.11] - 2026-04-03
+
+### Changed
+- README、README.ja、仕様書、設定説明を更新し、`mamori-inspector.enabled` が保存時検証だけを制御し、手動 workspace 実行は設定に関係なく利用できることを明記しました。
+- 外部実プロジェクトの手動計測テスト名を更新し、保存時有効設定とは独立して同じ Diagnostics 件数を期待する意図を明確にしました。
+
 ## [0.2.10] - 2026-04-03
 
 ### Added
@@ -13,10 +19,6 @@
 
 ### Fixed
 - manual/workspace 実行で一部ツールが終了コード 2 を返しても、更新済みの SARIF があれば Problems へ finding を反映できるようにしました。
-
-## [Unreleased]
-
-- なし
 
 ## [0.2.9] - 2026-04-03
 
