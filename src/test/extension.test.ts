@@ -104,8 +104,9 @@ function loadVscode(): VscodeModule | undefined {
 async function setWorkspaceMamoriEnabled(
   vscodeApi: VscodeModule,
   enabled: boolean | undefined,
+  resourceUri?: Parameters<VscodeModule['workspace']['getConfiguration']>[1],
 ): Promise<void> {
-  const workspaceFolderUri = vscodeApi.workspace.workspaceFolders?.[0]?.uri;
+  const workspaceFolderUri = resourceUri ?? vscodeApi.workspace.workspaceFolders?.[0]?.uri;
   if (!workspaceFolderUri) {
     return;
   }
@@ -114,6 +115,51 @@ async function setWorkspaceMamoriEnabled(
     'enabled',
     enabled,
     vscodeApi.ConfigurationTarget.WorkspaceFolder,
+  );
+}
+
+/**
+ * ワークスペースフォルダー設定ファイルの Mamori 有効化設定を VS Code 経由で更新する。
+ * @param vscodeApi VS Code API を表す。
+ * @param workspaceRoot 対象ワークスペースルートを表す。
+ * @param enabled 設定する有効状態を表す。
+ * @returns 更新完了を待つ Promise を返す。
+ */
+async function updateWorkspaceFolderMamoriEnabledSettingFile(
+  vscodeApi: VscodeModule,
+  workspaceRoot: string,
+  enabled: boolean | undefined,
+): Promise<void> {
+  const settingsPath = path.join(workspaceRoot, '.vscode', 'settings.json');
+  const settingsUri = vscodeApi.Uri.file(settingsPath);
+  /** ワークスペース設定内容を表す。 */
+  let settings: Record<string, unknown> = {};
+
+  try {
+    settings = JSON.parse(Buffer.from(await vscodeApi.workspace.fs.readFile(settingsUri)).toString('utf8')) as Record<string, unknown>;
+  } catch {
+    settings = {};
+  }
+
+  if (typeof enabled === 'undefined') {
+    delete settings['mamori-inspector.enabled'];
+  } else {
+    settings['mamori-inspector.enabled'] = enabled;
+  }
+
+  if (Object.keys(settings).length === 0) {
+    try {
+      await vscodeApi.workspace.fs.delete(settingsUri, { useTrash: false });
+    } catch {
+      // 設定ファイルが無い場合は削除不要とみなす。
+    }
+    return;
+  }
+
+  await vscodeApi.workspace.fs.createDirectory(vscodeApi.Uri.file(path.dirname(settingsPath)));
+  await vscodeApi.workspace.fs.writeFile(
+    settingsUri,
+    Buffer.from(`${JSON.stringify(settings, null, 2)}${os.EOL}`, 'utf8'),
   );
 }
 
@@ -2535,8 +2581,10 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
       ? path.join(semgrepBinDirectory, 'semgrep.cmd')
       : path.join(semgrepBinDirectory, 'semgrep');
     const manualSarifPath = path.join(realProjectRoot, '.mamori', 'out', 'combined.sarif');
+    const workspaceSettingsPath = path.join(realProjectRoot, '.vscode', 'settings.json');
     const restoreSemgrepWrapper = createRestoreAction(semgrepWrapperPath);
     const restoreSemgrepLog = createRestoreAction(semgrepLogPath);
+    const restoreWorkspaceSettings = createRestoreAction(workspaceSettingsPath);
     const messageCapture = captureWindowMessages(activeVscodeApi);
     const alreadyOpened = (activeVscodeApi.workspace.workspaceFolders || []).some(
       (workspaceFolder) => workspaceFolder.uri.fsPath === realProjectRoot,
@@ -2625,8 +2673,11 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
       ? path.join(semgrepBinDirectory, 'semgrep.cmd')
       : path.join(semgrepBinDirectory, 'semgrep');
     const manualSarifPath = path.join(realProjectRoot, '.mamori', 'out', 'combined.sarif');
+    const externalProjectResourceUri = activeVscodeApi.Uri.file(firstViolation.filePath);
+    const workspaceSettingsPath = path.join(realProjectRoot, '.vscode', 'settings.json');
     const restoreSemgrepWrapper = createRestoreAction(semgrepWrapperPath);
     const restoreSemgrepLog = createRestoreAction(semgrepLogPath);
+    const restoreWorkspaceSettings = createRestoreAction(workspaceSettingsPath);
     const messageCapture = captureWindowMessages(activeVscodeApi);
     const alreadyOpened = (activeVscodeApi.workspace.workspaceFolders || []).some((workspaceFolder) => workspaceFolder.uri.fsPath === realProjectRoot);
     const updateSucceeded = activeVscodeApi.workspace.updateWorkspaceFolders(activeVscodeApi.workspace.workspaceFolders?.length || 0, 0, {
@@ -2641,22 +2692,13 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
 
     const manualRunCounts: number[] = [];
     const runManualWorkspaceCheck = async(saveCheckEnabled: boolean): Promise<number> => {
-      await activeVscodeApi.workspace.getConfiguration('mamori-inspector', externalWorkspaceUri).update(
-        'enabled',
-        saveCheckEnabled,
-        activeVscodeApi.ConfigurationTarget.WorkspaceFolder,
-      );
+      await updateWorkspaceFolderMamoriEnabledSettingFile(activeVscodeApi, realProjectRoot, saveCheckEnabled);
+      const workspaceSettings = JSON.parse(fs.readFileSync(workspaceSettingsPath, 'utf8')) as Record<string, unknown>;
+      assert.strictEqual(workspaceSettings['mamori-inspector.enabled'], saveCheckEnabled);
+      await delay(1000);
 
-      const informationCountBeforeRun = messageCapture.informationMessages.length;
-      const warningCountBeforeRun = messageCapture.warningMessages.length;
-      const errorCountBeforeRun = messageCapture.errorMessages.length;
       await activeVscodeApi.commands.executeCommand('mamori-inspector.runWorkspaceCheck');
-      await waitFor(
-        () => messageCapture.informationMessages.length > informationCountBeforeRun
-          || messageCapture.warningMessages.length > warningCountBeforeRun
-          || messageCapture.errorMessages.length > errorCountBeforeRun,
-        120000,
-      );
+      await waitFor(() => fs.existsSync(manualSarifPath), 120000);
       await waitFor(() => countWorkspaceDiagnostics(activeVscodeApi, realProjectRoot) > 0, 120000);
       await waitFor(() => activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(firstViolation.filePath)).some((diagnostic) => diagnostic.message === firstViolation.message), 120000);
       return countWorkspaceDiagnostics(activeVscodeApi, realProjectRoot);
@@ -2682,11 +2724,7 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
       messageCapture.restore();
       restoreSemgrepWrapper();
       restoreSemgrepLog();
-      await activeVscodeApi.workspace.getConfiguration('mamori-inspector', externalWorkspaceUri).update(
-        'enabled',
-        undefined,
-        activeVscodeApi.ConfigurationTarget.WorkspaceFolder,
-      );
+      restoreWorkspaceSettings();
       const workspaceFolders = activeVscodeApi.workspace.workspaceFolders || [];
       const secondaryWorkspaceIndex = workspaceFolders.findIndex((workspaceFolder) => workspaceFolder.uri.fsPath === realProjectRoot);
       if (secondaryWorkspaceIndex >= 0) {
