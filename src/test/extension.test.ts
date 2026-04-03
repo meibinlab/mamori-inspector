@@ -2598,10 +2598,10 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
   });
 
   /**
-   * 外部実プロジェクトを手動実行したとき、workspace enable 設定に関わらず Diagnostics 件数を計測できること。
+   * 外部実プロジェクトを手動実行したとき、保存時有効設定に関係なく同じ Diagnostics 件数を計測できること。
    * @returns 実行完了を待つ Promise を返す。
    */
-  test('Measures external project diagnostics counts for manual workspace checks with workspace enablement toggled', async function() {
+  test('Measures external project diagnostics counts for manual workspace checks regardless of save-check enablement', async function() {
     this.timeout(180000);
 
     const realProjectRoot = process.env.MAMORI_REAL_PROJECT_ROOT;
@@ -2640,10 +2640,10 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
     }
 
     const manualRunCounts: number[] = [];
-    const runManualWorkspaceCheck = async(enabled: boolean): Promise<number> => {
+    const runManualWorkspaceCheck = async(saveCheckEnabled: boolean): Promise<number> => {
       await activeVscodeApi.workspace.getConfiguration('mamori-inspector', externalWorkspaceUri).update(
         'enabled',
-        enabled,
+        saveCheckEnabled,
         activeVscodeApi.ConfigurationTarget.WorkspaceFolder,
       );
 

@@ -95,6 +95,11 @@ SpotBugsの例外仕様（確定）:
 - class files（例: `target/classes` や `build/classes/java/main`）が見つからない場合は警告ログを出してスキップし、pushは継続する
 
 ### 3.4 手動（manual、将来対応あり）
+手動実行の前提（確定）:
+- `mamori-inspector.enabled` は保存時検証だけを制御する
+- `Mamori Inspector: Run Workspace Check` は保存時設定に関係なく実行できる
+- そのため、保存時検証を無効にしたワークスペースでも、手動実行では同じ workspace finding を Problems に反映できる
+
 優先実装:
 - OWASP Dependency-Check
 - Trivy

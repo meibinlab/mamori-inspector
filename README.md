@@ -58,6 +58,7 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 - `prepush/workspace` includes HTML inline script blocks in ESLint by using temporary JavaScript files and reporting findings on the original HTML locations.
 - `manual/workspace` currently reuses the lightweight Java check plan until the heavy manual tools are added.
 - The command `Mamori Inspector: Run Workspace Check` executes a workspace-wide manual check and publishes diagnostics from the generated SARIF.
+- Manual workspace checks remain available even when automatic save-time validation is disabled for the workspace folder, so a manual run can publish the same diagnostics regardless of the save-time enablement setting.
 - The commands `Mamori Inspector: Enable In Workspace` and `Mamori Inspector: Disable In Workspace` toggle automatic save-time validation per workspace folder. The default is disabled.
 - The command `Mamori Inspector: Setup Managed Tools` downloads the managed Maven, Gradle, Semgrep, Prettier, ESLint, Stylelint, and htmlhint toolchain into the workspace cache.
 - The command `Mamori Inspector: Clear Managed Tool Cache` removes the managed cache directories under `.mamori/tools` and `.mamori/node`.
@@ -81,11 +82,12 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 | Save | No | Run `Mamori Inspector: Enable In Workspace` | Saved file only | Runs when a supported file is saved in a workspace folder where Mamori Inspector is enabled. |
 | Pre-commit | No | Run `Mamori Inspector: Install Git Hooks` | Staged files only | Blocks commit on validation failure. |
 | Pre-push | No | Run `Mamori Inspector: Install Git Hooks` | Workspace | Blocks push on validation failure, except SpotBugs skip conditions defined in the spec. |
-| Manual | No | None | Workspace | Run with `Mamori Inspector: Run Workspace Check`. |
+| Manual | No | None | Workspace | Run with `Mamori Inspector: Run Workspace Check`. This command is available regardless of the save-time enablement setting. |
 
 ## Save Validation Versus Git Hook Validation
 - Save validation does not start until the target workspace folder is enabled with `Mamori Inspector: Enable In Workspace`, and then runs only for the file being saved.
 - Save validation is intended for fast editor feedback and updates VS Code Problems from the generated SARIF.
+- Manual workspace checks are independent from the save-time enablement setting and can update VS Code Problems even when save validation is disabled for that workspace folder.
 - Git hook validation does not run until the managed hooks are installed.
 - Pre-commit validation runs on staged files only and re-stages formatter changes automatically.
 - Pre-push validation runs on the workspace scope and acts as a broader gate before pushing changes.
