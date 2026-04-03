@@ -6,7 +6,35 @@
 
 ## [Unreleased]
 
+## [0.2.10] - 2026-04-03
+
+### Added
+- manual/workspace が部分成功になった場合でも Diagnostics を維持できる回帰テストを追加しました。
+
+### Fixed
+- manual/workspace 実行で一部ツールが終了コード 2 を返しても、更新済みの SARIF があれば Problems へ finding を反映できるようにしました。
+
+## [Unreleased]
+
 - なし
+
+## [0.2.9] - 2026-04-03
+
+### Added
+- manual/workspace で既存 PMD レポートを再利用する回帰テストを追加しました。
+
+### Fixed
+- manual/workspace 実行で、PMD が終了コード 1 を返して標準出力が空でも、既存の `target/pmd.xml` から finding を取り込めるようにしました。
+
+## [0.2.8] - 2026-04-03
+
+### Added
+- ワークスペースフォルダー単位で保存時検証を有効化・無効化する `Enable In Workspace` / `Disable In Workspace` コマンドを追加しました。
+- Mamori Inspector の有効状態をワークスペース設定として保持する回帰テストを追加しました。
+
+### Changed
+- 保存時検証の既定値を無効に変更し、対象ワークスペースで明示的に有効化した場合のみ実行するようにしました。
+- README、README.ja、仕様書を、ワークスペース単位の有効化フローに合わせて更新しました。
 
 ## [0.2.7] - 2026-04-01
 

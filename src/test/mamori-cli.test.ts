@@ -871,6 +871,55 @@ function writeMavenPmdReportWrapper(binDirectory: string, outputFileName: string
 }
 
 /**
+ * 既存 PMD レポートを残したまま pmd:check を失敗終了させるテスト用 Maven ラッパーを作成する。
+ * @param binDirectory ラッパーディレクトリを表す。
+ * @param outputFileName 出力ファイル名を表す。
+ * @returns 返り値はない。
+ */
+function writeMavenExistingPmdReportFailureWrapper(binDirectory: string, outputFileName: string): void {
+  const outputPath = path.join(binDirectory, outputFileName);
+  const pmdXml = '<?xml version="1.0"?><pmd version="7.0.0"><file name="src/main/java/App.java"><violation beginline="3" begincolumn="9" priority="3" rule="UnusedLocalVariable">Unused local variable</violation></file></pmd>';
+  const wrapperPath = process.platform === 'win32'
+    ? path.join(path.dirname(binDirectory), 'mvnw.cmd')
+    : path.join(path.dirname(binDirectory), 'mvnw');
+  const pmdReportPath = path.join(path.dirname(binDirectory), 'target', 'pmd.xml');
+
+  fs.mkdirSync(path.dirname(pmdReportPath), { recursive: true });
+  fs.writeFileSync(pmdReportPath, pmdXml, 'utf8');
+
+  if (process.platform === 'win32') {
+    fs.writeFileSync(
+      wrapperPath,
+      [
+        '@echo off',
+        `echo %*>>"${outputPath}"`,
+        'echo %* | findstr /C:"pmd:check" >nul',
+        'if not errorlevel 1 exit /b 1',
+        'exit /b 0',
+        '',
+      ].join('\r\n'),
+      'utf8',
+    );
+    return;
+  }
+
+  fs.writeFileSync(
+    wrapperPath,
+    [
+      '#!/bin/sh',
+      `printf '%s\n' "$*" >> "${outputPath}"`,
+      'case "$*" in',
+      '  *"pmd:check"*) exit 1 ;;',
+      'esac',
+      'exit 0',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  fs.chmodSync(wrapperPath, 0o755);
+}
+
+/**
  * Checkstyle を既定レポートファイルへ出力するテスト用 Maven ラッパーを作成する。
  * @param binDirectory ラッパーディレクトリを表す。
  * @param outputFileName 出力ファイル名を表す。
@@ -3339,6 +3388,69 @@ suite('Mamori CLI Test Suite', () => {
   });
 
   /**
+   * save/file では、失敗時に以前の PMD レポートを再利用しないこと。
+   * @returns 返り値はない。
+   */
+  test('Does not reuse an existing PMD report file during save checks', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src', 'main', 'java');
+    const targetFilePath = path.join(sourceDirectory, 'App.java');
+    const pomFilePath = path.join(temporaryDirectory, 'pom.xml');
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-save-existing-report.sarif');
+    const semgrepLogPath = path.join(binDirectory, 'semgrep-save-existing-report.log');
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.writeFileSync(targetFilePath, 'class App {}\n', 'utf8');
+    fs.writeFileSync(
+      pomFilePath,
+      [
+        '<project>',
+        '  <build>',
+        '    <plugins>',
+        '      <plugin><artifactId>maven-pmd-plugin</artifactId></plugin>',
+        '    </plugins>',
+        '  </build>',
+        '</project>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    writeMavenExistingPmdReportFailureWrapper(binDirectory, 'mvn-save-existing-report.log');
+    writeSemgrepSarifWrapper(binDirectory, 'semgrep-save-existing-report.log');
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      [
+        'run',
+        '--mode',
+        'save',
+        '--scope',
+        'file',
+        '--files',
+        path.relative(temporaryDirectory, targetFilePath),
+        '--execute',
+        '--sarif-output',
+        path.relative(temporaryDirectory, sarifOutputPath),
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(binDirectory),
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /pmd:failed exitCode=1/u);
+    assert.doesNotMatch(result.stdout, /Unused local variable/u);
+    assert.match(fs.readFileSync(semgrepLogPath, 'utf8'), /scan --sarif --config p\/java/u);
+    assert.ok(fs.existsSync(path.join(temporaryDirectory, 'target', 'pmd.xml')));
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.doesNotMatch(fs.readFileSync(sarifOutputPath, 'utf8'), /Unused local variable/u);
+  });
+
+  /**
    * save で生成された Checkstyle 既定レポートから finding を SARIF 化できること。
    * @returns 返り値はない。
    */
@@ -3405,6 +3517,67 @@ suite('Mamori CLI Test Suite', () => {
     assert.ok(fs.existsSync(path.join(temporaryDirectory, 'target', 'checkstyle-result.xml')));
     assert.ok(fs.existsSync(sarifOutputPath));
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Missing Javadoc/u);
+  });
+
+  /**
+   * manual/workspace で既存 PMD レポートだけが残っている場合でも finding を SARIF 化できること。
+   * @returns 返り値はない。
+   */
+  test('Loads PMD findings from an existing Maven report file during manual workspace checks', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src', 'main', 'java');
+    const targetFilePath = path.join(sourceDirectory, 'App.java');
+    const pomFilePath = path.join(temporaryDirectory, 'pom.xml');
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-manual-existing-report.sarif');
+    const semgrepLogPath = path.join(binDirectory, 'semgrep-manual-existing-report.log');
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.writeFileSync(targetFilePath, 'class App {}\n', 'utf8');
+    fs.writeFileSync(
+      pomFilePath,
+      [
+        '<project>',
+        '  <build>',
+        '    <plugins>',
+        '      <plugin><artifactId>maven-pmd-plugin</artifactId></plugin>',
+        '    </plugins>',
+        '  </build>',
+        '</project>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    writeMavenExistingPmdReportFailureWrapper(binDirectory, 'mvn-manual-existing-report.log');
+    writeSemgrepSarifWrapper(binDirectory, 'semgrep-manual-existing-report.log');
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      [
+        'run',
+        '--mode',
+        'manual',
+        '--scope',
+        'workspace',
+        '--execute',
+        '--sarif-output',
+        path.relative(temporaryDirectory, sarifOutputPath),
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(binDirectory),
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /pmd:failed exitCode=1/u);
+    assert.match(result.stdout, /Unused local variable/u);
+    assert.match(fs.readFileSync(semgrepLogPath, 'utf8'), /scan --sarif --config p\/java/u);
+    assert.ok(fs.existsSync(path.join(temporaryDirectory, 'target', 'pmd.xml')));
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Unused local variable/u);
   });
 
   /**

@@ -3,7 +3,7 @@
   "displayName": "Mamori Inspector",
   "description": "Unified code inspection platform for VS Code",
   "publisher": "meibinlab",
-  "version": "0.2.7",
+  "version": "0.2.10",
   "license": "MIT",
   "engines": {
     "vscode": "^1.109.0"
@@ -43,6 +43,14 @@
   "contributes": {
     "commands": [
       {
+        "command": "mamori-inspector.enableInWorkspace",
+        "title": "Mamori Inspector: Enable In Workspace"
+      },
+      {
+        "command": "mamori-inspector.disableInWorkspace",
+        "title": "Mamori Inspector: Disable In Workspace"
+      },
+      {
         "command": "mamori-inspector.runWorkspaceCheck",
         "title": "Mamori Inspector: Run Workspace Check"
       },
@@ -62,7 +70,18 @@
         "command": "mamori-inspector.uninstallGitHooks",
         "title": "Mamori Inspector: Uninstall Git Hooks"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Mamori Inspector",
+      "properties": {
+        "mamori-inspector.enabled": {
+          "type": "boolean",
+          "default": false,
+          "scope": "resource",
+          "markdownDescription": "Enable Mamori Inspector automatic save checks for the current workspace folder."
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
