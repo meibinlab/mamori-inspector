@@ -6,6 +6,49 @@
 
 ## [Unreleased]
 
+## [0.2.17] - 2026-04-04
+
+### Added
+- ワークスペースルートにスペースを含む Windows setup 回帰テストを追加しました。
+
+### Fixed
+- Windows の `.cmd` / `.bat` を setup で実行する際、`.mamori/node` などのスペースを含む引数が分割されないように、`cmd.exe` へ明示的にクォート済みコマンドラインを渡すようにしました。
+
+## [0.2.16] - 2026-04-04
+
+### Added
+- `mamori.js cache-clear` が `.mamori/tools` 配下のランタイム補助ファイルを残す回帰テストを追加しました。
+
+### Fixed
+- Windows で Gradle や Maven の管理配布物を setup する際、一時ディレクトリの rename が `EPERM` などで失敗してもコピーへフォールバックして完了できるようにしました。
+- `Mamori Inspector: Clear Managed Tool Cache` と `mamori.js cache-clear` が `.mamori/tools` 配下の管理キャッシュだけを削除し、同ディレクトリ内のランタイム補助ファイルを残すようにしました。
+- 管理対象 Node ツールを逐次 setup しても最後の 1 パッケージだけ残ることがないよう、`npm install` を保持前提の導入方式へ修正しました。
+- `setup` で導入した管理キャッシュ配下の vendored ファイルを ESLint 対象外にし、開発時の `npm test` が setup 後でも失敗しないようにしました。
+
+## [0.2.15] - 2026-04-04
+
+### Added
+- Windows で `npm` と `npm.cmd` が同じディレクトリにある setup 回帰テストを追加しました。
+
+### Fixed
+- `Mamori Inspector: Setup Managed Tools` で Windows の PATH 解決時に拡張子なし `npm` より `.cmd` / `.bat` を優先し、`spawnSync C:\Program Files\nodejs\npm ENOENT` を回避するようにしました。
+
+## [0.2.14] - 2026-04-04
+
+### Added
+- `MAMORI_TOOL_PYTHON_COMMAND` に Windows の拡張子なしパスを渡した setup 回帰テストを追加しました。
+
+### Fixed
+- 管理ツール setup の同期プロセス実行で、Windows の拡張子なし `.cmd` / `.bat` パスを自動解決して実行できるようにしました。
+
+## [0.2.13] - 2026-04-04
+
+### Added
+- `MAMORI_TOOL_NPM_COMMAND` に Windows の拡張子なしパスを渡した setup 回帰テストを追加しました。
+
+### Fixed
+- `Mamori Inspector: Setup Managed Tools` で、`MAMORI_TOOL_NPM_COMMAND` に `C:\Program Files\nodejs\npm` のような拡張子なしパスが渡されても、Windows では `.cmd` を補完して実行できるようにしました。
+
 ## [0.2.12] - 2026-04-04
 
 ### Fixed

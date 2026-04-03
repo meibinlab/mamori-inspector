@@ -223,7 +223,7 @@ warning の例:
 - セットアップ（Java系ツールDL、`.mamori/node` のnpm導入を明示実行）
 - Git hooks インストール / アンインストール
 - 手動全体チェック（manual）
-- キャッシュ削除（`.mamori/tools` / `.mamori/node`）
+- キャッシュ削除（`.mamori/tools` 配下の管理キャッシュディレクトリ / `.mamori/node`）
 
 Git hooks コマンドの通知仕様（確定）:
 - install / uninstall が成功した場合は情報通知を表示する
