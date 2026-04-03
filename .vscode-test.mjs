@@ -23,7 +23,13 @@ const isolatedLaunchArguments = isIsolatedRun
 // 隔離実行向けの環境変数を表す
 const isolatedEnvironment = isIsolatedRun
   ? {
+      ...process.env,
       MAMORI_CLI_NODE_PATH: process.execPath,
+      ...(process.env.MAMORI_REAL_PROJECT_ROOT
+        ? {
+            MAMORI_REAL_PROJECT_ROOT: process.env.MAMORI_REAL_PROJECT_ROOT,
+          }
+        : {}),
     }
   : undefined;
 

@@ -19,6 +19,10 @@
 ## 3. 実行タイミング別の構成（確定）
 
 ### 3.1 保存時（on save, scope=file）
+保存時検証の有効条件（確定）:
+- ワークスペース単位の設定 `mamori-inspector.enabled` が `true` の場合のみ実行する
+- 既定値は `false` とし、拡張コマンドで切り替える
+
 実行順序（確定）:
 1) 整形（自動適用、非同期）
 2) チェック
@@ -210,6 +214,7 @@ warning の例:
 - `pre-push is not managed by Mamori Inspector and was left unchanged`
 
 ## 10. コマンド（拡張が提供）
+- ワークスペース単位の保存時検証 有効化 / 無効化
 - セットアップ（Java系ツールDL、`.mamori/node` のnpm導入を明示実行）
 - Git hooks インストール / アンインストール
 - 手動全体チェック（manual）

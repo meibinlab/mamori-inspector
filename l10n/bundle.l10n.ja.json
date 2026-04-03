@@ -18,5 +18,9 @@
   "Mamori Inspector: No available workspace folders were found.": "Mamori Inspector: 利用可能なワークスペースがありません。",
   "Running Mamori Inspector": "Mamori Inspector を実行中",
   "Mamori Inspector: Reflected {0} diagnostics.": "Mamori Inspector: {0} 件の問題を反映しました。",
-  "Mamori Inspector: Execution failed. {0}": "Mamori Inspector: 実行に失敗しました。{0}"
+  "Mamori Inspector: Reflected {0} diagnostics with partial errors. See the output channel for details.": "Mamori Inspector: {0} 件の問題を反映しましたが、一部エラーがありました。詳細は出力チャネルを確認してください。",
+  "Mamori Inspector: Execution failed. {0}": "Mamori Inspector: 実行に失敗しました。{0}",
+  "Mamori Inspector: Enabled in workspace \"{0}\".": "Mamori Inspector: ワークスペース \"{0}\" で有効にしました。",
+  "Mamori Inspector: Disabled in workspace \"{0}\".": "Mamori Inspector: ワークスペース \"{0}\" で無効にしました。",
+  "Mamori Inspector: Failed to update workspace enablement. {0}": "Mamori Inspector: ワークスペースの有効状態更新に失敗しました。{0}"
 }

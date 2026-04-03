@@ -19,6 +19,10 @@ import { SaveCheckScheduler } from './save-check-scheduler';
 
 // 診断コレクション名を表す
 const DIAGNOSTIC_COLLECTION_NAME = 'mamori-inspector';
+// 拡張設定セクション名を表す
+const EXTENSION_CONFIGURATION_SECTION = 'mamori-inspector';
+// 有効化設定キー名を表す
+const ENABLED_CONFIGURATION_KEY = 'enabled';
 // 手動実行向けの SARIF 出力先を表す
 const MANUAL_SARIF_OUTPUT = path.join('.mamori', 'out', 'combined.sarif');
 // 保存時実行向けの SARIF 出力先を表す
@@ -258,6 +262,19 @@ function getWorkspaceCheckSuccessMessage(diagnosticsCount: number): string {
 }
 
 /**
+ * 手動実行が部分成功した場合の警告通知文言を返す。
+ * @param diagnosticsCount 診断件数を表す。
+ * @returns 警告通知文言を返す。
+ */
+function getWorkspaceCheckPartialSuccessMessage(diagnosticsCount: number): string {
+  return localize(
+    'Mamori Inspector: Reflected {0} diagnostics with partial errors. See the output channel for details.',
+    'Warning message shown after a manual workspace check publishes diagnostics with partial errors.',
+    [diagnosticsCount],
+  );
+}
+
+/**
  * 手動実行失敗通知文言を返す。
  * @param details 失敗詳細を表す。
  * @returns エラー通知文言を返す。
@@ -266,6 +283,39 @@ function getWorkspaceCheckFailureMessage(details: string): string {
   return localize(
     'Mamori Inspector: Execution failed. {0}',
     'Error message shown when a manual workspace check fails.',
+    [details],
+  );
+}
+
+/**
+ * ワークスペース有効化の成功通知文言を返す。
+ * @param enabled 有効化後の状態を表す。
+ * @param workspaceFolderName 対象ワークスペース名を表す。
+ * @returns 情報通知文言を返す。
+ */
+function getWorkspaceEnablementSuccessMessage(enabled: boolean, workspaceFolderName: string): string {
+  return enabled
+    ? localize(
+      'Mamori Inspector: Enabled in workspace "{0}".',
+      'Information message shown after enabling Mamori Inspector in a workspace folder.',
+      [workspaceFolderName],
+    )
+    : localize(
+      'Mamori Inspector: Disabled in workspace "{0}".',
+      'Information message shown after disabling Mamori Inspector in a workspace folder.',
+      [workspaceFolderName],
+    );
+}
+
+/**
+ * ワークスペース有効化の更新失敗通知文言を返す。
+ * @param details 失敗詳細を表す。
+ * @returns エラー通知文言を返す。
+ */
+function getWorkspaceEnablementFailureMessage(details: string): string {
+  return localize(
+    'Mamori Inspector: Failed to update workspace enablement. {0}',
+    'Error message shown when updating workspace enablement fails.',
     [details],
   );
 }
@@ -282,6 +332,10 @@ interface MamoriCliRunOptions {
   sarifOutputPath: string;
   /** 対象ファイル一覧を表す。 */
   files?: string[];
+  /**
+   * manual/workspace 実行で、更新済み SARIF があれば部分成功として扱うかを表す。
+   */
+  allowPartialResultsOnError?: boolean;
 }
 
 /**
@@ -292,6 +346,57 @@ interface MamoriCliCommandResult {
   stdout: string;
   /** 標準エラー出力を表す。 */
   stderr: string;
+  /** 終了コードを表す。 */
+  exitCode: number;
+  /** 部分成功時のエラー詳細を表す。 */
+  partialErrorMessage?: string;
+}
+
+/**
+ * 比較用のファイル状態を返す。
+ * @param filePath 対象ファイルパスを表す。
+ * @returns 取得できたファイル状態を返す。
+ */
+function getFileSnapshot(filePath: string | undefined): fs.Stats | undefined {
+  if (!filePath || !fs.existsSync(filePath)) {
+    return undefined;
+  }
+
+  try {
+    return fs.statSync(filePath);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * 実行中に結果ファイルが更新されたか判定する。
+ * @param filePath 対象ファイルパスを表す。
+ * @param initialSnapshot 実行前のファイル状態を表す。
+ * @returns 更新されていれば true を返す。
+ */
+function didUpdateFile(filePath: string | undefined, initialSnapshot: fs.Stats | undefined): boolean {
+  const currentSnapshot = getFileSnapshot(filePath);
+  if (!currentSnapshot) {
+    return false;
+  }
+
+  if (!initialSnapshot) {
+    return true;
+  }
+
+  return currentSnapshot.mtimeMs !== initialSnapshot.mtimeMs
+    || currentSnapshot.size !== initialSnapshot.size;
+}
+
+/**
+ * Mamori CLI 実行オプションを表す。
+ */
+interface MamoriCliCommandExecutionOptions {
+  /** manual/workspace 実行で、更新済みの結果ファイルを部分成功として扱うかを表す。 */
+  allowPartialResultsOnError?: boolean;
+  /** 部分成功判定に使う結果ファイルパスを表す。 */
+  partialResultPath?: string;
 }
 
 /**
@@ -307,6 +412,16 @@ interface DiagnosticsByUriEntry {
   uri: vscode.Uri;
   /** Diagnostics 一覧を表す。 */
   diagnostics: vscode.Diagnostic[];
+}
+
+/**
+ * 実行種別ごとの Diagnostics 保持状態を表す。
+ */
+interface DiagnosticsState {
+  /** 手動実行由来の Diagnostics を表す。 */
+  manualDiagnosticsByUri: Map<string, DiagnosticsByUriEntry>;
+  /** 保存時実行由来の Diagnostics を表す。 */
+  saveDiagnosticsByUri: Map<string, DiagnosticsByUriEntry>;
 }
 
 /**
@@ -482,7 +597,15 @@ function runMamoriCli(
   options: MamoriCliRunOptions,
   extensionRootPath: string,
 ): Promise<MamoriCliCommandResult> {
-  return runMamoriCliCommand(workspaceFolder, buildMamoriCliArguments(options), extensionRootPath);
+  return runMamoriCliCommand(
+    workspaceFolder,
+    buildMamoriCliArguments(options),
+    extensionRootPath,
+    {
+      allowPartialResultsOnError: options.allowPartialResultsOnError === true,
+      partialResultPath: options.sarifOutputPath,
+    },
+  );
 }
 
 /**
@@ -495,9 +618,11 @@ function runMamoriCliCommand(
   workspaceFolder: vscode.WorkspaceFolder,
   argumentsList: string[],
   extensionRootPath: string,
+  executionOptions?: MamoriCliCommandExecutionOptions,
 ): Promise<MamoriCliCommandResult> {
   const cliPath = getMamoriCliPath(workspaceFolder, extensionRootPath);
   const cliExecutablePath = getMamoriCliExecutablePath();
+  const initialPartialResultSnapshot = getFileSnapshot(executionOptions?.partialResultPath);
 
   return new Promise((resolve, reject) => {
     if (!fs.existsSync(workspaceFolder.uri.fsPath)) {
@@ -538,11 +663,27 @@ function runMamoriCliCommand(
     });
 
     child.on('close', (code) => {
-      if (typeof code === 'number' && code <= 1) {
-        resolve({ stdout, stderr });
+      const exitCode = typeof code === 'number' ? code : -1;
+      if (exitCode <= 1) {
+        resolve({ stdout, stderr, exitCode });
         return;
       }
-      reject(new Error(getMamoriCliFailureMessage(stdout, stderr, code ?? null)));
+
+      const failureMessage = getMamoriCliFailureMessage(stdout, stderr, code ?? null);
+      if (
+        executionOptions?.allowPartialResultsOnError
+        && didUpdateFile(executionOptions.partialResultPath, initialPartialResultSnapshot)
+      ) {
+        resolve({
+          stdout,
+          stderr,
+          exitCode,
+          partialErrorMessage: failureMessage,
+        });
+        return;
+      }
+
+      reject(new Error(failureMessage));
     });
   });
 }
@@ -772,9 +913,103 @@ function mergeDiagnosticsByUri(
       uri: entry.uri,
       diagnostics: [],
     };
-    existing.diagnostics.push(...entry.diagnostics);
+    const existingDiagnosticKeys = new Set(existing.diagnostics.map((diagnostic) => buildDiagnosticKey(diagnostic)));
+    for (const diagnostic of entry.diagnostics) {
+      const diagnosticKey = buildDiagnosticKey(diagnostic);
+      if (existingDiagnosticKeys.has(diagnosticKey)) {
+        continue;
+      }
+      existing.diagnostics.push(diagnostic);
+      existingDiagnosticKeys.add(diagnosticKey);
+    }
     target.set(uriKey, existing);
   }
+}
+
+/**
+ * Diagnostics の重複判定に使うキーを返す。
+ * @param diagnostic 対象 Diagnostics を表す。
+ * @returns 重複判定キーを返す。
+ */
+function buildDiagnosticKey(diagnostic: vscode.Diagnostic): string {
+  const code = typeof diagnostic.code === 'string'
+    ? diagnostic.code
+    : typeof diagnostic.code === 'number'
+      ? String(diagnostic.code)
+      : diagnostic.code && typeof diagnostic.code === 'object' && 'value' in diagnostic.code
+        ? String(diagnostic.code.value)
+        : '';
+  return [
+    diagnostic.range.start.line,
+    diagnostic.range.start.character,
+    diagnostic.range.end.line,
+    diagnostic.range.end.character,
+    diagnostic.severity,
+    code,
+    diagnostic.message,
+  ].join(':');
+}
+
+/**
+ * 対象ワークスペースの Diagnostics を保持マップから削除する。
+ * @param diagnosticsByUri URI ごとの Diagnostics を表す。
+ * @param workspaceFolder 対象ワークスペースフォルダーを表す。
+ * @returns 返り値はない。
+ */
+function clearWorkspaceDiagnosticsByUri(
+  diagnosticsByUri: Map<string, DiagnosticsByUriEntry>,
+  workspaceFolder: vscode.WorkspaceFolder,
+): void {
+  for (const [uriKey, entry] of diagnosticsByUri.entries()) {
+    if (getWorkspaceFolderForUri(entry.uri)?.uri.toString() === workspaceFolder.uri.toString()) {
+      diagnosticsByUri.delete(uriKey);
+    }
+  }
+}
+
+/**
+ * 対象ワークスペースの Diagnostics を最新結果へ置き換える。
+ * @param target 集約先を表す。
+ * @param workspaceFolder 対象ワークスペースフォルダーを表す。
+ * @param source 最新結果を表す。
+ * @returns 返り値はない。
+ */
+function replaceWorkspaceDiagnosticsByUri(
+  target: Map<string, DiagnosticsByUriEntry>,
+  workspaceFolder: vscode.WorkspaceFolder,
+  source: Map<string, DiagnosticsByUriEntry>,
+): void {
+  clearWorkspaceDiagnosticsByUri(target, workspaceFolder);
+  for (const [uriKey, entry] of source.entries()) {
+    target.set(uriKey, entry);
+  }
+}
+
+/**
+ * Diagnostics 保持状態を URI ごとにマージする。
+ * @param diagnosticsState 保持状態を表す。
+ * @returns マージ済み Diagnostics を返す。
+ */
+function buildMergedDiagnosticsByUri(
+  diagnosticsState: DiagnosticsState,
+): Map<string, DiagnosticsByUriEntry> {
+  const mergedDiagnosticsByUri = new Map<string, DiagnosticsByUriEntry>();
+  mergeDiagnosticsByUri(mergedDiagnosticsByUri, diagnosticsState.manualDiagnosticsByUri);
+  mergeDiagnosticsByUri(mergedDiagnosticsByUri, diagnosticsState.saveDiagnosticsByUri);
+  return mergedDiagnosticsByUri;
+}
+
+/**
+ * Diagnostics 一覧の件数を数える。
+ * @param diagnosticsByUri URI ごとの Diagnostics を表す。
+ * @returns Diagnostics 件数を返す。
+ */
+function countDiagnosticsByUri(diagnosticsByUri: Map<string, DiagnosticsByUriEntry>): number {
+  let diagnosticsCount = 0;
+  for (const entry of diagnosticsByUri.values()) {
+    diagnosticsCount += entry.diagnostics.length;
+  }
+  return diagnosticsCount;
 }
 
 /**
@@ -799,20 +1034,16 @@ function publishCollectedDiagnostics(
 }
 
 /**
- * SARIF の内容を DiagnosticsCollection へ反映する。
- * @param workspaceFolder ワークスペースフォルダーを表す。
+ * Diagnostics 保持状態を DiagnosticsCollection へ反映する。
  * @param diagnosticCollection 診断コレクションを表す。
+ * @param diagnosticsState Diagnostics 保持状態を表す。
  * @returns 反映件数を返す。
  */
-function publishDiagnostics(
-  workspaceFolder: vscode.WorkspaceFolder,
+function publishTrackedDiagnostics(
   diagnosticCollection: vscode.DiagnosticCollection,
-  sarifPath: string,
+  diagnosticsState: DiagnosticsState,
 ): number {
-  return publishCollectedDiagnostics(
-    diagnosticCollection,
-    buildDiagnosticsByUri(workspaceFolder, sarifPath),
-  );
+  return publishCollectedDiagnostics(diagnosticCollection, buildMergedDiagnosticsByUri(diagnosticsState));
 }
 
 /**
@@ -825,14 +1056,66 @@ function getWorkspaceFolderForUri(resourceUri: vscode.Uri): vscode.WorkspaceFold
 }
 
 /**
+ * 対象ワークスペースの Mamori 設定を返す。
+ * @param workspaceFolder ワークスペースフォルダーを表す。
+ * @returns Mamori 設定を返す。
+ */
+function getMamoriConfiguration(workspaceFolder: vscode.WorkspaceFolder): vscode.WorkspaceConfiguration {
+  return vscode.workspace.getConfiguration(EXTENSION_CONFIGURATION_SECTION, workspaceFolder.uri);
+}
+
+/**
+ * 対象ワークスペースで Mamori Inspector が有効か判定する。
+ * @param workspaceFolder ワークスペースフォルダーを表す。
+ * @returns 有効な場合は true を返す。
+ */
+function isWorkspaceEnabled(workspaceFolder: vscode.WorkspaceFolder): boolean {
+  return getMamoriConfiguration(workspaceFolder).get<boolean>(ENABLED_CONFIGURATION_KEY, false);
+}
+
+/**
+ * 対象ワークスペースの有効化設定を更新する。
+ * @param workspaceFolder ワークスペースフォルダーを表す。
+ * @param enabled 設定する有効状態を表す。
+ * @returns 更新完了を待つ Promise を返す。
+ */
+async function updateWorkspaceEnabledSetting(
+  workspaceFolder: vscode.WorkspaceFolder,
+  enabled: boolean,
+): Promise<void> {
+  await getMamoriConfiguration(workspaceFolder).update(
+    ENABLED_CONFIGURATION_KEY,
+    enabled,
+    vscode.ConfigurationTarget.WorkspaceFolder,
+  );
+}
+
+/**
+ * 対象ワークスペースに属する Diagnostics を削除する。
+ * @param diagnosticCollection 診断コレクションを表す。
+ * @param workspaceFolder 対象ワークスペースフォルダーを表す。
+ * @returns 返り値はない。
+ */
+function clearDiagnosticsForWorkspaceFolder(
+  diagnosticsState: DiagnosticsState,
+  diagnosticCollection: vscode.DiagnosticCollection,
+  workspaceFolder: vscode.WorkspaceFolder,
+): void {
+  clearWorkspaceDiagnosticsByUri(diagnosticsState.saveDiagnosticsByUri, workspaceFolder);
+  publishTrackedDiagnostics(diagnosticCollection, diagnosticsState);
+}
+
+/**
  * 保存時自動チェック対象か判定する。
  * @param document 対象ドキュメントを表す。
  * @returns 対象なら true を返す。
  */
 function shouldRunAutomaticSaveCheck(document: vscode.TextDocument): boolean {
+  const workspaceFolder = getWorkspaceFolderForUri(document.uri);
   return document.uri.scheme === 'file'
     && AUTO_SAVE_LANGUAGE_IDS.has(document.languageId)
-    && Boolean(vscode.workspace.getWorkspaceFolder(document.uri));
+    && Boolean(workspaceFolder)
+    && Boolean(workspaceFolder && isWorkspaceEnabled(workspaceFolder));
 }
 
 /**
@@ -855,6 +1138,7 @@ function shouldQueueSaveCheckWhileRunning(filePath: string): boolean {
 async function runSaveCheck(
   workspaceFolder: vscode.WorkspaceFolder,
   filePath: string,
+  diagnosticsState: DiagnosticsState,
   diagnosticCollection: vscode.DiagnosticCollection,
   outputChannel: vscode.OutputChannel,
   extensionRootPath: string,
@@ -868,9 +1152,19 @@ async function runSaveCheck(
       files: [filePath],
       sarifOutputPath: sarifPath,
     }, extensionRootPath);
-    const diagnosticsCount = publishDiagnostics(workspaceFolder, diagnosticCollection, sarifPath);
+    if (!isWorkspaceEnabled(workspaceFolder)) {
+      return;
+    }
+
+    const saveDiagnosticsByUri = buildDiagnosticsByUri(workspaceFolder, sarifPath);
+    replaceWorkspaceDiagnosticsByUri(
+      diagnosticsState.saveDiagnosticsByUri,
+      workspaceFolder,
+      saveDiagnosticsByUri,
+    );
+    publishTrackedDiagnostics(diagnosticCollection, diagnosticsState);
     void vscode.window.setStatusBarMessage(
-      getSaveCheckStatusMessage(diagnosticsCount),
+      getSaveCheckStatusMessage(countDiagnosticsByUri(saveDiagnosticsByUri)),
       3000,
     );
   } catch (error) {
@@ -888,6 +1182,7 @@ async function runSaveCheck(
  * @returns コマンド本体を返す。
  */
 function createRunWorkspaceCheckCommand(
+  diagnosticsState: DiagnosticsState,
   diagnosticCollection: vscode.DiagnosticCollection,
   outputChannel: vscode.OutputChannel,
   extensionRootPath: string,
@@ -901,7 +1196,8 @@ function createRunWorkspaceCheckCommand(
 
     const existingWorkspaceFolders = filterExistingWorkspaceFolders(workspaceFolders, outputChannel);
     if (existingWorkspaceFolders.length === 0) {
-      diagnosticCollection.clear();
+      diagnosticsState.manualDiagnosticsByUri.clear();
+      publishTrackedDiagnostics(diagnosticCollection, diagnosticsState);
       void vscode.window.showWarningMessage(getNoAvailableWorkspaceMessage());
       return;
     }
@@ -911,6 +1207,7 @@ function createRunWorkspaceCheckCommand(
         workspaceFolder,
         sarifPath: getSarifOutputPath(workspaceFolder, MANUAL_SARIF_OUTPUT),
       }));
+      const partialErrorMessages: string[] = [];
       await vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
@@ -923,11 +1220,17 @@ function createRunWorkspaceCheckCommand(
               increment: 100 / sarifOutputs.length,
               message: `${sarifOutput.workspaceFolder.name} (${String(index + 1)}/${String(sarifOutputs.length)})`,
             });
-            await runMamoriCli(sarifOutput.workspaceFolder, {
+            const commandResult = await runMamoriCli(sarifOutput.workspaceFolder, {
               mode: 'manual',
               scope: 'workspace',
               sarifOutputPath: sarifOutput.sarifPath,
+              allowPartialResultsOnError: true,
             }, extensionRootPath);
+            if (commandResult.partialErrorMessage) {
+              partialErrorMessages.push(
+                `${sarifOutput.workspaceFolder.uri.fsPath}: ${commandResult.partialErrorMessage}`,
+              );
+            }
           }
         },
       );
@@ -940,15 +1243,60 @@ function createRunWorkspaceCheckCommand(
         );
       }
 
-      const diagnosticsCount = publishCollectedDiagnostics(diagnosticCollection, diagnosticsByUri);
-      void vscode.window.showInformationMessage(getWorkspaceCheckSuccessMessage(diagnosticsCount));
+      diagnosticsState.manualDiagnosticsByUri.clear();
+      mergeDiagnosticsByUri(diagnosticsState.manualDiagnosticsByUri, diagnosticsByUri);
+      const diagnosticsCount = publishTrackedDiagnostics(diagnosticCollection, diagnosticsState);
+      for (const partialErrorMessage of partialErrorMessages) {
+        outputChannel.appendLine(
+          `Mamori Inspector workspace check completed with partial errors: ${partialErrorMessage}`,
+        );
+      }
+      if (partialErrorMessages.length > 0) {
+        void vscode.window.showWarningMessage(getWorkspaceCheckPartialSuccessMessage(diagnosticsCount));
+      } else {
+        void vscode.window.showInformationMessage(getWorkspaceCheckSuccessMessage(diagnosticsCount));
+      }
     } catch (error) {
       const details = error instanceof Error ? error.message : String(error);
-      diagnosticCollection.clear();
+      diagnosticsState.manualDiagnosticsByUri.clear();
+      publishTrackedDiagnostics(diagnosticCollection, diagnosticsState);
       outputChannel.appendLine(
         `Mamori Inspector workspace check failed: ${details}`,
       );
       void vscode.window.showErrorMessage(getWorkspaceCheckFailureMessage(details));
+    }
+  };
+}
+
+/**
+ * ワークスペース単位の有効化コマンドを作成する。
+ * @param enabled 設定する有効状態を表す。
+ * @param diagnosticCollection 診断コレクションを表す。
+ * @returns コマンド本体を返す。
+ */
+function createSetWorkspaceEnablementCommand(
+  enabled: boolean,
+  diagnosticsState: DiagnosticsState,
+  diagnosticCollection: vscode.DiagnosticCollection,
+): () => Promise<void> {
+  return async() => {
+    const workspaceFolder = await resolveWorkspaceFolderForSingleTargetCommand();
+    if (!workspaceFolder) {
+      void vscode.window.showWarningMessage(getOpenWorkspaceMessage());
+      return;
+    }
+
+    try {
+      await updateWorkspaceEnabledSetting(workspaceFolder, enabled);
+      if (!enabled) {
+        clearDiagnosticsForWorkspaceFolder(diagnosticsState, diagnosticCollection, workspaceFolder);
+      }
+      void vscode.window.showInformationMessage(
+        getWorkspaceEnablementSuccessMessage(enabled, workspaceFolder.name),
+      );
+    } catch (error) {
+      const details = error instanceof Error ? error.message : String(error);
+      void vscode.window.showErrorMessage(getWorkspaceEnablementFailureMessage(details));
     }
   };
 }
@@ -962,17 +1310,28 @@ export function activate(context: vscode.ExtensionContext): void {
   const diagnosticCollection = vscode.languages.createDiagnosticCollection(DIAGNOSTIC_COLLECTION_NAME);
   const outputChannel = vscode.window.createOutputChannel('Mamori Inspector');
   const extensionRootPath = context.extensionUri.fsPath;
+  const diagnosticsState: DiagnosticsState = {
+    manualDiagnosticsByUri: new Map<string, DiagnosticsByUriEntry>(),
+    saveDiagnosticsByUri: new Map<string, DiagnosticsByUriEntry>(),
+  };
   const saveCheckScheduler = new SaveCheckScheduler({
     debounceMilliseconds: SAVE_DEBOUNCE_MILLISECONDS,
     suppressionMilliseconds: SAVE_SUPPRESSION_MILLISECONDS,
     shouldQueueDuringRun: shouldQueueSaveCheckWhileRunning,
     executeCheck: async(filePath: string) => {
       const workspaceFolder = getWorkspaceFolderForUri(vscode.Uri.file(filePath));
-      if (!workspaceFolder) {
+      if (!workspaceFolder || !isWorkspaceEnabled(workspaceFolder)) {
         return;
       }
 
-      await runSaveCheck(workspaceFolder, filePath, diagnosticCollection, outputChannel, extensionRootPath);
+      await runSaveCheck(
+        workspaceFolder,
+        filePath,
+        diagnosticsState,
+        diagnosticCollection,
+        outputChannel,
+        extensionRootPath,
+      );
     },
   });
 
@@ -983,8 +1342,25 @@ export function activate(context: vscode.ExtensionContext): void {
   });
   context.subscriptions.push(
     vscode.commands.registerCommand(
+      'mamori-inspector.enableInWorkspace',
+      createSetWorkspaceEnablementCommand(true, diagnosticsState, diagnosticCollection),
+    ),
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'mamori-inspector.disableInWorkspace',
+      createSetWorkspaceEnablementCommand(false, diagnosticsState, diagnosticCollection),
+    ),
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
       'mamori-inspector.runWorkspaceCheck',
-      createRunWorkspaceCheckCommand(diagnosticCollection, outputChannel, extensionRootPath),
+      createRunWorkspaceCheckCommand(
+        diagnosticsState,
+        diagnosticCollection,
+        outputChannel,
+        extensionRootPath,
+      ),
     ),
   );
   context.subscriptions.push(
@@ -1010,6 +1386,25 @@ export function activate(context: vscode.ExtensionContext): void {
       'mamori-inspector.clearToolCache',
       createManageMaintenanceCommand('cache-clear', outputChannel, extensionRootPath),
     ),
+  );
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (!event.affectsConfiguration(`${EXTENSION_CONFIGURATION_SECTION}.${ENABLED_CONFIGURATION_KEY}`)) {
+        return;
+      }
+
+      for (const workspaceFolder of vscode.workspace.workspaceFolders || []) {
+        if (
+          event.affectsConfiguration(
+            `${EXTENSION_CONFIGURATION_SECTION}.${ENABLED_CONFIGURATION_KEY}`,
+            workspaceFolder.uri,
+          )
+          && !isWorkspaceEnabled(workspaceFolder)
+        ) {
+          clearDiagnosticsForWorkspaceFolder(diagnosticsState, diagnosticCollection, workspaceFolder);
+        }
+      }
+    }),
   );
   context.subscriptions.push(
     vscode.workspace.onDidSaveTextDocument((document) => {
