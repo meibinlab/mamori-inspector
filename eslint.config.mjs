@@ -4,6 +4,15 @@ import typescriptEslint from 'typescript-eslint';
 // ESLint のフラット設定を表す
 const eslintConfig = [
   {
+    ignores: [
+      '.mamori/node/**',
+      '.mamori/tools/cache/**',
+      '.mamori/tools/gradle/**',
+      '.mamori/tools/maven/**',
+      '.mamori/tools/python/**',
+    ],
+  },
+  {
     files: ['**/*.ts'],
   },
   {

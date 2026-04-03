@@ -43,6 +43,8 @@ interface NpmInstallWrapperOptions {
   stdoutMessage?: string;
   /** 失敗時の終了コードを表す。 */
   exitCode?: number;
+  /** Windows で拡張子なしラッパーも併設するかを表す。 */
+  createExtensionlessWrapper?: boolean;
 }
 
 /**
@@ -245,6 +247,31 @@ function encodePowerShellCommand(commandText: string): string {
 }
 
 /**
+ * Windows の batch ラッパーから Node へ引数ファイル経由で安全に引数を渡す。
+ * @param helperScriptPath 実行する helper script の絶対パスを表す。
+ * @returns batch ラッパー文字列を返す。
+ */
+function buildWindowsNodeArgsFileWrapper(helperScriptPath: string): string {
+  return [
+    '@echo off',
+    'setlocal EnableExtensions DisableDelayedExpansion',
+    'set "ARGS_FILE=%TEMP%\\mamori-wrapper-args-%RANDOM%%RANDOM%.txt"',
+    'break > "%ARGS_FILE%"',
+    ':mamori_collect_args',
+    'if "%~1"=="" goto mamori_run',
+    '>>"%ARGS_FILE%" echo(%~1',
+    'shift',
+    'goto mamori_collect_args',
+    ':mamori_run',
+    `node "${helperScriptPath}" --args-file "%ARGS_FILE%"`,
+    'set "EXIT_CODE=%ERRORLEVEL%"',
+    'del "%ARGS_FILE%" >nul 2>&1',
+    'exit /b %EXIT_CODE%',
+    '',
+  ].join('\r\n');
+}
+
+/**
  * テスト用の管理配布物ソースを返す。
  * Windows では zip 配布物を生成し、それ以外ではディレクトリを返す。
  * @param workingDirectory 作業ディレクトリを表す。
@@ -336,7 +363,11 @@ function writeNpmInstallWrapper(
       `const stderrMessage = ${JSON.stringify(options.stderrMessage || '')};`,
       `const stdoutMessage = ${JSON.stringify(options.stdoutMessage || '')};`,
       `const exitCode = ${String(options.exitCode || 1)};`,
-      'const args = process.argv.slice(2);',
+      'const rawArgs = process.argv.slice(2);',
+      'const argsFileIndex = rawArgs.indexOf("--args-file");',
+      'const args = argsFileIndex >= 0 && rawArgs[argsFileIndex + 1]',
+      '  ? fs.readFileSync(rawArgs[argsFileIndex + 1], "utf8").split(/\\r?\\n/u).filter((value) => value !== "")',
+      '  : rawArgs;',
       'fs.appendFileSync(outputPath, `${args.join(" ")}\\n`, "utf8");',
       'const prefixIndex = args.indexOf("--prefix");',
       'if (prefixIndex < 0 || !args[prefixIndex + 1]) {',
@@ -382,7 +413,82 @@ function writeNpmInstallWrapper(
   if (process.platform === 'win32') {
     fs.writeFileSync(
       wrapperPath,
-      `@echo off\r\nnode "${helperScriptPath}" %*\r\nexit /b %ERRORLEVEL%\r\n`,
+      buildWindowsNodeArgsFileWrapper(helperScriptPath),
+      'utf8',
+    );
+
+    if (options.createExtensionlessWrapper === true) {
+      fs.writeFileSync(
+        path.join(binDirectory, 'npm'),
+        'placeholder for Windows npm shim\r\n',
+        'utf8',
+      );
+    }
+    return;
+  }
+
+  fs.writeFileSync(
+    wrapperPath,
+    `#!/bin/sh\nnode '${helperScriptPath}' "$@"\n`,
+    'utf8',
+  );
+  fs.chmodSync(wrapperPath, 0o755);
+}
+
+/**
+ * Semgrep 導入用の Python ラッパーを作成する。
+ * @param binDirectory ラッパーディレクトリを表す。
+ * @param commandName コマンド名を表す。
+ * @param outputFileName 出力ファイル名を表す。
+ * @returns 返り値はない。
+ */
+function writePythonPipInstallWrapper(
+  binDirectory: string,
+  commandName: string,
+  outputFileName: string,
+): void {
+  const outputPath = path.join(binDirectory, outputFileName);
+  const helperScriptPath = path.join(binDirectory, `${commandName}-pip-wrapper.js`);
+  const wrapperPath = process.platform === 'win32'
+    ? path.join(binDirectory, `${commandName}.cmd`)
+    : path.join(binDirectory, commandName);
+
+  fs.writeFileSync(
+    helperScriptPath,
+    [
+      'const fs = require("fs");',
+      'const path = require("path");',
+      `const outputPath = ${JSON.stringify(outputPath)};`,
+      'const rawArgs = process.argv.slice(2);',
+      'const argsFileIndex = rawArgs.indexOf("--args-file");',
+      'const args = argsFileIndex >= 0 && rawArgs[argsFileIndex + 1]',
+      '  ? fs.readFileSync(rawArgs[argsFileIndex + 1], "utf8").split(/\\r?\\n/u).filter((value) => value !== "")',
+      '  : rawArgs;',
+      'fs.appendFileSync(outputPath, `${args.join(" ")}\\n`, "utf8");',
+      'const targetIndex = args.indexOf("--target");',
+      'if (targetIndex < 0 || !args[targetIndex + 1]) {',
+      '  process.stderr.write("missing --target");',
+      '  process.exit(2);',
+      '}',
+      'const targetDirectory = args[targetIndex + 1];',
+      'const packageArgument = args.find((argument) => /^semgrep(==.+)?$/u.test(argument));',
+      'if (!packageArgument) {',
+      '  process.stderr.write("missing semgrep package");',
+      '  process.exit(2);',
+      '}',
+      'const packageDirectory = path.join(targetDirectory, "semgrep");',
+      'fs.mkdirSync(packageDirectory, { recursive: true });',
+      'fs.writeFileSync(path.join(packageDirectory, "__init__.py"), "", "utf8");',
+      'process.exit(0);',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+
+  if (process.platform === 'win32') {
+    fs.writeFileSync(
+      wrapperPath,
+      buildWindowsNodeArgsFileWrapper(helperScriptPath),
       'utf8',
     );
     return;
@@ -1486,7 +1592,7 @@ suite('Mamori CLI Test Suite', () => {
       path.relative(temporaryDirectory, targetFilePath),
     ]);
 
-    assert.strictEqual(result.status, 0);
+    assert.strictEqual(result.status, 0, `${result.stderr}\n${result.stdout}`);
     assert.match(result.stdout, /source=discovery/u);
     assert.match(result.stdout, /eslint\.config\.ts/u);
   });
@@ -1528,7 +1634,7 @@ suite('Mamori CLI Test Suite', () => {
       ].join(','),
     ]);
 
-    assert.strictEqual(result.status, 0);
+    assert.strictEqual(result.status, 0, `${result.stderr}\n${result.stdout}`);
     assert.match(result.stdout, /formatters=prettier:enabled/u);
     assert.match(result.stdout, /checks=eslint:enabled, stylelint:enabled, htmlhint:enabled/u);
 
@@ -4543,7 +4649,9 @@ suite('Mamori CLI Test Suite', () => {
       },
     );
 
-    assert.strictEqual(result.status, 0);
+    if (result.status !== 0) {
+      throw new Error(`status=${String(result.status)} stderr=${result.stderr} stdout=${result.stdout}`);
+    }
     assert.match(result.stdout, /mamori: setup completed/u);
     assert.ok(fs.existsSync(path.join(temporaryDirectory, '.mamori', 'tools', 'maven', '3.9.11', 'bin')));
     assert.ok(fs.existsSync(path.join(temporaryDirectory, '.mamori', 'tools', 'gradle', '8.14.4', 'bin')));
@@ -4563,7 +4671,13 @@ suite('Mamori CLI Test Suite', () => {
       '.bin',
       process.platform === 'win32' ? 'prettier.cmd' : 'prettier',
     )));
-    assert.match(fs.readFileSync(path.join(binDirectory, 'npm-setup.log'), 'utf8'), /install/u);
+    const npmSetupLog = fs.readFileSync(path.join(binDirectory, 'npm-setup.log'), 'utf8');
+    assert.match(npmSetupLog, /install/u);
+    assert.match(npmSetupLog, /prettier/u);
+    assert.match(npmSetupLog, /eslint/u);
+    assert.match(npmSetupLog, /stylelint/u);
+    assert.match(npmSetupLog, /htmlhint/u);
+    assert.doesNotMatch(npmSetupLog, /--no-save/u);
   });
 
   /**
@@ -4615,7 +4729,9 @@ suite('Mamori CLI Test Suite', () => {
       },
     );
 
-    assert.strictEqual(result.status, 0);
+    if (result.status !== 0) {
+      throw new Error(`status=${String(result.status)} stderr=${result.stderr} stdout=${result.stdout}`);
+    }
     assert.match(result.stdout, /mamori: setup completed/u);
     assert.match(fs.readFileSync(path.join(spacedBinDirectory, 'npm-space.log'), 'utf8'), /install/u);
     assert.ok(fs.existsSync(path.join(
@@ -4625,6 +4741,242 @@ suite('Mamori CLI Test Suite', () => {
       'node_modules',
       '.bin',
       process.platform === 'win32' ? 'eslint.cmd' : 'eslint',
+    )));
+  });
+
+  /**
+   * ワークスペースルートに空白を含むパスでも setup が成功すること。
+   * @returns 返り値はない。
+   */
+  test('Sets up managed tools when workspace path contains spaces', function() {
+    const temporaryRootDirectory = createTemporaryDirectory();
+    const temporaryDirectory = path.join(temporaryRootDirectory, 'workspace with space');
+    fs.mkdirSync(temporaryDirectory, { recursive: true });
+
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const mavenSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'maven-workspace-space-distribution',
+      'mvn',
+      'maven-workspace-space.log',
+    );
+    const gradleSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'gradle-workspace-space-distribution',
+      'gradle',
+      'gradle-workspace-space.log',
+    );
+
+    this.timeout(15000);
+    writeNpmInstallWrapper(binDirectory, 'npm-workspace-space.log');
+    writeCommandWrapper(binDirectory, 'semgrep', 'semgrep-workspace-space.log');
+
+    const semgrepCommandPath = path.join(
+      binDirectory,
+      process.platform === 'win32' ? 'semgrep.cmd' : 'semgrep',
+    );
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      ['setup'],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(binDirectory),
+          MAMORI_TOOL_MAVEN_SOURCE_URL: toFileUrl(mavenSourceDirectory),
+          MAMORI_TOOL_GRADLE_SOURCE_URL: toFileUrl(gradleSourceDirectory),
+          MAMORI_TOOL_SEMGREP_COMMAND: semgrepCommandPath,
+        },
+      },
+    );
+
+    if (result.status !== 0) {
+      throw new Error(`status=${String(result.status)} stderr=${result.stderr} stdout=${result.stdout}`);
+    }
+    assert.match(result.stdout, /mamori: setup completed/u);
+    assert.match(fs.readFileSync(path.join(binDirectory, 'npm-workspace-space.log'), 'utf8'), /install/u);
+    assert.ok(fs.existsSync(path.join(temporaryDirectory, '.mamori', 'tools', 'maven', '3.9.11', 'bin')));
+    assert.ok(fs.existsSync(path.join(temporaryDirectory, '.mamori', 'tools', 'gradle', '8.14.4', 'bin')));
+    assert.ok(fs.existsSync(path.join(
+      temporaryDirectory,
+      '.mamori',
+      'node',
+      'node_modules',
+      '.bin',
+      process.platform === 'win32' ? 'eslint.cmd' : 'eslint',
+    )));
+  });
+
+  /**
+   * Windows で拡張子なしの npm 上書きパスでも setup が成功すること。
+   * @returns 返り値はない。
+   */
+  test('Sets up managed tools when npm override omits the Windows cmd extension', function() {
+    const temporaryDirectory = createTemporaryDirectory();
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const spacedBinDirectory = createSpacedCommandBinDirectory(temporaryDirectory);
+    const mavenSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'maven-override-distribution',
+      'mvn',
+      'maven-override.log',
+    );
+    const gradleSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'gradle-override-distribution',
+      'gradle',
+      'gradle-override.log',
+    );
+
+    this.timeout(15000);
+    writeNpmInstallWrapper(spacedBinDirectory, 'npm-override.log');
+    writeCommandWrapper(binDirectory, 'semgrep', 'semgrep-override.log');
+
+    const semgrepCommandPath = path.join(
+      binDirectory,
+      process.platform === 'win32' ? 'semgrep.cmd' : 'semgrep',
+    );
+    const npmCommandPath = path.join(spacedBinDirectory, 'npm');
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      ['setup'],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(binDirectory),
+          MAMORI_TOOL_NPM_COMMAND: npmCommandPath,
+          MAMORI_TOOL_MAVEN_SOURCE_URL: toFileUrl(mavenSourceDirectory),
+          MAMORI_TOOL_GRADLE_SOURCE_URL: toFileUrl(gradleSourceDirectory),
+          MAMORI_TOOL_SEMGREP_COMMAND: semgrepCommandPath,
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /mamori: setup completed/u);
+    assert.match(fs.readFileSync(path.join(spacedBinDirectory, 'npm-override.log'), 'utf8'), /install/u);
+    assert.ok(fs.existsSync(path.join(
+      temporaryDirectory,
+      '.mamori',
+      'node',
+      'node_modules',
+      '.bin',
+      process.platform === 'win32' ? 'eslint.cmd' : 'eslint',
+    )));
+  });
+
+  /**
+   * Windows 実環境のように npm と npm.cmd が併存しても setup が成功すること。
+   * @returns 返り値はない。
+   */
+  test('Sets up managed tools when Windows PATH contains npm and npm.cmd side by side', function() {
+    if (process.platform !== 'win32') {
+      this.skip();
+      return;
+    }
+
+    const temporaryDirectory = createTemporaryDirectory();
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const mavenSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'maven-path-npm-distribution',
+      'mvn',
+      'maven-path-npm.log',
+    );
+    const gradleSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'gradle-path-npm-distribution',
+      'gradle',
+      'gradle-path-npm.log',
+    );
+
+    this.timeout(15000);
+    writeNpmInstallWrapper(binDirectory, 'npm-path-side-by-side.log', {
+      createExtensionlessWrapper: true,
+    });
+    writeCommandWrapper(binDirectory, 'semgrep', 'semgrep-path-side-by-side.log');
+
+    const semgrepCommandPath = path.join(binDirectory, 'semgrep.cmd');
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      ['setup'],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(binDirectory),
+          MAMORI_TOOL_MAVEN_SOURCE_URL: toFileUrl(mavenSourceDirectory),
+          MAMORI_TOOL_GRADLE_SOURCE_URL: toFileUrl(gradleSourceDirectory),
+          MAMORI_TOOL_SEMGREP_COMMAND: semgrepCommandPath,
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /mamori: setup completed/u);
+    assert.match(fs.readFileSync(path.join(binDirectory, 'npm-path-side-by-side.log'), 'utf8'), /install/u);
+    assert.ok(fs.existsSync(path.join(
+      temporaryDirectory,
+      '.mamori',
+      'node',
+      'node_modules',
+      '.bin',
+      'prettier.cmd',
+    )));
+  });
+
+  /**
+   * Python override が Windows の拡張子なしパスでも setup が成功すること。
+   * @returns 返り値はない。
+   */
+  test('Sets up managed tools when Python override omits the Windows cmd extension', function() {
+    const temporaryDirectory = createTemporaryDirectory();
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const spacedBinDirectory = createSpacedCommandBinDirectory(temporaryDirectory);
+    const mavenSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'maven-python-override-distribution',
+      'mvn',
+      'maven-python-override.log',
+    );
+    const gradleSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'gradle-python-override-distribution',
+      'gradle',
+      'gradle-python-override.log',
+    );
+
+    this.timeout(15000);
+    writeNpmInstallWrapper(binDirectory, 'npm-python-override.log');
+    writePythonPipInstallWrapper(spacedBinDirectory, 'python', 'python-override.log');
+
+    const pythonCommandPath = path.join(spacedBinDirectory, 'python');
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      ['setup'],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(binDirectory),
+          MAMORI_TOOL_PYTHON_COMMAND: pythonCommandPath,
+          MAMORI_TOOL_MAVEN_SOURCE_URL: toFileUrl(mavenSourceDirectory),
+          MAMORI_TOOL_GRADLE_SOURCE_URL: toFileUrl(gradleSourceDirectory),
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /mamori: setup completed/u);
+    assert.match(fs.readFileSync(path.join(spacedBinDirectory, 'python-override.log'), 'utf8'), /-m pip install/u);
+    assert.ok(fs.existsSync(path.join(
+      temporaryDirectory,
+      '.mamori',
+      'tools',
+      'python',
+      'packages',
+      'semgrep',
     )));
   });
 
@@ -4899,6 +5251,8 @@ suite('Mamori CLI Test Suite', () => {
     this.timeout(15000);
     const temporaryDirectory = createTemporaryDirectory();
     const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const managedToolsDirectory = path.join(temporaryDirectory, '.mamori', 'tools');
+    const runtimeHelperPath = path.join(managedToolsDirectory, 'exec.js');
     const mavenSourceDirectory = createManagedToolSource(
       temporaryDirectory,
       'maven-cache-clear-distribution',
@@ -4935,13 +5289,29 @@ suite('Mamori CLI Test Suite', () => {
     );
 
     assert.strictEqual(setupResult.status, 0);
-    assert.ok(fs.existsSync(path.join(temporaryDirectory, '.mamori', 'tools')));
+    fs.writeFileSync(runtimeHelperPath, 'module.exports = {};\n', 'utf8');
+    fs.mkdirSync(path.join(managedToolsDirectory, 'python', 'packages'), { recursive: true });
+    fs.writeFileSync(
+      path.join(managedToolsDirectory, 'cache', 'placeholder.txt'),
+      'cache',
+      'utf8',
+    );
+    assert.ok(fs.existsSync(managedToolsDirectory));
     assert.ok(fs.existsSync(path.join(temporaryDirectory, '.mamori', 'node')));
+    assert.ok(fs.existsSync(path.join(managedToolsDirectory, 'cache')));
+    assert.ok(fs.existsSync(path.join(managedToolsDirectory, 'maven')));
+    assert.ok(fs.existsSync(path.join(managedToolsDirectory, 'gradle')));
+    assert.ok(fs.existsSync(path.join(managedToolsDirectory, 'python')));
 
     const cacheClearResult = runMamoriCli(temporaryDirectory, ['cache-clear']);
     assert.strictEqual(cacheClearResult.status, 0);
     assert.match(cacheClearResult.stdout, /mamori: cache-clear completed/u);
-    assert.ok(!fs.existsSync(path.join(temporaryDirectory, '.mamori', 'tools')));
+    assert.ok(fs.existsSync(managedToolsDirectory));
+    assert.ok(fs.existsSync(runtimeHelperPath));
+    assert.ok(!fs.existsSync(path.join(managedToolsDirectory, 'cache')));
+    assert.ok(!fs.existsSync(path.join(managedToolsDirectory, 'maven')));
+    assert.ok(!fs.existsSync(path.join(managedToolsDirectory, 'gradle')));
+    assert.ok(!fs.existsSync(path.join(managedToolsDirectory, 'python')));
     assert.ok(!fs.existsSync(path.join(temporaryDirectory, '.mamori', 'node')));
   });
 });

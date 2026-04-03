@@ -24,7 +24,7 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 ## 管理ツールの自動導入
 - Mamori は `run` 実行時に不足している管理ツールを自動導入し、ワークスペース配下の `.mamori/tools` と `.mamori/node` に保存します。
 - 初回実行前にまとめて取得したい場合は `Mamori Inspector: Setup Managed Tools` を使います。
-- `.mamori/tools` と `.mamori/node` を削除して次回実行時に再取得したい場合は `Mamori Inspector: Clear Managed Tool Cache` を使います。
+- `.mamori/tools` 配下の管理キャッシュディレクトリと `.mamori/node` を削除して次回実行時に再取得したい場合は `Mamori Inspector: Clear Managed Tool Cache` を使います。
 - CLI では `mamori.js setup` と `mamori.js cache-clear` が同じ役割を持ちます。
 
 | ツール群 | 管理バージョン | 導入先 | 補足 |
@@ -61,7 +61,7 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 - 手動の workspace チェックは、対象ワークスペースフォルダーの保存時検証が無効でも実行できます。そのため、保存時有効設定に関係なく、手動実行では同じ Diagnostics を公開できます。
 - コマンド `Mamori Inspector: Enable In Workspace` と `Mamori Inspector: Disable In Workspace` は、ワークスペースフォルダー単位で保存時検証の有効・無効を切り替えます。既定値は無効です。
 - コマンド `Mamori Inspector: Setup Managed Tools` は、管理対象の Maven、Gradle、Semgrep、Prettier、ESLint、Stylelint、htmlhint をワークスペースキャッシュへ導入します。
-- コマンド `Mamori Inspector: Clear Managed Tool Cache` は、`.mamori/tools` と `.mamori/node` の管理キャッシュを削除します。
+- コマンド `Mamori Inspector: Clear Managed Tool Cache` は、`.mamori/tools` 配下と `.mamori/node` の管理キャッシュディレクトリを削除します。
 - コマンド `Mamori Inspector: Install Git Hooks` と `Mamori Inspector: Uninstall Git Hooks` は、CLI と同じランナーを呼び出し、`.git/hooks/pre-commit` と `.git/hooks/pre-push` を管理します。
 - Maven と Gradle の build 定義を解析して、Checkstyle、PMD、Spotless、CPD、SpotBugs などの Java ツール設定を解決します。
 - `mamori.js setup` は VS Code の setup コマンドと同じ管理ツール一式を準備し、`mamori.js cache-clear` は VS Code の cache-clear コマンドと同じキャッシュ削除を行います。

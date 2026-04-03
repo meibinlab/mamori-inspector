@@ -24,7 +24,7 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 ## Managed Tool Provisioning
 - Mamori automatically provisions missing managed tools during `run` execution and stores them under `.mamori/tools` and `.mamori/node` in the workspace.
 - Use `Mamori Inspector: Setup Managed Tools` when you want to download the managed toolchain in advance.
-- Use `Mamori Inspector: Clear Managed Tool Cache` when you want to remove `.mamori/tools` and `.mamori/node` and force a fresh download on the next run.
+- Use `Mamori Inspector: Clear Managed Tool Cache` when you want to remove the managed cache directories under `.mamori/tools` and `.mamori/node` and force a fresh download on the next run.
 - CLI equivalents are `mamori.js setup` and `mamori.js cache-clear`.
 
 | Tool group | Managed version | Install location | Notes |

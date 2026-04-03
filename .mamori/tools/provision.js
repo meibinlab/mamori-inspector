@@ -24,6 +24,10 @@ const {
 
 // 自動導入対象の Node ツール一覧を表す
 const MANAGED_NODE_TOOL_NAMES = Object.keys(NODE_TOOL_PACKAGES);
+// `.mamori/tools` 配下で cache-clear が削除対象にする管理ディレクトリ名を表す
+const MANAGED_TOOL_CACHE_DIRECTORY_NAMES = ['cache', 'gradle', 'maven', 'python'];
+// Windows の一時ディレクトリ rename 失敗で再試行するエラーコード一覧を表す
+const WINDOWS_RETRYABLE_RENAME_ERROR_CODES = new Set(['EACCES', 'EBUSY', 'ENOTEMPTY', 'EPERM']);
 
 /**
  * ワークスペースごとの Mamori 管理ディレクトリを返す。
@@ -49,6 +53,70 @@ function getManagedDirectories(workspaceRoot) {
  */
 function ensureDirectory(directoryPath) {
   fs.mkdirSync(directoryPath, { recursive: true });
+}
+
+/**
+ * ディレクトリを再試行付きで削除する。
+ * @param {string} targetPath 削除対象ディレクトリを表す。
+ * @returns {void} 返り値はない。
+ */
+function removeDirectory(targetPath) {
+  fs.rmSync(targetPath, {
+    force: true,
+    maxRetries: process.platform === 'win32' ? 5 : 0,
+    recursive: true,
+    retryDelay: process.platform === 'win32' ? 100 : 0,
+  });
+}
+
+/**
+ * 同期待機でファイルシステムの競合解消を待つ。
+ * @param {number} milliseconds 待機時間ミリ秒を表す。
+ * @returns {void} 返り値はない。
+ */
+function waitForFilesystem(milliseconds) {
+  if (milliseconds <= 0) {
+    return;
+  }
+
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+}
+
+/**
+ * Windows の一時ディレクトリ rename エラーが再試行対象か判定する。
+ * @param {unknown} error 判定対象エラーを表す。
+ * @returns {boolean} 再試行対象なら true を返す。
+ */
+function isRetryableWindowsRenameError(error) {
+  return process.platform === 'win32'
+    && Boolean(error)
+    && typeof error === 'object'
+    && WINDOWS_RETRYABLE_RENAME_ERROR_CODES.has(String(error.code || ''));
+}
+
+/**
+ * アーカイブ導入用の一時ディレクトリを本番ディレクトリへ確定する。
+ * @param {string} temporaryDirectory 一時ディレクトリを表す。
+ * @param {string} installDirectory 本番ディレクトリを表す。
+ * @returns {void} 返り値はない。
+ */
+function finalizeArchiveInstallation(temporaryDirectory, installDirectory) {
+  ensureDirectory(path.dirname(installDirectory));
+
+  for (let attemptIndex = 0; attemptIndex < 3; attemptIndex += 1) {
+    try {
+      fs.renameSync(temporaryDirectory, installDirectory);
+      return;
+    } catch (error) {
+      if (!isRetryableWindowsRenameError(error) || attemptIndex === 2) {
+        break;
+      }
+      waitForFilesystem(100 * (attemptIndex + 1));
+    }
+  }
+
+  fs.cpSync(temporaryDirectory, installDirectory, { force: true, recursive: true });
+  removeDirectory(temporaryDirectory);
 }
 
 /**
@@ -95,6 +163,19 @@ function resolveExecutablePath(command, currentWorkingDirectory, env) {
  * @returns {string|undefined} 実在するパスを返す。
  */
 function resolvePathWithExecutableExtensions(candidatePath, executableExtensions) {
+  if (process.platform === 'win32' && path.extname(candidatePath) === '') {
+    for (const extension of executableExtensions) {
+      const extendedPath = `${candidatePath}${extension}`;
+      if (fs.existsSync(extendedPath)) {
+        return extendedPath;
+      }
+      const lowerCasePath = `${candidatePath}${extension.toLowerCase()}`;
+      if (fs.existsSync(lowerCasePath)) {
+        return lowerCasePath;
+      }
+    }
+  }
+
   if (fs.existsSync(candidatePath)) {
     return candidatePath;
   }
@@ -159,12 +240,18 @@ function buildPathAugmentedRuntime(commandName, executablePath, env) {
  * @returns {{status: number|null, stdout: string, stderr: string, error?: Error}} 実行結果を返す。
  */
 function runProcess(command, args, options = {}) {
-  const invocation = getProcessInvocation(command, args, options.env || process.env);
+  const invocation = getProcessInvocation(
+    command,
+    args,
+    options.cwd || process.cwd(),
+    options.env || process.env,
+  );
   const result = spawnSync(invocation.command, invocation.args, {
     cwd: options.cwd,
     env: options.env,
     encoding: 'utf8',
     shell: invocation.shell,
+    windowsVerbatimArguments: invocation.windowsVerbatimArguments,
     windowsHide: true,
   });
 
@@ -202,35 +289,40 @@ function getProcessFailureMessage(result, fallbackMessage) {
  * Windows を含む実行環境に応じたプロセス起動情報を返す。
  * @param {string} command 実行コマンドを表す。
  * @param {string[]} args 引数一覧を表す。
+ * @param {string} currentWorkingDirectory 現在の作業ディレクトリを表す。
  * @param {NodeJS.ProcessEnv} env 環境変数を表す。
- * @returns {{command: string, args: string[], shell: boolean}} 起動情報を返す。
+ * @returns {{command: string, args: string[], shell: boolean, windowsVerbatimArguments?: boolean}} 起動情報を返す。
  */
-function getProcessInvocation(command, args, env) {
+function getProcessInvocation(command, args, currentWorkingDirectory, env) {
   if (process.platform !== 'win32') {
     return { command, args, shell: false };
   }
 
-  const extension = path.extname(command).toLowerCase();
+  const resolvedCommand = resolveExecutablePath(command, currentWorkingDirectory, env) || command;
+  const extension = path.extname(resolvedCommand).toLowerCase();
   if (extension !== '.cmd' && extension !== '.bat') {
     return { command, args, shell: false };
   }
 
+  const commandLine = [resolvedCommand, ...args]
+    .map((value) => quoteWindowsCommandArgument(value))
+    .join(' ');
+
   return {
-    command: quoteWindowsShellCommand(command),
-    args,
-    shell: true,
+    command: env.ComSpec || 'cmd.exe',
+    args: ['/d', '/s', '/c', `"${commandLine}"`],
+    shell: false,
+    windowsVerbatimArguments: true,
   };
 }
 
 /**
- * shell 経由で実行する Windows コマンドを安全にクォートする。
- * @param {string} command クォート対象コマンドを表す。
- * @returns {string} クォート済みコマンド文字列を返す。
+ * cmd.exe へ渡す Windows コマンド引数を安全にクォートする。
+ * @param {string} argument クォート対象引数を表す。
+ * @returns {string} クォート済み引数文字列を返す。
  */
-function quoteWindowsShellCommand(command) {
-  return /[\s"]/u.test(command)
-    ? `"${command.replace(/"/g, '""')}"`
-    : command;
+function quoteWindowsCommandArgument(argument) {
+  return `"${String(argument).replace(/"/g, '""')}"`;
 }
 
 /**
@@ -415,8 +507,8 @@ async function ensureArchiveTool(workspaceRoot, definition) {
   const cachePath = path.join(directories.cacheRoot, definition.tool, definition.version, fileName);
   const temporaryDirectory = `${installDirectory}.tmp-${Date.now()}`;
 
-  fs.rmSync(temporaryDirectory, { recursive: true, force: true });
-  fs.rmSync(installDirectory, { recursive: true, force: true });
+  removeDirectory(temporaryDirectory);
+  removeDirectory(installDirectory);
   ensureDirectory(temporaryDirectory);
 
   try {
@@ -425,10 +517,9 @@ async function ensureArchiveTool(workspaceRoot, definition) {
     if (!executablePath) {
       throw new Error(`installed ${definition.tool} but executable was not found`);
     }
-    ensureDirectory(path.dirname(installDirectory));
-    fs.renameSync(temporaryDirectory, installDirectory);
+    finalizeArchiveInstallation(temporaryDirectory, installDirectory);
   } catch (error) {
-    fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+    removeDirectory(temporaryDirectory);
     throw error;
   }
 
@@ -470,7 +561,9 @@ function ensureNodePackageManifest(nodeRoot) {
 function resolveNpmCommand(workspaceRoot, env) {
   const commandOverride = env.MAMORI_TOOL_NPM_COMMAND;
   if (typeof commandOverride === 'string' && commandOverride.trim() !== '') {
-    return commandOverride.trim();
+    const trimmedOverride = commandOverride.trim();
+    const resolvedOverride = resolveExecutablePath(trimmedOverride, workspaceRoot, env);
+    return resolvedOverride || trimmedOverride;
   }
 
   const resolvedPath = resolveExecutablePath('npm', workspaceRoot, env)
@@ -586,7 +679,7 @@ function ensureManagedNodeTools(workspaceRoot, env = process.env) {
         'install',
         '--prefix',
         directories.nodeRoot,
-        '--no-save',
+        '--save-prod',
         '--no-package-lock',
         '--no-fund',
         '--no-audit',
@@ -702,11 +795,21 @@ function clearManagedToolCaches(workspaceRoot) {
   const directories = getManagedDirectories(workspaceRoot);
   const removedDirectories = [];
 
-  for (const targetPath of [directories.toolsRoot, directories.nodeRoot]) {
+  for (const targetPath of MANAGED_TOOL_CACHE_DIRECTORY_NAMES.map((directoryName) => (
+    path.join(directories.toolsRoot, directoryName)
+  ))) {
     if (!fs.existsSync(targetPath)) {
       continue;
     }
-    fs.rmSync(targetPath, { recursive: true, force: true });
+    removeDirectory(targetPath);
+    removedDirectories.push(targetPath);
+  }
+
+  for (const targetPath of [directories.nodeRoot]) {
+    if (!fs.existsSync(targetPath)) {
+      continue;
+    }
+    removeDirectory(targetPath);
     removedDirectories.push(targetPath);
   }
 
