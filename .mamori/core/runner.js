@@ -217,17 +217,8 @@ function loadLatestExistingToolReport(commandResult) {
 }
 
 /**
- * 既存レポート再利用を許可する manual/workspace 実行か判定する。
- * @param {{mode?: string, scope?: string}} commandResult 実行結果を表す。
- * @returns {boolean} 再利用を許可する場合は true を返す。
- */
-function shouldReuseExistingToolReport(commandResult) {
-  return commandResult.mode === 'manual' && commandResult.scope === 'workspace';
-}
-
-/**
  * 標準出力または生成レポートから Issue 一覧を抽出する。
- * @param {{stdout?: string, reportPaths?: string[], reportSnapshots?: Record<string, {exists: boolean, mtimeMs: number, size: number}>, mode?: string, scope?: string}} commandResult 実行結果を表す。
+ * @param {{stdout?: string, reportPaths?: string[], reportSnapshots?: Record<string, {exists: boolean, mtimeMs: number, size: number}>}} commandResult 実行結果を表す。
  * @param {(rawReport: string) => Array<object>} parser レポート解析関数を表す。
  * @returns {Array<object>} Issue 一覧を返す。
  */
@@ -242,7 +233,7 @@ function extractIssuesFromStandardOutputOrReport(commandResult, parser) {
     return updatedReportIssues;
   }
 
-  if (commandResult.status === 'failed' && shouldReuseExistingToolReport(commandResult)) {
+  if (commandResult.status === 'failed') {
     return parser(loadLatestExistingToolReport(commandResult));
   }
 
@@ -251,7 +242,7 @@ function extractIssuesFromStandardOutputOrReport(commandResult, parser) {
 
 /**
  * ツール実行結果から Issue 一覧を抽出する。
- * @param {{tool: string, stdout?: string, reportPaths?: string[], reportSnapshots?: Record<string, {exists: boolean, mtimeMs: number, size: number}>, mode?: string, scope?: string}} commandResult 実行結果を表す。
+ * @param {{tool: string, stdout?: string, reportPaths?: string[], reportSnapshots?: Record<string, {exists: boolean, mtimeMs: number, size: number}>}} commandResult 実行結果を表す。
  * @returns {Array<object>} Issue 一覧を返す。
  */
 function extractIssues(commandResult) {
@@ -927,11 +918,9 @@ function canResolveCommand(command, cwd, env) {
  * @param {string} moduleRoot モジュールルートを表す。
  * @param {object} commandEntry コマンド計画を表す。
  * @param {(command: string, args: string[], options?: object) => Promise<{exitCode: number, stdout: string, stderr: string}>} executor 実行器を表す。
- * @param {string=} mode 実行モードを表す。
- * @param {string=} scope 実行スコープを表す。
- * @returns {Promise<{moduleRoot: string, tool: string, status: string, command?: string, args?: string[], exitCode?: number, stdout?: string, stderr?: string, message?: string, mode?: string, scope?: string}>} 実行結果を返す。
+ * @returns {Promise<{moduleRoot: string, tool: string, status: string, command?: string, args?: string[], exitCode?: number, stdout?: string, stderr?: string, message?: string}>} 実行結果を返す。
  */
-async function executeCommandEntry(workspaceRoot, moduleRoot, commandEntry, executor, mode, scope) {
+async function executeCommandEntry(workspaceRoot, moduleRoot, commandEntry, executor) {
   const baseEnvironment = {
     ...process.env,
     ...(commandEntry.env || {}),
@@ -955,8 +944,6 @@ async function executeCommandEntry(workspaceRoot, moduleRoot, commandEntry, exec
         moduleRoot,
         tool: commandEntry.tool,
         phase: commandEntry.phase,
-        mode,
-        scope,
         status: 'skipped',
         reason: preparedCommand.skipReason,
       };
@@ -981,8 +968,6 @@ async function executeCommandEntry(workspaceRoot, moduleRoot, commandEntry, exec
         moduleRoot,
         tool: commandEntry.tool,
         phase: commandEntry.phase,
-        mode,
-        scope,
         status: 'error',
         command: runtimeCommand,
         args: runtimeArguments,
@@ -1002,8 +987,6 @@ async function executeCommandEntry(workspaceRoot, moduleRoot, commandEntry, exec
         moduleRoot,
         tool: commandEntry.tool,
         phase: commandEntry.phase,
-        mode,
-        scope,
         status: 'error',
         command: runtimeCommand,
         args: runtimeArguments,
@@ -1016,8 +999,6 @@ async function executeCommandEntry(workspaceRoot, moduleRoot, commandEntry, exec
       moduleRoot,
       tool: commandEntry.tool,
       phase: commandEntry.phase,
-      mode,
-      scope,
       status: result.exitCode === 0 ? 'ok' : 'failed',
       command: runtimeCommand,
       args: runtimeArguments,
@@ -1034,8 +1015,6 @@ async function executeCommandEntry(workspaceRoot, moduleRoot, commandEntry, exec
       moduleRoot,
       tool: commandEntry.tool,
       phase: commandEntry.phase,
-      mode,
-      scope,
       status: 'error',
       command: runtimeCommand,
       args: runtimeArguments.length > 0
@@ -1077,8 +1056,6 @@ async function runResolvedConfiguration(resolution, options = {}) {
         modulePlan.moduleRoot,
         commandEntry,
         executor,
-        resolution.mode,
-        resolution.scope,
       );
       result.commandResults.push(commandResult);
 

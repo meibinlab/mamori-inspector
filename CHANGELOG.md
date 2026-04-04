@@ -6,75 +6,10 @@
 
 ## [Unreleased]
 
-## [0.2.18] - 2026-04-04
-
-### Added
-- 手動 workspace 実行後に保存時チェック対象ツールの finding が解消した場合、対象ファイルの警告が残留しない回帰テストを追加しました。
+## [0.2.10] - 2026-04-04
 
 ### Fixed
-- 保存時チェック成功時に、保存対象ファイルへ残っていた手動 workspace 実行由来の古い Diagnostics を取り除き、修正済みファイルの警告が消えない問題を修正しました。
-
-## [0.2.17] - 2026-04-04
-
-### Added
-- ワークスペースルートにスペースを含む Windows setup 回帰テストを追加しました。
-
-### Fixed
-- Windows の `.cmd` / `.bat` を setup で実行する際、`.mamori/node` などのスペースを含む引数が分割されないように、`cmd.exe` へ明示的にクォート済みコマンドラインを渡すようにしました。
-
-## [0.2.16] - 2026-04-04
-
-### Added
-- `mamori.js cache-clear` が `.mamori/tools` 配下のランタイム補助ファイルを残す回帰テストを追加しました。
-
-### Fixed
-- Windows で Gradle や Maven の管理配布物を setup する際、一時ディレクトリの rename が `EPERM` などで失敗してもコピーへフォールバックして完了できるようにしました。
-- `Mamori Inspector: Clear Managed Tool Cache` と `mamori.js cache-clear` が `.mamori/tools` 配下の管理キャッシュだけを削除し、同ディレクトリ内のランタイム補助ファイルを残すようにしました。
-- 管理対象 Node ツールを逐次 setup しても最後の 1 パッケージだけ残ることがないよう、`npm install` を保持前提の導入方式へ修正しました。
-- `setup` で導入した管理キャッシュ配下の vendored ファイルを ESLint 対象外にし、開発時の `npm test` が setup 後でも失敗しないようにしました。
-
-## [0.2.15] - 2026-04-04
-
-### Added
-- Windows で `npm` と `npm.cmd` が同じディレクトリにある setup 回帰テストを追加しました。
-
-### Fixed
-- `Mamori Inspector: Setup Managed Tools` で Windows の PATH 解決時に拡張子なし `npm` より `.cmd` / `.bat` を優先し、`spawnSync C:\Program Files\nodejs\npm ENOENT` を回避するようにしました。
-
-## [0.2.14] - 2026-04-04
-
-### Added
-- `MAMORI_TOOL_PYTHON_COMMAND` に Windows の拡張子なしパスを渡した setup 回帰テストを追加しました。
-
-### Fixed
-- 管理ツール setup の同期プロセス実行で、Windows の拡張子なし `.cmd` / `.bat` パスを自動解決して実行できるようにしました。
-
-## [0.2.13] - 2026-04-04
-
-### Added
-- `MAMORI_TOOL_NPM_COMMAND` に Windows の拡張子なしパスを渡した setup 回帰テストを追加しました。
-
-### Fixed
-- `Mamori Inspector: Setup Managed Tools` で、`MAMORI_TOOL_NPM_COMMAND` に `C:\Program Files\nodejs\npm` のような拡張子なしパスが渡されても、Windows では `.cmd` を補完して実行できるようにしました。
-
-## [0.2.12] - 2026-04-04
-
-### Fixed
-- 外部実プロジェクトを使う統合テストで、`.vscode/settings.json` を VS Code のファイル API 経由で更新し、通知依存の待機をやめることで VS Code 1.114 でも保存時有効設定の切り替え検証が通るようにしました。
-
-## [0.2.11] - 2026-04-03
-
-### Changed
-- README、README.ja、仕様書、設定説明を更新し、`mamori-inspector.enabled` が保存時検証だけを制御し、手動 workspace 実行は設定に関係なく利用できることを明記しました。
-- 外部実プロジェクトの手動計測テスト名を更新し、保存時有効設定とは独立して同じ Diagnostics 件数を期待する意図を明確にしました。
-
-## [0.2.10] - 2026-04-03
-
-### Added
-- manual/workspace が部分成功になった場合でも Diagnostics を維持できる回帰テストを追加しました。
-
-### Fixed
-- manual/workspace 実行で一部ツールが終了コード 2 を返しても、更新済みの SARIF があれば Problems へ finding を反映できるようにしました。
+- 手動 workspace 実行で付与された Diagnostics が、同じファイルの保存時再検査で解消したあとも Problems に残り続ける問題を修正しました。
 
 ## [0.2.9] - 2026-04-03
 
