@@ -101,6 +101,9 @@ dist
 # vitepress build output
 **/.vitepress/dist
 
+# Test and debug artifacts
+target/
+
 # vitepress cache directory
 **/.vitepress/cache
 

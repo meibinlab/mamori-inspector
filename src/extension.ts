@@ -59,6 +59,10 @@ const AUTO_SAVE_NON_QUEUE_EXTENSIONS = new Set([
 const SAVE_DEBOUNCE_MILLISECONDS = 400;
 // 自己再帰抑止時間を表す
 const SAVE_SUPPRESSION_MILLISECONDS = 1500;
+// 設定反映待機の上限時間を表す
+const CONFIGURATION_UPDATE_TIMEOUT_MILLISECONDS = 5000;
+// 設定反映待機のポーリング間隔を表す
+const CONFIGURATION_UPDATE_POLLING_MILLISECONDS = 100;
 
 /** ローカライズ埋め込み引数を表す。 */
 type LocalizationArguments = Array<string | number | boolean> | Record<string, string | number | boolean>;
@@ -262,19 +266,6 @@ function getWorkspaceCheckSuccessMessage(diagnosticsCount: number): string {
 }
 
 /**
- * 手動実行が部分成功した場合の警告通知文言を返す。
- * @param diagnosticsCount 診断件数を表す。
- * @returns 警告通知文言を返す。
- */
-function getWorkspaceCheckPartialSuccessMessage(diagnosticsCount: number): string {
-  return localize(
-    'Mamori Inspector: Reflected {0} diagnostics with partial errors. See the output channel for details.',
-    'Warning message shown after a manual workspace check publishes diagnostics with partial errors.',
-    [diagnosticsCount],
-  );
-}
-
-/**
  * 手動実行失敗通知文言を返す。
  * @param details 失敗詳細を表す。
  * @returns エラー通知文言を返す。
@@ -332,10 +323,6 @@ interface MamoriCliRunOptions {
   sarifOutputPath: string;
   /** 対象ファイル一覧を表す。 */
   files?: string[];
-  /**
-   * manual/workspace 実行で、更新済み SARIF があれば部分成功として扱うかを表す。
-   */
-  allowPartialResultsOnError?: boolean;
 }
 
 /**
@@ -346,57 +333,6 @@ interface MamoriCliCommandResult {
   stdout: string;
   /** 標準エラー出力を表す。 */
   stderr: string;
-  /** 終了コードを表す。 */
-  exitCode: number;
-  /** 部分成功時のエラー詳細を表す。 */
-  partialErrorMessage?: string;
-}
-
-/**
- * 比較用のファイル状態を返す。
- * @param filePath 対象ファイルパスを表す。
- * @returns 取得できたファイル状態を返す。
- */
-function getFileSnapshot(filePath: string | undefined): fs.Stats | undefined {
-  if (!filePath || !fs.existsSync(filePath)) {
-    return undefined;
-  }
-
-  try {
-    return fs.statSync(filePath);
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * 実行中に結果ファイルが更新されたか判定する。
- * @param filePath 対象ファイルパスを表す。
- * @param initialSnapshot 実行前のファイル状態を表す。
- * @returns 更新されていれば true を返す。
- */
-function didUpdateFile(filePath: string | undefined, initialSnapshot: fs.Stats | undefined): boolean {
-  const currentSnapshot = getFileSnapshot(filePath);
-  if (!currentSnapshot) {
-    return false;
-  }
-
-  if (!initialSnapshot) {
-    return true;
-  }
-
-  return currentSnapshot.mtimeMs !== initialSnapshot.mtimeMs
-    || currentSnapshot.size !== initialSnapshot.size;
-}
-
-/**
- * Mamori CLI 実行オプションを表す。
- */
-interface MamoriCliCommandExecutionOptions {
-  /** manual/workspace 実行で、更新済みの結果ファイルを部分成功として扱うかを表す。 */
-  allowPartialResultsOnError?: boolean;
-  /** 部分成功判定に使う結果ファイルパスを表す。 */
-  partialResultPath?: string;
 }
 
 /**
@@ -488,14 +424,14 @@ function getMamoriCliFailureMessage(stdout: string, stderr: string, code: number
     return `Mamori CLI exited with code ${String(code)}`;
   }
 
-  const warningMatch = normalizedStdout.match(/(?:^|\r?\n)\s*warnings=(.+)$/mu);
-  if (warningMatch && warningMatch[1]) {
-    return warningMatch[1].trim();
-  }
-
   const errorMatch = normalizedStdout.match(/(?:^|\r?\n)\s*-\s+([^\r\n]+:error message=.+)$/mu);
   if (errorMatch && errorMatch[1]) {
     return errorMatch[1].trim();
+  }
+
+  const warningMatch = normalizedStdout.match(/(?:^|\r?\n)\s*warnings=(.+)$/mu);
+  if (warningMatch && warningMatch[1]) {
+    return warningMatch[1].trim();
   }
 
   const lines = normalizedStdout
@@ -597,15 +533,7 @@ function runMamoriCli(
   options: MamoriCliRunOptions,
   extensionRootPath: string,
 ): Promise<MamoriCliCommandResult> {
-  return runMamoriCliCommand(
-    workspaceFolder,
-    buildMamoriCliArguments(options),
-    extensionRootPath,
-    {
-      allowPartialResultsOnError: options.allowPartialResultsOnError === true,
-      partialResultPath: options.sarifOutputPath,
-    },
-  );
+  return runMamoriCliCommand(workspaceFolder, buildMamoriCliArguments(options), extensionRootPath);
 }
 
 /**
@@ -618,11 +546,9 @@ function runMamoriCliCommand(
   workspaceFolder: vscode.WorkspaceFolder,
   argumentsList: string[],
   extensionRootPath: string,
-  executionOptions?: MamoriCliCommandExecutionOptions,
 ): Promise<MamoriCliCommandResult> {
   const cliPath = getMamoriCliPath(workspaceFolder, extensionRootPath);
   const cliExecutablePath = getMamoriCliExecutablePath();
-  const initialPartialResultSnapshot = getFileSnapshot(executionOptions?.partialResultPath);
 
   return new Promise((resolve, reject) => {
     if (!fs.existsSync(workspaceFolder.uri.fsPath)) {
@@ -663,27 +589,11 @@ function runMamoriCliCommand(
     });
 
     child.on('close', (code) => {
-      const exitCode = typeof code === 'number' ? code : -1;
-      if (exitCode <= 1) {
-        resolve({ stdout, stderr, exitCode });
+      if (typeof code === 'number' && code <= 1) {
+        resolve({ stdout, stderr });
         return;
       }
-
-      const failureMessage = getMamoriCliFailureMessage(stdout, stderr, code ?? null);
-      if (
-        executionOptions?.allowPartialResultsOnError
-        && didUpdateFile(executionOptions.partialResultPath, initialPartialResultSnapshot)
-      ) {
-        resolve({
-          stdout,
-          stderr,
-          exitCode,
-          partialErrorMessage: failureMessage,
-        });
-        return;
-      }
-
-      reject(new Error(failureMessage));
+      reject(new Error(getMamoriCliFailureMessage(stdout, stderr, code ?? null)));
     });
   });
 }
@@ -968,7 +878,7 @@ function clearWorkspaceDiagnosticsByUri(
 }
 
 /**
- * 対象 URI の Diagnostics を保持マップから削除する。
+ * 対象ドキュメントの Diagnostics を保持マップから削除する。
  * @param diagnosticsByUri URI ごとの Diagnostics を表す。
  * @param documentUri 対象ドキュメント URI を表す。
  * @returns 返り値はない。
@@ -1096,11 +1006,163 @@ async function updateWorkspaceEnabledSetting(
   workspaceFolder: vscode.WorkspaceFolder,
   enabled: boolean,
 ): Promise<void> {
-  await getMamoriConfiguration(workspaceFolder).update(
-    ENABLED_CONFIGURATION_KEY,
-    enabled,
-    vscode.ConfigurationTarget.WorkspaceFolder,
-  );
+  try {
+    await getMamoriConfiguration(workspaceFolder).update(
+      ENABLED_CONFIGURATION_KEY,
+      enabled,
+      vscode.ConfigurationTarget.WorkspaceFolder,
+    );
+  } catch (error) {
+    if (!(error instanceof Error) || !/no resource is provided/i.test(error.message)) {
+      throw error;
+    }
+    await updateWorkspaceEnabledSettingFile(workspaceFolder, enabled);
+  }
+
+  await waitForWorkspaceEnabledSetting(workspaceFolder, enabled);
+}
+
+/**
+ * ワークスペース設定ファイルへ Mamori 有効化設定を書き込む。
+ * @param workspaceFolder ワークスペースフォルダーを表す。
+ * @param enabled 設定する有効状態を表す。
+ * @returns 更新完了を待つ Promise を返す。
+ */
+async function updateWorkspaceEnabledSettingFile(
+  workspaceFolder: vscode.WorkspaceFolder,
+  enabled: boolean | undefined,
+): Promise<void> {
+  const settingsDirectoryPath = path.join(workspaceFolder.uri.fsPath, '.vscode');
+  const settingsPath = path.join(settingsDirectoryPath, 'settings.json');
+  const settings = readJsonObjectFile(settingsPath);
+
+  if (typeof enabled === 'undefined') {
+    delete settings[`${EXTENSION_CONFIGURATION_SECTION}.${ENABLED_CONFIGURATION_KEY}`];
+  } else {
+    settings[`${EXTENSION_CONFIGURATION_SECTION}.${ENABLED_CONFIGURATION_KEY}`] = enabled;
+  }
+
+  if (Object.keys(settings).length === 0) {
+    if (fs.existsSync(settingsPath)) {
+      fs.rmSync(settingsPath, { force: true });
+    }
+    return;
+  }
+
+  fs.mkdirSync(settingsDirectoryPath, { recursive: true });
+  fs.writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
+}
+
+/**
+ * JSON オブジェクトファイルをコメント許容で読み込む。
+ * @param filePath 対象ファイルパスを表す。
+ * @returns 読み込んだ JSON オブジェクトを返す。
+ */
+function readJsonObjectFile(filePath: string): Record<string, unknown> {
+  if (!fs.existsSync(filePath)) {
+    return {};
+  }
+
+  const rawContent = fs.readFileSync(filePath, 'utf8');
+  try {
+    return JSON.parse(rawContent) as Record<string, unknown>;
+  } catch {
+    const sanitizedContent = stripJsonComments(rawContent);
+    return JSON.parse(sanitizedContent) as Record<string, unknown>;
+  }
+}
+
+/**
+ * JSON 文字列内を壊さずにコメントだけを除去する。
+ * @param input コメントを含む JSON 文字列を表す。
+ * @returns コメント除去後の JSON 文字列を返す。
+ */
+function stripJsonComments(input: string): string {
+  let result = '';
+  let inString = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+  let isEscaped = false;
+
+  for (let index = 0; index < input.length; index += 1) {
+    const currentCharacter = input[index];
+    const nextCharacter = index + 1 < input.length ? input[index + 1] : '';
+
+    if (inLineComment) {
+      if (currentCharacter === '\n' || currentCharacter === '\r') {
+        inLineComment = false;
+        result += currentCharacter;
+      }
+      continue;
+    }
+
+    if (inBlockComment) {
+      if (currentCharacter === '*' && nextCharacter === '/') {
+        inBlockComment = false;
+        index += 1;
+      }
+      continue;
+    }
+
+    if (inString) {
+      result += currentCharacter;
+      if (isEscaped) {
+        isEscaped = false;
+      } else if (currentCharacter === '\\') {
+        isEscaped = true;
+      } else if (currentCharacter === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (currentCharacter === '"') {
+      inString = true;
+      result += currentCharacter;
+      continue;
+    }
+
+    if (currentCharacter === '/' && nextCharacter === '/') {
+      inLineComment = true;
+      index += 1;
+      continue;
+    }
+
+    if (currentCharacter === '/' && nextCharacter === '*') {
+      inBlockComment = true;
+      index += 1;
+      continue;
+    }
+
+    result += currentCharacter;
+  }
+
+  return result;
+}
+
+/**
+ * 指定したワークスペース設定値が反映されるまで待機する。
+ * @param workspaceFolder 対象ワークスペースフォルダーを表す。
+ * @param enabled 反映待ちの有効状態を表す。
+ * @returns 反映完了を待つ Promise を返す。
+ */
+async function waitForWorkspaceEnabledSetting(
+  workspaceFolder: vscode.WorkspaceFolder,
+  enabled: boolean,
+): Promise<void> {
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < CONFIGURATION_UPDATE_TIMEOUT_MILLISECONDS) {
+    if (isWorkspaceEnabled(workspaceFolder) === enabled) {
+      return;
+    }
+
+    await new Promise((resolve) => {
+      setTimeout(resolve, CONFIGURATION_UPDATE_POLLING_MILLISECONDS);
+    });
+  }
+
+  throw new Error(`Timed out while waiting for workspace enablement to become ${String(enabled)}`);
 }
 
 /**
@@ -1222,7 +1284,6 @@ function createRunWorkspaceCheckCommand(
         workspaceFolder,
         sarifPath: getSarifOutputPath(workspaceFolder, MANUAL_SARIF_OUTPUT),
       }));
-      const partialErrorMessages: string[] = [];
       await vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
@@ -1235,17 +1296,11 @@ function createRunWorkspaceCheckCommand(
               increment: 100 / sarifOutputs.length,
               message: `${sarifOutput.workspaceFolder.name} (${String(index + 1)}/${String(sarifOutputs.length)})`,
             });
-            const commandResult = await runMamoriCli(sarifOutput.workspaceFolder, {
+            await runMamoriCli(sarifOutput.workspaceFolder, {
               mode: 'manual',
               scope: 'workspace',
               sarifOutputPath: sarifOutput.sarifPath,
-              allowPartialResultsOnError: true,
             }, extensionRootPath);
-            if (commandResult.partialErrorMessage) {
-              partialErrorMessages.push(
-                `${sarifOutput.workspaceFolder.uri.fsPath}: ${commandResult.partialErrorMessage}`,
-              );
-            }
           }
         },
       );
@@ -1261,16 +1316,7 @@ function createRunWorkspaceCheckCommand(
       diagnosticsState.manualDiagnosticsByUri.clear();
       mergeDiagnosticsByUri(diagnosticsState.manualDiagnosticsByUri, diagnosticsByUri);
       const diagnosticsCount = publishTrackedDiagnostics(diagnosticCollection, diagnosticsState);
-      for (const partialErrorMessage of partialErrorMessages) {
-        outputChannel.appendLine(
-          `Mamori Inspector workspace check completed with partial errors: ${partialErrorMessage}`,
-        );
-      }
-      if (partialErrorMessages.length > 0) {
-        void vscode.window.showWarningMessage(getWorkspaceCheckPartialSuccessMessage(diagnosticsCount));
-      } else {
-        void vscode.window.showInformationMessage(getWorkspaceCheckSuccessMessage(diagnosticsCount));
-      }
+      void vscode.window.showInformationMessage(getWorkspaceCheckSuccessMessage(diagnosticsCount));
     } catch (error) {
       const details = error instanceof Error ? error.message : String(error);
       diagnosticsState.manualDiagnosticsByUri.clear();
