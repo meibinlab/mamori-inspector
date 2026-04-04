@@ -24,7 +24,7 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 ## 管理ツールの自動導入
 - Mamori は `run` 実行時に不足している管理ツールを自動導入し、ワークスペース配下の `.mamori/tools` と `.mamori/node` に保存します。
 - 初回実行前にまとめて取得したい場合は `Mamori Inspector: Setup Managed Tools` を使います。
-- `.mamori/tools` 配下の管理キャッシュディレクトリと `.mamori/node` を削除して次回実行時に再取得したい場合は `Mamori Inspector: Clear Managed Tool Cache` を使います。
+- `.mamori/tools` と `.mamori/node` を削除して次回実行時に再取得したい場合は `Mamori Inspector: Clear Managed Tool Cache` を使います。
 - CLI では `mamori.js setup` と `mamori.js cache-clear` が同じ役割を持ちます。
 
 | ツール群 | 管理バージョン | 導入先 | 補足 |
@@ -58,10 +58,9 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 - `prepush/workspace` は、一時的な JavaScript ファイルを使って HTML の inline script ブロックも ESLint の対象に含め、結果は元の HTML 上の位置に報告します。
 - `manual/workspace` は、重い手動ツールを追加するまで、現時点では軽量な Java チェック計画を再利用します。
 - コマンド `Mamori Inspector: Run Workspace Check` は、ワークスペース全体の手動チェックを実行し、生成された SARIF から Diagnostics を公開します。
-- 手動の workspace チェックは、対象ワークスペースフォルダーの保存時検証が無効でも実行できます。そのため、保存時有効設定に関係なく、手動実行では同じ Diagnostics を公開できます。
 - コマンド `Mamori Inspector: Enable In Workspace` と `Mamori Inspector: Disable In Workspace` は、ワークスペースフォルダー単位で保存時検証の有効・無効を切り替えます。既定値は無効です。
 - コマンド `Mamori Inspector: Setup Managed Tools` は、管理対象の Maven、Gradle、Semgrep、Prettier、ESLint、Stylelint、htmlhint をワークスペースキャッシュへ導入します。
-- コマンド `Mamori Inspector: Clear Managed Tool Cache` は、`.mamori/tools` 配下と `.mamori/node` の管理キャッシュディレクトリを削除します。
+- コマンド `Mamori Inspector: Clear Managed Tool Cache` は、`.mamori/tools` と `.mamori/node` の管理キャッシュを削除します。
 - コマンド `Mamori Inspector: Install Git Hooks` と `Mamori Inspector: Uninstall Git Hooks` は、CLI と同じランナーを呼び出し、`.git/hooks/pre-commit` と `.git/hooks/pre-push` を管理します。
 - Maven と Gradle の build 定義を解析して、Checkstyle、PMD、Spotless、CPD、SpotBugs などの Java ツール設定を解決します。
 - `mamori.js setup` は VS Code の setup コマンドと同じ管理ツール一式を準備し、`mamori.js cache-clear` は VS Code の cache-clear コマンドと同じキャッシュ削除を行います。
@@ -82,12 +81,11 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 | 保存時 | いいえ | `Mamori Inspector: Enable In Workspace` を実行 | 保存したファイルのみ | Mamori Inspector を有効化したワークスペースフォルダー内の対応ファイルを保存したときに実行します。 |
 | pre-commit | いいえ | `Mamori Inspector: Install Git Hooks` を実行 | ステージ済みファイルのみ | 検証失敗時は commit を停止します。 |
 | pre-push | いいえ | `Mamori Inspector: Install Git Hooks` を実行 | ワークスペース | 検証失敗時は push を停止します。ただし SpotBugs の skip 条件は仕様に従います。 |
-| 手動 | いいえ | なし | ワークスペース | `Mamori Inspector: Run Workspace Check` で実行します。保存時有効設定に関係なく利用できます。 |
+| 手動 | いいえ | なし | ワークスペース | `Mamori Inspector: Run Workspace Check` で実行します。 |
 
 ## 保存時検証と Git hook 検証の違い
 - 保存時検証は、対象ワークスペースフォルダーで `Mamori Inspector: Enable In Workspace` を実行したあとに始まり、保存したファイルだけを対象にします。
 - 保存時検証は、エディタ上で素早くフィードバックを返す用途で、生成した SARIF から VS Code Problems を更新します。
-- 手動の workspace チェックは、保存時有効設定とは独立しており、保存時検証を無効にしていても VS Code Problems を更新できます。
 - Git hook 検証は、管理対象 hook をインストールするまで実行されません。
 - pre-commit 検証はステージ済みファイルのみを対象にし、整形による変更を自動で再ステージします。
 - pre-push 検証はワークスペース全体を対象にし、push 前のより広い品質ゲートとして動作します。

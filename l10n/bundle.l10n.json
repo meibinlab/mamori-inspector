@@ -18,7 +18,6 @@
   "Mamori Inspector: No available workspace folders were found.": "Mamori Inspector: No available workspace folders were found.",
   "Running Mamori Inspector": "Running Mamori Inspector",
   "Mamori Inspector: Reflected {0} diagnostics.": "Mamori Inspector: Reflected {0} diagnostics.",
-  "Mamori Inspector: Reflected {0} diagnostics with partial errors. See the output channel for details.": "Mamori Inspector: Reflected {0} diagnostics with partial errors. See the output channel for details.",
   "Mamori Inspector: Execution failed. {0}": "Mamori Inspector: Execution failed. {0}",
   "Mamori Inspector: Enabled in workspace \"{0}\".": "Mamori Inspector: Enabled in workspace \"{0}\".",
   "Mamori Inspector: Disabled in workspace \"{0}\".": "Mamori Inspector: Disabled in workspace \"{0}\".",

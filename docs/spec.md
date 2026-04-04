@@ -95,11 +95,6 @@ SpotBugsの例外仕様（確定）:
 - class files（例: `target/classes` や `build/classes/java/main`）が見つからない場合は警告ログを出してスキップし、pushは継続する
 
 ### 3.4 手動（manual、将来対応あり）
-手動実行の前提（確定）:
-- `mamori-inspector.enabled` は保存時検証だけを制御する
-- `Mamori Inspector: Run Workspace Check` は保存時設定に関係なく実行できる
-- そのため、保存時検証を無効にしたワークスペースでも、手動実行では同じ workspace finding を Problems に反映できる
-
 優先実装:
 - OWASP Dependency-Check
 - Trivy
@@ -223,7 +218,7 @@ warning の例:
 - セットアップ（Java系ツールDL、`.mamori/node` のnpm導入を明示実行）
 - Git hooks インストール / アンインストール
 - 手動全体チェック（manual）
-- キャッシュ削除（`.mamori/tools` 配下の管理キャッシュディレクトリ / `.mamori/node`）
+- キャッシュ削除（`.mamori/tools` / `.mamori/node`）
 
 Git hooks コマンドの通知仕様（確定）:
 - install / uninstall が成功した場合は情報通知を表示する
