@@ -968,6 +968,19 @@ function clearWorkspaceDiagnosticsByUri(
 }
 
 /**
+ * 対象 URI の Diagnostics を保持マップから削除する。
+ * @param diagnosticsByUri URI ごとの Diagnostics を表す。
+ * @param documentUri 対象ドキュメント URI を表す。
+ * @returns 返り値はない。
+ */
+function clearDocumentDiagnosticsByUri(
+  diagnosticsByUri: Map<string, DiagnosticsByUriEntry>,
+  documentUri: vscode.Uri,
+): void {
+  diagnosticsByUri.delete(documentUri.toString());
+}
+
+/**
  * 対象ワークスペースの Diagnostics を最新結果へ置き換える。
  * @param target 集約先を表す。
  * @param workspaceFolder 対象ワークスペースフォルダーを表す。
@@ -1144,6 +1157,7 @@ async function runSaveCheck(
   extensionRootPath: string,
 ): Promise<void> {
   const sarifPath = getSarifOutputPath(workspaceFolder, SAVE_SARIF_OUTPUT);
+  const documentUri = vscode.Uri.file(filePath);
 
   try {
     await runMamoriCli(workspaceFolder, {
@@ -1157,6 +1171,7 @@ async function runSaveCheck(
     }
 
     const saveDiagnosticsByUri = buildDiagnosticsByUri(workspaceFolder, sarifPath);
+    clearDocumentDiagnosticsByUri(diagnosticsState.manualDiagnosticsByUri, documentUri);
     replaceWorkspaceDiagnosticsByUri(
       diagnosticsState.saveDiagnosticsByUri,
       workspaceFolder,

@@ -18,6 +18,8 @@ type VscodeModule = typeof import('vscode');
 
 // 保存時の SARIF 出力先を表す
 const SAVE_SARIF_OUTPUT = path.join('.mamori', 'out', 'combined-save.sarif');
+// 手動実行の SARIF 出力先を表す
+const MANUAL_SARIF_OUTPUT = path.join('.mamori', 'out', 'combined.sarif');
 // 保存時統合テストの待機上限を表す
 const DEFAULT_TIMEOUT_MILLISECONDS = 10000;
 // 待機時のポーリング間隔を表す
@@ -293,15 +295,37 @@ function createRestoreAction(filePath: string): () => void {
 }
 
 /**
+ * テスト用 Maven ラッパーの出力内容を表す。
+ */
+interface MavenWrapperOptions {
+  /** Checkstyle finding を出力するかを表す。 */
+  emitCheckstyleFinding?: boolean;
+  /** PMD finding を出力するかを表す。 */
+  emitPmdFinding?: boolean;
+}
+
+/**
  * テスト用 Maven ラッパーを作成する。
  * @param workspacePath ワークスペースパスを表す。
  * @param logPath 実行ログパスを表す。
  * @param targetFileUri 対象ファイル URI を表す。
+ * @param options ラッパー出力オプションを表す。
  * @returns 返り値はない。
  */
-function writeMavenWrapper(workspacePath: string, logPath: string, targetFileUri: string): void {
-  const checkstyleXml = `<?xml version="1.0"?><checkstyle version="10.0"><file name="${targetFileUri}"><error line="2" column="5" severity="warning" message="Missing Javadoc" source="com.puppycrawl.tools.checkstyle.checks.javadoc.JavadocTypeCheck"/></file></checkstyle>`;
-  const pmdXml = `<?xml version="1.0"?><pmd version="7.0.0"><file name="${targetFileUri}"><violation beginline="3" begincolumn="9" priority="3" rule="UnusedLocalVariable">Unused local variable</violation></file></pmd>`;
+function writeMavenWrapper(
+  workspacePath: string,
+  logPath: string,
+  targetFileUri: string,
+  options?: MavenWrapperOptions,
+): void {
+  const emitCheckstyleFinding = options?.emitCheckstyleFinding ?? true;
+  const emitPmdFinding = options?.emitPmdFinding ?? true;
+  const checkstyleXml = emitCheckstyleFinding
+    ? `<?xml version="1.0"?><checkstyle version="10.0"><file name="${targetFileUri}"><error line="2" column="5" severity="warning" message="Missing Javadoc" source="com.puppycrawl.tools.checkstyle.checks.javadoc.JavadocTypeCheck"/></file></checkstyle>`
+    : '<?xml version="1.0"?><checkstyle version="10.0"></checkstyle>';
+  const pmdXml = emitPmdFinding
+    ? `<?xml version="1.0"?><pmd version="7.0.0"><file name="${targetFileUri}"><violation beginline="3" begincolumn="9" priority="3" rule="UnusedLocalVariable">Unused local variable</violation></file></pmd>`
+    : '<?xml version="1.0"?><pmd version="7.0.0"></pmd>';
   const wrapperPath = process.platform === 'win32'
     ? path.join(workspacePath, 'mvnw.cmd')
     : path.join(workspacePath, 'mvnw');
@@ -1279,6 +1303,114 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
       restorePomFile();
       restoreMavenWrapper();
       restoreSemgrepWrapper();
+      restoreSaveSarif();
+    }
+  });
+
+  /**
+   * 手動実行で付いた PMD Diagnostics が、保存時再検査で解消した対象ファイルから消えること。
+   * @returns 実行完了を待つ Promise を返す。
+   */
+  test('Clears manual PMD diagnostics for a file after a clean save check', async function() {
+    this.timeout(20000);
+    const activeVscodeApi = vscodeApi;
+    const workspaceRoot = activeVscodeApi.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceRoot) {
+      throw new Error('Workspace root was not found');
+    }
+
+    const pomFilePath = path.join(workspaceRoot, 'pom.xml');
+    const mavenWrapperPath = process.platform === 'win32'
+      ? path.join(workspaceRoot, 'mvnw.cmd')
+      : path.join(workspaceRoot, 'mvnw');
+    const semgrepWrapperPath = process.platform === 'win32'
+      ? path.join(workspaceRoot, 'bin', 'semgrep.cmd')
+      : path.join(workspaceRoot, 'bin', 'semgrep');
+    const manualSarifPath = path.join(workspaceRoot, MANUAL_SARIF_OUTPUT);
+    const saveSarifPath = path.join(workspaceRoot, SAVE_SARIF_OUTPUT);
+    const restorePomFile = createRestoreAction(pomFilePath);
+    const restoreMavenWrapper = createRestoreAction(mavenWrapperPath);
+    const restoreSemgrepWrapper = createRestoreAction(semgrepWrapperPath);
+    const restoreManualSarif = createRestoreAction(manualSarifPath);
+    const restoreSaveSarif = createRestoreAction(saveSarifPath);
+
+    try {
+      fs.rmSync(manualSarifPath, { force: true });
+      fs.rmSync(saveSarifPath, { force: true });
+      const {
+        fixtureDirectory,
+        javaFilePath,
+        mavenLogPath,
+        semgrepLogPath,
+      } = setupSaveIntegrationFixture(workspaceRoot);
+      const restoreMavenLog = createRestoreAction(mavenLogPath);
+      const restoreSemgrepLog = createRestoreAction(semgrepLogPath);
+      fs.rmSync(mavenLogPath, { force: true });
+      fs.rmSync(semgrepLogPath, { force: true });
+
+      setExecutablePathEnvironment(`${path.join(workspaceRoot, 'bin')}${path.delimiter}${originalPath}`);
+
+      try {
+        writeMavenWrapper(workspaceRoot, mavenLogPath, toWorkspaceRelativeUri(workspaceRoot, javaFilePath));
+        writeSemgrepWrapper(path.join(workspaceRoot, 'bin'), semgrepLogPath, toWorkspaceRelativeUri(workspaceRoot, javaFilePath));
+
+        const document = await activeVscodeApi.workspace.openTextDocument(activeVscodeApi.Uri.file(javaFilePath));
+        await activeVscodeApi.window.showTextDocument(document);
+        await getMamoriExtension(activeVscodeApi).activate();
+        await activeVscodeApi.commands.executeCommand('mamori-inspector.runWorkspaceCheck');
+
+        await waitFor(() => fs.existsSync(manualSarifPath));
+        await waitFor(() => activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(javaFilePath)).length === 3);
+
+        writeMavenWrapper(
+          workspaceRoot,
+          mavenLogPath,
+          toWorkspaceRelativeUri(workspaceRoot, javaFilePath),
+          {
+            emitPmdFinding: false,
+          },
+        );
+
+        await activeVscodeApi.commands.executeCommand('mamori-inspector.enableInWorkspace');
+        assert.strictEqual(
+          activeVscodeApi.workspace.getConfiguration('mamori-inspector', document.uri).get('enabled', false),
+          true,
+        );
+
+        const editor = activeVscodeApi.window.activeTextEditor;
+        if (!editor) {
+          throw new Error('Active text editor was not found');
+        }
+
+        await editor.edit((editBuilder) => {
+          editBuilder.insert(new activeVscodeApi.Position(1, 0), '  int fixedValue = 1;\n');
+        });
+        await document.save();
+
+        await waitFor(() => fs.existsSync(saveSarifPath));
+        await waitFor(() => {
+          const diagnostics = activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(javaFilePath));
+          const messages = diagnostics.map((diagnostic) => diagnostic.message);
+          return diagnostics.length === 2 && !messages.includes('Unused local variable');
+        });
+
+        const diagnostics = activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(javaFilePath));
+        const messages = diagnostics.map((diagnostic) => diagnostic.message);
+
+        assert.strictEqual(diagnostics.length, 2);
+        assert.ok(messages.includes('Missing Javadoc'));
+        assert.ok(messages.includes('Potential issue'));
+        assert.ok(!messages.includes('Unused local variable'));
+      } finally {
+        restoreMavenLog();
+        restoreSemgrepLog();
+        fs.rmSync(fixtureDirectory, { recursive: true, force: true });
+      }
+    } finally {
+      restorePomFile();
+      restoreMavenWrapper();
+      restoreSemgrepWrapper();
+      restoreManualSarif();
       restoreSaveSarif();
     }
   });
