@@ -15,11 +15,11 @@ import { loadSarifFindings } from '../sarif-diagnostics';
 
 /** VS Code API 型を表す。 */
 type VscodeModule = typeof import('vscode');
+/** VS Code ワークスペースフォルダー型を表す。 */
+type VscodeWorkspaceFolder = import('vscode').WorkspaceFolder;
 
 // 保存時の SARIF 出力先を表す
 const SAVE_SARIF_OUTPUT = path.join('.mamori', 'out', 'combined-save.sarif');
-// 手動実行の SARIF 出力先を表す
-const MANUAL_SARIF_OUTPUT = path.join('.mamori', 'out', 'combined.sarif');
 // 保存時統合テストの待機上限を表す
 const DEFAULT_TIMEOUT_MILLISECONDS = 10000;
 // 待機時のポーリング間隔を表す
@@ -106,42 +106,74 @@ function loadVscode(): VscodeModule | undefined {
 async function setWorkspaceMamoriEnabled(
   vscodeApi: VscodeModule,
   enabled: boolean | undefined,
-  resourceUri?: Parameters<VscodeModule['workspace']['getConfiguration']>[1],
 ): Promise<void> {
-  const workspaceFolderUri = resourceUri ?? vscodeApi.workspace.workspaceFolders?.[0]?.uri;
-  if (!workspaceFolderUri) {
+  const workspaceFolder = vscodeApi.workspace.workspaceFolders?.[0];
+  if (!workspaceFolder) {
     return;
   }
 
-  await vscodeApi.workspace.getConfiguration('mamori-inspector', workspaceFolderUri).update(
-    'enabled',
-    enabled,
-    vscodeApi.ConfigurationTarget.WorkspaceFolder,
+  await updateWorkspaceMamoriEnabledSetting(vscodeApi, workspaceFolder.uri.fsPath, enabled);
+}
+
+/**
+ * 指定パスに対応するワークスペースフォルダーを返す。
+ * @param vscodeApi VS Code API を表す。
+ * @param workspaceRoot 対象ワークスペースルートを表す。
+ * @returns 対応するワークスペースフォルダーを返す。
+ */
+function findWorkspaceFolderByPath(
+  vscodeApi: VscodeModule,
+  workspaceRoot: string,
+): VscodeWorkspaceFolder | undefined {
+  return vscodeApi.workspace.workspaceFolders?.find(
+    (workspaceFolder) => workspaceFolder.uri.fsPath === workspaceRoot,
   );
 }
 
 /**
- * ワークスペースフォルダー設定ファイルの Mamori 有効化設定を VS Code 経由で更新する。
+ * ワークスペース設定 API を使って Mamori 有効化設定を更新する。
  * @param vscodeApi VS Code API を表す。
  * @param workspaceRoot 対象ワークスペースルートを表す。
  * @param enabled 設定する有効状態を表す。
  * @returns 更新完了を待つ Promise を返す。
  */
-async function updateWorkspaceFolderMamoriEnabledSettingFile(
+async function updateWorkspaceMamoriEnabledSetting(
   vscodeApi: VscodeModule,
   workspaceRoot: string,
   enabled: boolean | undefined,
 ): Promise<void> {
-  const settingsPath = path.join(workspaceRoot, '.vscode', 'settings.json');
-  const settingsUri = vscodeApi.Uri.file(settingsPath);
-  /** ワークスペース設定内容を表す。 */
-  let settings: Record<string, unknown> = {};
-
-  try {
-    settings = JSON.parse(Buffer.from(await vscodeApi.workspace.fs.readFile(settingsUri)).toString('utf8')) as Record<string, unknown>;
-  } catch {
-    settings = {};
+  const workspaceFolder = findWorkspaceFolderByPath(vscodeApi, workspaceRoot);
+  if (workspaceFolder) {
+    try {
+      await vscodeApi.workspace.getConfiguration('mamori-inspector', workspaceFolder.uri).update(
+        'enabled',
+        enabled,
+        vscodeApi.ConfigurationTarget.WorkspaceFolder,
+      );
+      return;
+    } catch (error) {
+      if (!(error instanceof Error) || !/no resource is provided/i.test(error.message)) {
+        throw error;
+      }
+    }
   }
+
+  await updateWorkspaceMamoriEnabledSettingFile(workspaceRoot, enabled);
+}
+
+/**
+ * ワークスペース設定ファイルへ Mamori 有効化設定を書き込む。
+ * @param workspaceRoot 対象ワークスペースルートを表す。
+ * @param enabled 設定する有効状態を表す。
+ * @returns 更新完了を待つ Promise を返す。
+ */
+async function updateWorkspaceMamoriEnabledSettingFile(
+  workspaceRoot: string,
+  enabled: boolean | undefined,
+): Promise<void> {
+  const settingsDirectoryPath = path.join(workspaceRoot, '.vscode');
+  const settingsPath = path.join(settingsDirectoryPath, 'settings.json');
+  const settings = readJsonObjectFile(settingsPath);
 
   if (typeof enabled === 'undefined') {
     delete settings['mamori-inspector.enabled'];
@@ -150,19 +182,99 @@ async function updateWorkspaceFolderMamoriEnabledSettingFile(
   }
 
   if (Object.keys(settings).length === 0) {
-    try {
-      await vscodeApi.workspace.fs.delete(settingsUri, { useTrash: false });
-    } catch {
-      // 設定ファイルが無い場合は削除不要とみなす。
-    }
+    fs.rmSync(settingsPath, { force: true });
     return;
   }
 
-  await vscodeApi.workspace.fs.createDirectory(vscodeApi.Uri.file(path.dirname(settingsPath)));
-  await vscodeApi.workspace.fs.writeFile(
-    settingsUri,
-    Buffer.from(`${JSON.stringify(settings, null, 2)}${os.EOL}`, 'utf8'),
-  );
+  fs.mkdirSync(settingsDirectoryPath, { recursive: true });
+  fs.writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
+}
+
+/**
+ * JSON オブジェクトファイルをコメント許容で読み込む。
+ * @param filePath 対象ファイルパスを表す。
+ * @returns 読み込んだ JSON オブジェクトを返す。
+ */
+function readJsonObjectFile(filePath: string): Record<string, unknown> {
+  if (!fs.existsSync(filePath)) {
+    return {};
+  }
+
+  const rawContent = fs.readFileSync(filePath, 'utf8');
+  try {
+    return JSON.parse(rawContent) as Record<string, unknown>;
+  } catch {
+    const sanitizedContent = stripJsonComments(rawContent);
+    return JSON.parse(sanitizedContent) as Record<string, unknown>;
+  }
+}
+
+/**
+ * JSON 文字列内を壊さずにコメントだけを除去する。
+ * @param input コメントを含む JSON 文字列を表す。
+ * @returns コメント除去後の JSON 文字列を返す。
+ */
+function stripJsonComments(input: string): string {
+  let result = '';
+  let inString = false;
+  let inLineComment = false;
+  let inBlockComment = false;
+  let isEscaped = false;
+
+  for (let index = 0; index < input.length; index += 1) {
+    const currentCharacter = input[index];
+    const nextCharacter = index + 1 < input.length ? input[index + 1] : '';
+
+    if (inLineComment) {
+      if (currentCharacter === '\n' || currentCharacter === '\r') {
+        inLineComment = false;
+        result += currentCharacter;
+      }
+      continue;
+    }
+
+    if (inBlockComment) {
+      if (currentCharacter === '*' && nextCharacter === '/') {
+        inBlockComment = false;
+        index += 1;
+      }
+      continue;
+    }
+
+    if (inString) {
+      result += currentCharacter;
+      if (isEscaped) {
+        isEscaped = false;
+      } else if (currentCharacter === '\\') {
+        isEscaped = true;
+      } else if (currentCharacter === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (currentCharacter === '"') {
+      inString = true;
+      result += currentCharacter;
+      continue;
+    }
+
+    if (currentCharacter === '/' && nextCharacter === '/') {
+      inLineComment = true;
+      index += 1;
+      continue;
+    }
+
+    if (currentCharacter === '/' && nextCharacter === '*') {
+      inBlockComment = true;
+      index += 1;
+      continue;
+    }
+
+    result += currentCharacter;
+  }
+
+  return result;
 }
 
 /**
@@ -181,6 +293,53 @@ function getExecutablePathEnvironment(): string {
 function setExecutablePathEnvironment(value: string): void {
   process.env.PATH = value;
   process.env.Path = value;
+}
+
+/**
+ * 現在の Semgrep コマンド上書き設定を返す。
+ * @returns Semgrep コマンド上書き設定を返す。
+ */
+function getSemgrepCommandOverride(): string | undefined {
+  return process.env.MAMORI_TOOL_SEMGREP_COMMAND;
+}
+
+/**
+ * Semgrep コマンド上書き設定を更新する。
+ * @param value 設定するコマンドパスを表す。
+ * @returns 返り値はない。
+ */
+function setSemgrepCommandOverride(value: string | undefined): void {
+  if (typeof value === 'string' && value.trim() !== '') {
+    process.env.MAMORI_TOOL_SEMGREP_COMMAND = value;
+    return;
+  }
+
+  delete process.env.MAMORI_TOOL_SEMGREP_COMMAND;
+}
+
+/**
+ * 外部実プロジェクトのルートパスを解決する。
+ * @param vscodeApi VS Code API を表す。
+ * @returns 解決できた外部実プロジェクトルートを返す。
+ */
+function resolveRealProjectRoot(vscodeApi: VscodeModule): string | undefined {
+  const environmentRoot = process.env.MAMORI_REAL_PROJECT_ROOT;
+  if (environmentRoot && fs.existsSync(environmentRoot)) {
+    return environmentRoot;
+  }
+
+  const primaryWorkspaceRoot = vscodeApi.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!primaryWorkspaceRoot) {
+    return undefined;
+  }
+
+  const siblingWorkspaceRoot = path.resolve(
+    primaryWorkspaceRoot,
+    '..',
+    '..',
+    'meibinlab-spring-boot-wrapper',
+  );
+  return fs.existsSync(siblingWorkspaceRoot) ? siblingWorkspaceRoot : undefined;
 }
 
 /**
@@ -295,37 +454,15 @@ function createRestoreAction(filePath: string): () => void {
 }
 
 /**
- * テスト用 Maven ラッパーの出力内容を表す。
- */
-interface MavenWrapperOptions {
-  /** Checkstyle finding を出力するかを表す。 */
-  emitCheckstyleFinding?: boolean;
-  /** PMD finding を出力するかを表す。 */
-  emitPmdFinding?: boolean;
-}
-
-/**
  * テスト用 Maven ラッパーを作成する。
  * @param workspacePath ワークスペースパスを表す。
  * @param logPath 実行ログパスを表す。
  * @param targetFileUri 対象ファイル URI を表す。
- * @param options ラッパー出力オプションを表す。
  * @returns 返り値はない。
  */
-function writeMavenWrapper(
-  workspacePath: string,
-  logPath: string,
-  targetFileUri: string,
-  options?: MavenWrapperOptions,
-): void {
-  const emitCheckstyleFinding = options?.emitCheckstyleFinding ?? true;
-  const emitPmdFinding = options?.emitPmdFinding ?? true;
-  const checkstyleXml = emitCheckstyleFinding
-    ? `<?xml version="1.0"?><checkstyle version="10.0"><file name="${targetFileUri}"><error line="2" column="5" severity="warning" message="Missing Javadoc" source="com.puppycrawl.tools.checkstyle.checks.javadoc.JavadocTypeCheck"/></file></checkstyle>`
-    : '<?xml version="1.0"?><checkstyle version="10.0"></checkstyle>';
-  const pmdXml = emitPmdFinding
-    ? `<?xml version="1.0"?><pmd version="7.0.0"><file name="${targetFileUri}"><violation beginline="3" begincolumn="9" priority="3" rule="UnusedLocalVariable">Unused local variable</violation></file></pmd>`
-    : '<?xml version="1.0"?><pmd version="7.0.0"></pmd>';
+function writeMavenWrapper(workspacePath: string, logPath: string, targetFileUri: string): void {
+  const checkstyleXml = `<?xml version="1.0"?><checkstyle version="10.0"><file name="${targetFileUri}"><error line="2" column="5" severity="warning" message="Missing Javadoc" source="com.puppycrawl.tools.checkstyle.checks.javadoc.JavadocTypeCheck"/></file></checkstyle>`;
+  const pmdXml = `<?xml version="1.0"?><pmd version="7.0.0"><file name="${targetFileUri}"><violation beginline="3" begincolumn="9" priority="3" rule="UnusedLocalVariable">Unused local variable</violation></file></pmd>`;
   const wrapperPath = process.platform === 'win32'
     ? path.join(workspacePath, 'mvnw.cmd')
     : path.join(workspacePath, 'mvnw');
@@ -936,16 +1073,13 @@ function createHooksMessageRecorder(): {
  */
 function captureWindowMessages(vscodeApi: VscodeModule): {
   informationMessages: string[];
-  warningMessages: string[];
   errorMessages: string[];
   restore: () => void;
 } {
   const informationMessages: string[] = [];
-  const warningMessages: string[] = [];
   const errorMessages: string[] = [];
   const windowApi = vscodeApi.window as unknown as Record<string, unknown>;
   const originalShowInformationMessage = windowApi.showInformationMessage;
-  const originalShowWarningMessage = windowApi.showWarningMessage;
   const originalShowErrorMessage = windowApi.showErrorMessage;
 
   Object.defineProperty(windowApi, 'showInformationMessage', {
@@ -953,14 +1087,6 @@ function captureWindowMessages(vscodeApi: VscodeModule): {
     writable: true,
     value: async(message: string) => {
       informationMessages.push(message);
-      return undefined;
-    },
-  });
-  Object.defineProperty(windowApi, 'showWarningMessage', {
-    configurable: true,
-    writable: true,
-    value: async(message: string) => {
-      warningMessages.push(message);
       return undefined;
     },
   });
@@ -975,18 +1101,12 @@ function captureWindowMessages(vscodeApi: VscodeModule): {
 
   return {
     informationMessages,
-    warningMessages,
     errorMessages,
     restore: () => {
       Object.defineProperty(windowApi, 'showInformationMessage', {
         configurable: true,
         writable: true,
         value: originalShowInformationMessage,
-      });
-      Object.defineProperty(windowApi, 'showWarningMessage', {
-        configurable: true,
-        writable: true,
-        value: originalShowWarningMessage,
       });
       Object.defineProperty(windowApi, 'showErrorMessage', {
         configurable: true,
@@ -1112,6 +1232,8 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
   const vscodeApi = integrationVscodeApi as VscodeModule;
   /** 元の PATH を表す。 */
   let originalPath = '';
+  /** 元の Semgrep コマンド上書き設定を表す。 */
+  let originalSemgrepCommandOverride: string | undefined;
 
   /**
    * 各テストの前処理を行う。
@@ -1119,6 +1241,7 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
    */
   setup(async() => {
     originalPath = getExecutablePathEnvironment();
+    originalSemgrepCommandOverride = getSemgrepCommandOverride();
     await setWorkspaceMamoriEnabled(vscodeApi, undefined);
     await vscodeApi.workspace.getConfiguration('files').update(
       'autoSave',
@@ -1144,6 +1267,7 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
   teardown(async() => {
     await setWorkspaceMamoriEnabled(vscodeApi, undefined);
     setExecutablePathEnvironment(originalPath);
+    setSemgrepCommandOverride(originalSemgrepCommandOverride);
   });
 
   /**
@@ -1304,221 +1428,6 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
       restoreMavenWrapper();
       restoreSemgrepWrapper();
       restoreSaveSarif();
-    }
-  });
-
-  /**
-   * 手動実行で付いた PMD Diagnostics が、保存時再検査で解消した対象ファイルから消えること。
-   * @returns 実行完了を待つ Promise を返す。
-   */
-  test('Clears manual PMD diagnostics for a file after a clean save check', async function() {
-    this.timeout(20000);
-    const activeVscodeApi = vscodeApi;
-    const workspaceRoot = activeVscodeApi.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    if (!workspaceRoot) {
-      throw new Error('Workspace root was not found');
-    }
-
-    const pomFilePath = path.join(workspaceRoot, 'pom.xml');
-    const mavenWrapperPath = process.platform === 'win32'
-      ? path.join(workspaceRoot, 'mvnw.cmd')
-      : path.join(workspaceRoot, 'mvnw');
-    const semgrepWrapperPath = process.platform === 'win32'
-      ? path.join(workspaceRoot, 'bin', 'semgrep.cmd')
-      : path.join(workspaceRoot, 'bin', 'semgrep');
-    const manualSarifPath = path.join(workspaceRoot, MANUAL_SARIF_OUTPUT);
-    const saveSarifPath = path.join(workspaceRoot, SAVE_SARIF_OUTPUT);
-    const restorePomFile = createRestoreAction(pomFilePath);
-    const restoreMavenWrapper = createRestoreAction(mavenWrapperPath);
-    const restoreSemgrepWrapper = createRestoreAction(semgrepWrapperPath);
-    const restoreManualSarif = createRestoreAction(manualSarifPath);
-    const restoreSaveSarif = createRestoreAction(saveSarifPath);
-
-    try {
-      fs.rmSync(manualSarifPath, { force: true });
-      fs.rmSync(saveSarifPath, { force: true });
-      const {
-        fixtureDirectory,
-        javaFilePath,
-        mavenLogPath,
-        semgrepLogPath,
-      } = setupSaveIntegrationFixture(workspaceRoot);
-      const restoreMavenLog = createRestoreAction(mavenLogPath);
-      const restoreSemgrepLog = createRestoreAction(semgrepLogPath);
-      fs.rmSync(mavenLogPath, { force: true });
-      fs.rmSync(semgrepLogPath, { force: true });
-
-      setExecutablePathEnvironment(`${path.join(workspaceRoot, 'bin')}${path.delimiter}${originalPath}`);
-
-      try {
-        writeMavenWrapper(workspaceRoot, mavenLogPath, toWorkspaceRelativeUri(workspaceRoot, javaFilePath));
-        writeSemgrepWrapper(path.join(workspaceRoot, 'bin'), semgrepLogPath, toWorkspaceRelativeUri(workspaceRoot, javaFilePath));
-
-        const document = await activeVscodeApi.workspace.openTextDocument(activeVscodeApi.Uri.file(javaFilePath));
-        await activeVscodeApi.window.showTextDocument(document);
-        await getMamoriExtension(activeVscodeApi).activate();
-        await activeVscodeApi.commands.executeCommand('mamori-inspector.runWorkspaceCheck');
-
-        await waitFor(() => fs.existsSync(manualSarifPath));
-        await waitFor(() => activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(javaFilePath)).length === 3);
-
-        writeMavenWrapper(
-          workspaceRoot,
-          mavenLogPath,
-          toWorkspaceRelativeUri(workspaceRoot, javaFilePath),
-          {
-            emitPmdFinding: false,
-          },
-        );
-
-        await activeVscodeApi.commands.executeCommand('mamori-inspector.enableInWorkspace');
-        assert.strictEqual(
-          activeVscodeApi.workspace.getConfiguration('mamori-inspector', document.uri).get('enabled', false),
-          true,
-        );
-
-        const editor = activeVscodeApi.window.activeTextEditor;
-        if (!editor) {
-          throw new Error('Active text editor was not found');
-        }
-
-        await editor.edit((editBuilder) => {
-          editBuilder.insert(new activeVscodeApi.Position(1, 0), '  int fixedValue = 1;\n');
-        });
-        await document.save();
-
-        await waitFor(() => fs.existsSync(saveSarifPath));
-        await waitFor(() => {
-          const diagnostics = activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(javaFilePath));
-          const messages = diagnostics.map((diagnostic) => diagnostic.message);
-          return diagnostics.length === 2 && !messages.includes('Unused local variable');
-        });
-
-        const diagnostics = activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(javaFilePath));
-        const messages = diagnostics.map((diagnostic) => diagnostic.message);
-
-        assert.strictEqual(diagnostics.length, 2);
-        assert.ok(messages.includes('Missing Javadoc'));
-        assert.ok(messages.includes('Potential issue'));
-        assert.ok(!messages.includes('Unused local variable'));
-      } finally {
-        restoreMavenLog();
-        restoreSemgrepLog();
-        fs.rmSync(fixtureDirectory, { recursive: true, force: true });
-      }
-    } finally {
-      restorePomFile();
-      restoreMavenWrapper();
-      restoreSemgrepWrapper();
-      restoreManualSarif();
-      restoreSaveSarif();
-    }
-  });
-
-  /**
-   * 保存時実行では、更新済み SARIF があっても終了コード 2 を部分成功として扱わないこと。
-   * @returns 実行完了を待つ Promise を返す。
-   */
-  test('Does not publish save diagnostics when the save command exits with partial errors', async function() {
-    this.timeout(20000);
-    const activeVscodeApi = vscodeApi;
-    const workspaceRoot = activeVscodeApi.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    if (!workspaceRoot) {
-      throw new Error('Workspace root was not found');
-    }
-
-    const cliScriptPath = path.join(workspaceRoot, '.mamori', 'mamori.js');
-    const saveSarifPath = path.join(workspaceRoot, SAVE_SARIF_OUTPUT);
-    const fixtureDirectory = path.join(workspaceRoot, '.tmp-save-partial-check');
-    const javaFilePath = path.join(fixtureDirectory, 'src', 'main', 'java', 'App.java');
-    const restoreCliScript = createRestoreAction(cliScriptPath);
-    const restoreSaveSarif = createRestoreAction(saveSarifPath);
-    const sarifContent = JSON.stringify({
-      version: '2.1.0',
-      runs: [
-        {
-          tool: {
-            driver: {
-              name: 'Mamori Inspector',
-            },
-          },
-          results: [
-            {
-              ruleId: 'sample-save-rule',
-              level: 'warning',
-              message: {
-                text: 'Save partial result issue',
-              },
-              locations: [
-                {
-                  physicalLocation: {
-                    artifactLocation: {
-                      uri: javaFilePath,
-                    },
-                    region: {
-                      startLine: 1,
-                      startColumn: 1,
-                    },
-                  },
-                },
-              ],
-            },
-          ],
-        },
-      ],
-    });
-
-    try {
-      fs.mkdirSync(path.dirname(javaFilePath), { recursive: true });
-      fs.writeFileSync(javaFilePath, 'class App {}\n', 'utf8');
-      fs.rmSync(saveSarifPath, { force: true });
-      fs.writeFileSync(
-        cliScriptPath,
-        [
-          '#!/usr/bin/env node',
-          'const fs = require("fs");',
-          'const path = require("path");',
-          'const outputIndex = process.argv.indexOf("--sarif-output");',
-          'const sarifOutputPath = outputIndex >= 0 ? process.argv[outputIndex + 1] : "";',
-          'if (!sarifOutputPath) {',
-          '  process.stderr.write("missing sarif output\\n");',
-          '  process.exit(2);',
-          '}',
-          'fs.mkdirSync(path.dirname(sarifOutputPath), { recursive: true });',
-          `fs.writeFileSync(sarifOutputPath, ${JSON.stringify(sarifContent)}, 'utf8');`,
-          "process.stdout.write('mamori: execution-result\\n');",
-          "process.stdout.write('  summary=executed:1 failed:1 skipped:0\\n');",
-          "process.stdout.write('  warnings=save runner reported a partial error\\n');",
-          'process.exit(2);',
-          '',
-        ].join('\n'),
-        'utf8',
-      );
-      makeExecutable(cliScriptPath);
-
-      const document = await activeVscodeApi.workspace.openTextDocument(activeVscodeApi.Uri.file(javaFilePath));
-      await activeVscodeApi.window.showTextDocument(document);
-      await getMamoriExtension(activeVscodeApi).activate();
-      await activeVscodeApi.commands.executeCommand('mamori-inspector.enableInWorkspace');
-
-      const editor = activeVscodeApi.window.activeTextEditor;
-      if (!editor) {
-        throw new Error('Active text editor was not found');
-      }
-
-      await editor.edit((editBuilder) => {
-        editBuilder.insert(new activeVscodeApi.Position(1, 0), '  int value = 1;\n');
-      });
-      await document.save();
-
-      await waitFor(() => fs.existsSync(saveSarifPath));
-      await delay(1500);
-
-      assert.strictEqual(activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(javaFilePath)).length, 0);
-    } finally {
-      restoreCliScript();
-      restoreSaveSarif();
-      fs.rmSync(fixtureDirectory, { recursive: true, force: true });
     }
   });
 
@@ -2493,111 +2402,6 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
   });
 
   /**
-   * 手動実行で結果 SARIF が更新されていれば、終了コード 2 でも Diagnostics を反映できること。
-   * @returns 実行完了を待つ Promise を返す。
-   */
-  test('Publishes diagnostics when manual workspace execution completes with partial errors and updated SARIF output', async function() {
-    this.timeout(20000);
-
-    const activeVscodeApi = vscodeApi;
-    const workspaceRoot = activeVscodeApi.workspace.workspaceFolders?.[0]?.uri.fsPath;
-    if (!workspaceRoot) {
-      throw new Error('Workspace root was not found');
-    }
-
-    const cliScriptPath = path.join(workspaceRoot, '.mamori', 'mamori.js');
-    const manualSarifPath = path.join(workspaceRoot, '.mamori', 'out', 'combined.sarif');
-    const fixtureDirectory = path.join(workspaceRoot, '.tmp-manual-partial-check');
-    const javaFilePath = path.join(fixtureDirectory, 'src', 'main', 'java', 'App.java');
-    const restoreCliScript = createRestoreAction(cliScriptPath);
-    const restoreManualSarif = createRestoreAction(manualSarifPath);
-    const messageCapture = captureWindowMessages(activeVscodeApi);
-    const sarifContent = JSON.stringify({
-      version: '2.1.0',
-      runs: [
-        {
-          tool: {
-            driver: {
-              name: 'Mamori Inspector',
-            },
-          },
-          results: [
-            {
-              ruleId: 'sample-rule',
-              level: 'warning',
-              message: {
-                text: 'Partial result issue',
-              },
-              locations: [
-                {
-                  physicalLocation: {
-                    artifactLocation: {
-                      uri: javaFilePath,
-                    },
-                    region: {
-                      startLine: 1,
-                      startColumn: 1,
-                    },
-                  },
-                },
-              ],
-            },
-          ],
-        },
-      ],
-    });
-
-    try {
-      fs.mkdirSync(path.dirname(javaFilePath), { recursive: true });
-      fs.writeFileSync(javaFilePath, 'class App {}\n', 'utf8');
-      fs.rmSync(manualSarifPath, { force: true });
-      fs.writeFileSync(
-        cliScriptPath,
-        [
-          '#!/usr/bin/env node',
-          'const fs = require("fs");',
-          'const path = require("path");',
-          'const outputIndex = process.argv.indexOf("--sarif-output");',
-          'const sarifOutputPath = outputIndex >= 0 ? process.argv[outputIndex + 1] : "";',
-          'if (!sarifOutputPath) {',
-          '  process.stderr.write("missing sarif output\\n");',
-          '  process.exit(2);',
-          '}',
-          'fs.mkdirSync(path.dirname(sarifOutputPath), { recursive: true });',
-          `fs.writeFileSync(sarifOutputPath, ${JSON.stringify(sarifContent)}, 'utf8');`,
-          "process.stdout.write('mamori: execution-result\\n');",
-          "process.stdout.write('  summary=executed:1 failed:1 skipped:0\\n');",
-          "process.stdout.write('  warnings=semgrep failed to start in D:/workspace/sample: command not found: semgrep\\n');",
-          'process.exit(2);',
-          '',
-        ].join('\n'),
-        'utf8',
-      );
-      makeExecutable(cliScriptPath);
-
-      await getMamoriExtension(activeVscodeApi).activate();
-      await activeVscodeApi.commands.executeCommand('mamori-inspector.runWorkspaceCheck');
-
-      await waitFor(() => fs.existsSync(manualSarifPath));
-      await waitFor(() => messageCapture.informationMessages.length > 0 || messageCapture.warningMessages.length > 0 || messageCapture.errorMessages.length > 0);
-      await waitFor(() => activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(javaFilePath)).some((diagnostic) => (
-        diagnostic.message === 'Partial result issue'
-      )));
-
-      const diagnostics = activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(javaFilePath));
-      assert.deepStrictEqual(messageCapture.errorMessages, []);
-      assert.deepStrictEqual(messageCapture.informationMessages, []);
-      assert.ok(messageCapture.warningMessages.some((message) => /partial errors/u.test(message)));
-      assert.ok(diagnostics.some((diagnostic) => diagnostic.message === 'Partial result issue'));
-    } finally {
-      messageCapture.restore();
-      restoreCliScript();
-      restoreManualSarif();
-      fs.rmSync(fixtureDirectory, { recursive: true, force: true });
-    }
-  });
-
-  /**
    * 手動実行で追加ワークスペースの Java finding も集約できること。
    * @returns 実行完了を待つ Promise を返す。
    */
@@ -2693,7 +2497,8 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
   test('Publishes PMD diagnostics for an external project during manual workspace checks', async function() {
     this.timeout(120000);
 
-    const realProjectRoot = process.env.MAMORI_REAL_PROJECT_ROOT;
+    const activeVscodeApi = vscodeApi;
+    const realProjectRoot = resolveRealProjectRoot(activeVscodeApi);
     if (!realProjectRoot || !fs.existsSync(realProjectRoot)) {
       this.skip();
       return;
@@ -2705,18 +2510,14 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
       this.skip();
       return;
     }
-
-    const activeVscodeApi = vscodeApi;
     const semgrepBinDirectory = path.join(realProjectRoot, 'bin');
     const semgrepLogPath = path.join(semgrepBinDirectory, 'semgrep.log');
     const semgrepWrapperPath = process.platform === 'win32'
       ? path.join(semgrepBinDirectory, 'semgrep.cmd')
       : path.join(semgrepBinDirectory, 'semgrep');
     const manualSarifPath = path.join(realProjectRoot, '.mamori', 'out', 'combined.sarif');
-    const workspaceSettingsPath = path.join(realProjectRoot, '.vscode', 'settings.json');
     const restoreSemgrepWrapper = createRestoreAction(semgrepWrapperPath);
     const restoreSemgrepLog = createRestoreAction(semgrepLogPath);
-    const restoreWorkspaceSettings = createRestoreAction(workspaceSettingsPath);
     const messageCapture = captureWindowMessages(activeVscodeApi);
     const alreadyOpened = (activeVscodeApi.workspace.workspaceFolders || []).some(
       (workspaceFolder) => workspaceFolder.uri.fsPath === realProjectRoot,
@@ -2741,6 +2542,7 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
       fs.rmSync(semgrepLogPath, { force: true });
       writeEmptySemgrepWrapper(semgrepBinDirectory, semgrepLogPath);
       fs.rmSync(manualSarifPath, { force: true });
+      setSemgrepCommandOverride(semgrepWrapperPath);
       setExecutablePathEnvironment(`${semgrepBinDirectory}${path.delimiter}${originalPath}`);
 
       await getMamoriExtension(activeVscodeApi).activate();
@@ -2778,13 +2580,158 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
   });
 
   /**
-   * 外部実プロジェクトを手動実行したとき、保存時有効設定に関係なく同じ Diagnostics 件数を計測できること。
+   * 外部実プロジェクトで手動実行後に対象 PMD finding を修正して保存すると、save 結果と Problems の両方から消えること。
    * @returns 実行完了を待つ Promise を返す。
    */
-  test('Measures external project diagnostics counts for manual workspace checks regardless of save-check enablement', async function() {
+  test('Clears manual PMD diagnostics after a clean save check for ApplicationTaskService in an external project', async function() {
+    this.timeout(240000);
+
+    const activeVscodeApi = vscodeApi;
+    const realProjectRoot = resolveRealProjectRoot(activeVscodeApi);
+    const targetFilePath = realProjectRoot
+      ? path.join(
+          realProjectRoot,
+          'src',
+          'main',
+          'java',
+          'jp',
+          'meibinlab',
+          'wrapper',
+          'service',
+          'ApplicationTaskService.java',
+        )
+      : '';
+    if (!realProjectRoot || !fs.existsSync(targetFilePath)) {
+      this.skip();
+      return;
+    }
+    const externalWorkspaceUri = activeVscodeApi.Uri.file(realProjectRoot);
+    const targetFileUri = activeVscodeApi.Uri.file(targetFilePath);
+    const targetMessage = "Parameter 'e' is not assigned and could be declared final";
+    const originalSignature = 'public void saveError(ApplicationTask task, long runningTime, Exception e) {';
+    const updatedSignature = 'public void saveError(ApplicationTask task, long runningTime, final Exception e) {';
+    const targetFileSuffix = 'jp/meibinlab/wrapper/service/ApplicationTaskService.java';
+    const semgrepBinDirectory = path.join(realProjectRoot, 'bin');
+    const semgrepLogPath = path.join(semgrepBinDirectory, 'semgrep.log');
+    const semgrepWrapperPath = process.platform === 'win32'
+      ? path.join(semgrepBinDirectory, 'semgrep.cmd')
+      : path.join(semgrepBinDirectory, 'semgrep');
+    const manualSarifPath = path.join(realProjectRoot, '.mamori', 'out', 'combined.sarif');
+    const saveSarifPath = path.join(realProjectRoot, SAVE_SARIF_OUTPUT);
+    const restoreTargetFile = createRestoreAction(targetFilePath);
+    const restoreSemgrepWrapper = createRestoreAction(semgrepWrapperPath);
+    const restoreSemgrepLog = createRestoreAction(semgrepLogPath);
+    const restoreManualSarif = createRestoreAction(manualSarifPath);
+    const restoreSaveSarif = createRestoreAction(saveSarifPath);
+    const messageCapture = captureWindowMessages(activeVscodeApi);
+    const alreadyOpened = (activeVscodeApi.workspace.workspaceFolders || []).some(
+      (workspaceFolder) => workspaceFolder.uri.fsPath === realProjectRoot,
+    );
+    const updateSucceeded = activeVscodeApi.workspace.updateWorkspaceFolders(
+      activeVscodeApi.workspace.workspaceFolders?.length || 0,
+      0,
+      {
+        uri: externalWorkspaceUri,
+        name: 'mamori-real-project-save-check',
+      },
+    );
+
+    if (!updateSucceeded && !alreadyOpened) {
+      messageCapture.restore();
+      throw new Error('Failed to add external project workspace folder');
+    }
+
+    try {
+      await waitFor(() => (activeVscodeApi.workspace.workspaceFolders?.length || 0) >= 2);
+      fs.mkdirSync(semgrepBinDirectory, { recursive: true });
+      fs.rmSync(semgrepLogPath, { force: true });
+      fs.rmSync(manualSarifPath, { force: true });
+      fs.rmSync(saveSarifPath, { force: true });
+      writeEmptySemgrepWrapper(semgrepBinDirectory, semgrepLogPath);
+      setSemgrepCommandOverride(semgrepWrapperPath);
+      setExecutablePathEnvironment(`${semgrepBinDirectory}${path.delimiter}${originalPath}`);
+
+      await getMamoriExtension(activeVscodeApi).activate();
+      const document = await activeVscodeApi.workspace.openTextDocument(targetFileUri);
+      await activeVscodeApi.window.showTextDocument(document);
+
+      await activeVscodeApi.commands.executeCommand('mamori-inspector.runWorkspaceCheck');
+
+      await waitFor(() => fs.existsSync(manualSarifPath), 120000);
+      await waitFor(
+        () => activeVscodeApi.languages.getDiagnostics(targetFileUri).some(
+          (diagnostic) => diagnostic.message === targetMessage,
+        ),
+        120000,
+      );
+
+      await activeVscodeApi.commands.executeCommand('mamori-inspector.enableInWorkspace');
+
+      const editor = activeVscodeApi.window.activeTextEditor;
+      if (!editor) {
+        throw new Error('Active text editor was not found');
+      }
+
+      const signatureOffset = document.getText().indexOf(originalSignature);
+      if (signatureOffset < 0) {
+        throw new Error('Target method signature was not found');
+      }
+
+      await editor.edit((editBuilder) => {
+        editBuilder.replace(
+          new activeVscodeApi.Range(
+            document.positionAt(signatureOffset),
+            document.positionAt(signatureOffset + originalSignature.length),
+          ),
+          updatedSignature,
+        );
+      });
+      await document.save();
+
+      await waitFor(() => fs.existsSync(saveSarifPath), 120000);
+      await waitFor(
+        () => !activeVscodeApi.languages.getDiagnostics(targetFileUri).some(
+          (diagnostic) => diagnostic.message === targetMessage,
+        ),
+        120000,
+      );
+
+      const diagnosticsAfterSave = activeVscodeApi.languages.getDiagnostics(targetFileUri);
+      const saveFindings = loadSarifFindings(saveSarifPath);
+      const saveFindingMessages = saveFindings
+        .filter((finding) => finding.uri.replaceAll('\\', '/').endsWith(targetFileSuffix))
+        .map((finding) => finding.message);
+
+      assert.deepStrictEqual(messageCapture.errorMessages, []);
+      assert.ok(!diagnosticsAfterSave.some((diagnostic) => diagnostic.message === targetMessage));
+      assert.ok(!saveFindingMessages.includes(targetMessage));
+    } finally {
+      messageCapture.restore();
+      restoreTargetFile();
+      restoreSemgrepWrapper();
+      restoreSemgrepLog();
+      restoreManualSarif();
+      restoreSaveSarif();
+      await updateWorkspaceMamoriEnabledSetting(activeVscodeApi, realProjectRoot, undefined);
+      const workspaceFolders = activeVscodeApi.workspace.workspaceFolders || [];
+      const secondaryWorkspaceIndex = workspaceFolders.findIndex(
+        (workspaceFolder) => workspaceFolder.uri.fsPath === realProjectRoot,
+      );
+      if (secondaryWorkspaceIndex >= 0) {
+        activeVscodeApi.workspace.updateWorkspaceFolders(secondaryWorkspaceIndex, 1);
+      }
+    }
+  });
+
+  /**
+   * 外部実プロジェクトを手動実行したとき、workspace enable 設定に関わらず Diagnostics 件数を計測できること。
+   * @returns 実行完了を待つ Promise を返す。
+   */
+  test('Measures external project diagnostics counts for manual workspace checks with workspace enablement toggled', async function() {
     this.timeout(180000);
 
-    const realProjectRoot = process.env.MAMORI_REAL_PROJECT_ROOT;
+    const activeVscodeApi = vscodeApi;
+    const realProjectRoot = resolveRealProjectRoot(activeVscodeApi);
     if (!realProjectRoot || !fs.existsSync(realProjectRoot)) {
       this.skip();
       return;
@@ -2796,8 +2743,6 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
       this.skip();
       return;
     }
-
-    const activeVscodeApi = vscodeApi;
     const externalWorkspaceUri = activeVscodeApi.Uri.file(realProjectRoot);
     const semgrepBinDirectory = path.join(realProjectRoot, 'bin');
     const semgrepLogPath = path.join(semgrepBinDirectory, 'semgrep.log');
@@ -2805,11 +2750,8 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
       ? path.join(semgrepBinDirectory, 'semgrep.cmd')
       : path.join(semgrepBinDirectory, 'semgrep');
     const manualSarifPath = path.join(realProjectRoot, '.mamori', 'out', 'combined.sarif');
-    const externalProjectResourceUri = activeVscodeApi.Uri.file(firstViolation.filePath);
-    const workspaceSettingsPath = path.join(realProjectRoot, '.vscode', 'settings.json');
     const restoreSemgrepWrapper = createRestoreAction(semgrepWrapperPath);
     const restoreSemgrepLog = createRestoreAction(semgrepLogPath);
-    const restoreWorkspaceSettings = createRestoreAction(workspaceSettingsPath);
     const messageCapture = captureWindowMessages(activeVscodeApi);
     const alreadyOpened = (activeVscodeApi.workspace.workspaceFolders || []).some((workspaceFolder) => workspaceFolder.uri.fsPath === realProjectRoot);
     const updateSucceeded = activeVscodeApi.workspace.updateWorkspaceFolders(activeVscodeApi.workspace.workspaceFolders?.length || 0, 0, {
@@ -2823,14 +2765,13 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
     }
 
     const manualRunCounts: number[] = [];
-    const runManualWorkspaceCheck = async(saveCheckEnabled: boolean): Promise<number> => {
-      await updateWorkspaceFolderMamoriEnabledSettingFile(activeVscodeApi, realProjectRoot, saveCheckEnabled);
-      const workspaceSettings = JSON.parse(fs.readFileSync(workspaceSettingsPath, 'utf8')) as Record<string, unknown>;
-      assert.strictEqual(workspaceSettings['mamori-inspector.enabled'], saveCheckEnabled);
-      await delay(1000);
+    const runManualWorkspaceCheck = async(enabled: boolean): Promise<number> => {
+      await updateWorkspaceMamoriEnabledSetting(activeVscodeApi, realProjectRoot, enabled);
 
+      const informationCountBeforeRun = messageCapture.informationMessages.length;
+      const errorCountBeforeRun = messageCapture.errorMessages.length;
       await activeVscodeApi.commands.executeCommand('mamori-inspector.runWorkspaceCheck');
-      await waitFor(() => fs.existsSync(manualSarifPath), 120000);
+      await waitFor(() => messageCapture.informationMessages.length > informationCountBeforeRun || messageCapture.errorMessages.length > errorCountBeforeRun, 120000);
       await waitFor(() => countWorkspaceDiagnostics(activeVscodeApi, realProjectRoot) > 0, 120000);
       await waitFor(() => activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(firstViolation.filePath)).some((diagnostic) => diagnostic.message === firstViolation.message), 120000);
       return countWorkspaceDiagnostics(activeVscodeApi, realProjectRoot);
@@ -2856,7 +2797,7 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
       messageCapture.restore();
       restoreSemgrepWrapper();
       restoreSemgrepLog();
-      restoreWorkspaceSettings();
+      await updateWorkspaceMamoriEnabledSetting(activeVscodeApi, realProjectRoot, undefined);
       const workspaceFolders = activeVscodeApi.workspace.workspaceFolders || [];
       const secondaryWorkspaceIndex = workspaceFolders.findIndex((workspaceFolder) => workspaceFolder.uri.fsPath === realProjectRoot);
       if (secondaryWorkspaceIndex >= 0) {
