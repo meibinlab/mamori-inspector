@@ -36,11 +36,13 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 
 - Web ツールは、最寄りのプロジェクト `node_modules/.bin` を優先し、見つからない場合のみ `.mamori/node` にフォールバックします。
 - Maven、Gradle、Semgrep は、まず `PATH` 上の既存コマンドを使い、見つからない場合だけ管理コピーを導入します。
-- 管理対象の Node ツール導入には `PATH` 上の `npm` が必要です。管理対象の Semgrep 導入には `py`、`python`、`python3` のいずれかの Python ランチャーが必要です。
+- 管理対象の Node ツール導入には `PATH` 上の `npm` が必要です。管理対象の Semgrep はパッケージ自体を自動導入しますが、その導入処理には `py`、`python`、`python3` のいずれかの Python ランチャーが必要です。Windows では標準の `py` ランチャー配置も探索します。
 
 ## 現在の挙動
 - Java、JavaScript、JavaScript React、TypeScript、TypeScript React、CSS、SCSS、Sass、HTML ファイルは、対象ワークスペースフォルダーで `Mamori Inspector: Enable In Workspace` を実行した場合に限り、保存時にデバウンスと再帰抑止付きのバックグラウンドチェックを自動実行します。
 - 保存時検証では、対応ファイルを先に整形し、その後に生成された SARIF から Diagnostics を公開します。
+- 保存時実行が一部ツール失敗で終了しても、その時点までに部分的な SARIF が生成されていれば、その Diagnostics は Problems に反映し、失敗詳細は出力ログへ残します。
+- 保存時検証では、整形や静的解析の各ツールが実際に開始したタイミングで、保存したファイル名とそのツール名だけをトースト表示します。
 - JavaScript の保存時検証は、Prettier と ESLint を使用し、明示設定または検出したプロジェクト設定を優先し、見つからない場合は Mamori の bundled minimal ESLint config を使用します。
 - TypeScript の保存時検証では、明示設定、ワークスペース探索、または `package.json#eslintConfig` で解決できる ESLint 設定がある場合にのみ ESLint を使用します。
 - CSS、SCSS、Sass の保存時検証は、Prettier と Stylelint を使用し、明示設定または検出したプロジェクト設定を優先し、見つからない場合は Mamori の bundled minimal Stylelint config を使用します。

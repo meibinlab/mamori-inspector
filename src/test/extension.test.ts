@@ -830,16 +830,19 @@ function setupSaveIntegrationFixture(workspacePath: string): {
 } {
   const fixtureDirectory = path.join(workspacePath, '.tmp-save-check');
   const sourceDirectory = path.join(fixtureDirectory, 'src', 'main', 'java');
-  const binDirectory = path.join(workspacePath, 'bin');
+  const binDirectory = path.join(fixtureDirectory, 'bin');
   const javaFilePath = path.join(sourceDirectory, 'App.java');
   const javaFileUri = toWorkspaceRelativeUri(workspacePath, javaFilePath);
   const mavenLogPath = path.join(binDirectory, 'mvn.log');
   const semgrepLogPath = path.join(binDirectory, 'semgrep.log');
+  const semgrepWrapperPath = process.platform === 'win32'
+    ? path.join(binDirectory, 'semgrep.cmd')
+    : path.join(binDirectory, 'semgrep');
 
   fs.mkdirSync(sourceDirectory, { recursive: true });
   fs.mkdirSync(binDirectory, { recursive: true });
   fs.writeFileSync(
-    path.join(workspacePath, 'pom.xml'),
+    path.join(fixtureDirectory, 'pom.xml'),
     [
       '<project>',
       '  <build>',
@@ -863,8 +866,9 @@ function setupSaveIntegrationFixture(workspacePath: string): {
     ].join('\n'),
     'utf8',
   );
-  writeMavenWrapper(workspacePath, mavenLogPath, javaFileUri);
+  writeMavenWrapper(fixtureDirectory, mavenLogPath, javaFileUri);
   writeSemgrepWrapper(binDirectory, semgrepLogPath, javaFileUri);
+  setSemgrepCommandOverride(semgrepWrapperPath);
 
   return {
     fixtureDirectory,
@@ -1118,10 +1122,65 @@ function captureWindowMessages(vscodeApi: VscodeModule): {
 }
 
 /**
+ * 指定出力チャネルへ追記された行を捕捉する。
+ * @param vscodeApi VS Code API を表す。
+ * @param channelName 捕捉対象の出力チャネル名を表す。
+ * @returns 捕捉結果と復元関数を返す。
+ */
+function captureOutputChannelLines(
+  vscodeApi: VscodeModule,
+  channelName: string,
+): {
+  outputLines: string[];
+  restore: () => void;
+} {
+  const outputLines: string[] = [];
+  const windowApi = vscodeApi.window as unknown as Record<string, unknown>;
+  const originalCreateOutputChannel = windowApi.createOutputChannel;
+
+  Object.defineProperty(windowApi, 'createOutputChannel', {
+    configurable: true,
+    writable: true,
+    value: (...args: unknown[]) => {
+      const createOutputChannel = originalCreateOutputChannel as (...innerArgs: unknown[]) => { appendLine: (value: string) => void };
+      const outputChannel = createOutputChannel(...args);
+      if (args[0] !== channelName) {
+        return outputChannel;
+      }
+
+      const originalAppendLine = outputChannel.appendLine.bind(outputChannel);
+      outputChannel.appendLine = (value: string) => {
+        outputLines.push(value);
+        originalAppendLine(value);
+      };
+      return outputChannel;
+    },
+  });
+
+  return {
+    outputLines,
+    restore: () => {
+      Object.defineProperty(windowApi, 'createOutputChannel', {
+        configurable: true,
+        writable: true,
+        value: originalCreateOutputChannel,
+      });
+    },
+  };
+}
+
+/**
  * 拡張補助機能のテストスイートを定義する。
  * @returns 返り値はない。
  */
 suite('Extension Utility Test Suite', () => {
+  /** 保存時通知ヘルパーを表す。 */
+  const extensionHelpers = require('../save-check-notifications') as {
+    getSaveCheckStartToastMessage: (fileName: string, toolLabel: string) => string;
+    getSaveCheckToolLabel: (toolId: string) => string;
+    parseSaveCheckToolStartLine: (outputLine: string) => string | undefined;
+  };
+
   /**
    * サンプルテストを実行する。
    * @returns 返り値はない。
@@ -1191,6 +1250,25 @@ suite('Extension Utility Test Suite', () => {
     assert.deepStrictEqual(informationMessages, [
       'Mamori Inspector: Uninstalled Git hooks.',
     ]);
+  });
+
+  /**
+   * 保存時ツール開始行から個別ツール通知を組み立てられること。
+   * @returns 返り値はない。
+   */
+  test('Parses a save-check tool start line and builds a single-tool toast message', () => {
+    const toolId = extensionHelpers.parseSaveCheckToolStartLine(
+      'mamori: tool-start tool=checkstyle phase=check moduleRoot=C:\\workspace\\sample',
+    );
+    const toolLabel = extensionHelpers.getSaveCheckToolLabel(toolId || '');
+    const toastMessage = extensionHelpers.getSaveCheckStartToastMessage('App.java', toolLabel);
+
+    assert.strictEqual(toolId, 'checkstyle');
+    assert.strictEqual(toolLabel, 'Checkstyle');
+    assert.strictEqual(
+      toastMessage,
+      'Mamori Inspector: App.java - Checkstyle',
+    );
   });
 
   /**
@@ -1348,7 +1426,7 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
    * @returns 実行完了を待つ Promise を返す。
    */
   test('Runs save checks and publishes diagnostics when a Java file is saved', async function() {
-    this.timeout(20000);
+    this.timeout(30000);
     const activeVscodeApi = vscodeApi;
     const workspaceRoot = activeVscodeApi.workspace.workspaceFolders?.[0]?.uri.fsPath;
     if (!workspaceRoot) {
@@ -1367,6 +1445,7 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
     const restoreMavenWrapper = createRestoreAction(mavenWrapperPath);
     const restoreSemgrepWrapper = createRestoreAction(semgrepWrapperPath);
     const restoreSaveSarif = createRestoreAction(saveSarifPath);
+    const messageCapture = captureWindowMessages(activeVscodeApi);
 
     try {
       fs.rmSync(saveSarifPath, { force: true });
@@ -1392,6 +1471,7 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
           activeVscodeApi.workspace.getConfiguration('mamori-inspector', document.uri).get('enabled', false),
           true,
         );
+        const informationCountBeforeSave = messageCapture.informationMessages.length;
 
         const editor = activeVscodeApi.window.activeTextEditor;
         if (!editor) {
@@ -1406,18 +1486,123 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
         await waitFor(() => fs.existsSync(saveSarifPath));
         await waitFor(() => fs.existsSync(mavenLogPath) && fs.existsSync(semgrepLogPath));
         await waitFor(() => activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(javaFilePath)).length === 3);
+        await waitFor(() => {
+          const saveRunMessages = messageCapture.informationMessages.slice(informationCountBeforeSave);
+          return saveRunMessages.includes('Mamori Inspector: App.java - Checkstyle')
+            && saveRunMessages.includes('Mamori Inspector: App.java - PMD')
+            && saveRunMessages.includes('Mamori Inspector: App.java - Semgrep');
+        }, 20000);
 
         const diagnostics = activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(javaFilePath));
         const messages = diagnostics.map((diagnostic) => diagnostic.message);
+        const saveRunMessages = messageCapture.informationMessages.slice(informationCountBeforeSave);
 
         assert.strictEqual(diagnostics.length, 3);
         assert.ok(messages.includes('Missing Javadoc'));
         assert.ok(messages.includes('Unused local variable'));
         assert.ok(messages.includes('Potential issue'));
+        assert.ok(saveRunMessages.includes('Mamori Inspector: App.java - Checkstyle'));
+        assert.ok(saveRunMessages.includes('Mamori Inspector: App.java - PMD'));
+        assert.ok(saveRunMessages.includes('Mamori Inspector: App.java - Semgrep'));
         assert.match(fs.readFileSync(mavenLogPath, 'utf8'), /checkstyle:check/u);
         assert.match(fs.readFileSync(mavenLogPath, 'utf8'), /pmd:check/u);
         assert.match(fs.readFileSync(semgrepLogPath, 'utf8'), /App\.java/u);
         assert.ok(fs.existsSync(saveSarifPath));
+      } finally {
+        restoreMavenLog();
+        restoreSemgrepLog();
+        fs.rmSync(fixtureDirectory, { recursive: true, force: true });
+      }
+    } finally {
+      messageCapture.restore();
+      restorePomFile();
+      restoreMavenWrapper();
+      restoreSemgrepWrapper();
+      restoreSaveSarif();
+    }
+  });
+
+  /**
+   * Semgrep 起動失敗でも、保存時 SARIF に含まれる Checkstyle と PMD の結果は反映されること。
+   * @returns 実行完了を待つ Promise を返す。
+   */
+  test('Publishes partial save diagnostics when Semgrep startup fails after Maven results are generated', async function() {
+    this.timeout(20000);
+    const activeVscodeApi = vscodeApi;
+    const workspaceRoot = activeVscodeApi.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceRoot) {
+      throw new Error('Workspace root was not found');
+    }
+
+    const pomFilePath = path.join(workspaceRoot, 'pom.xml');
+    const mavenWrapperPath = process.platform === 'win32'
+      ? path.join(workspaceRoot, 'mvnw.cmd')
+      : path.join(workspaceRoot, 'mvnw');
+    const semgrepWrapperPath = process.platform === 'win32'
+      ? path.join(workspaceRoot, 'bin', 'semgrep.cmd')
+      : path.join(workspaceRoot, 'bin', 'semgrep');
+    const saveSarifPath = path.join(workspaceRoot, SAVE_SARIF_OUTPUT);
+    const missingSemgrepPath = path.join(workspaceRoot, 'bin', 'missing-semgrep-command');
+    const restorePomFile = createRestoreAction(pomFilePath);
+    const restoreMavenWrapper = createRestoreAction(mavenWrapperPath);
+    const restoreSemgrepWrapper = createRestoreAction(semgrepWrapperPath);
+    const restoreSaveSarif = createRestoreAction(saveSarifPath);
+
+    try {
+      fs.rmSync(saveSarifPath, { force: true });
+      const {
+        fixtureDirectory,
+        javaFilePath,
+        mavenLogPath,
+        semgrepLogPath,
+      } = setupSaveIntegrationFixture(workspaceRoot);
+      const restoreMavenLog = createRestoreAction(mavenLogPath);
+      const restoreSemgrepLog = createRestoreAction(semgrepLogPath);
+      fs.rmSync(mavenLogPath, { force: true });
+      fs.rmSync(semgrepLogPath, { force: true });
+
+      setExecutablePathEnvironment(`${path.join(workspaceRoot, 'bin')}${path.delimiter}${originalPath}`);
+      setSemgrepCommandOverride(missingSemgrepPath);
+
+      try {
+        const document = await activeVscodeApi.workspace.openTextDocument(activeVscodeApi.Uri.file(javaFilePath));
+        await activeVscodeApi.window.showTextDocument(document);
+        await getMamoriExtension(activeVscodeApi).activate();
+        await activeVscodeApi.commands.executeCommand('mamori-inspector.enableInWorkspace');
+        assert.strictEqual(
+          activeVscodeApi.workspace.getConfiguration('mamori-inspector', document.uri).get('enabled', false),
+          true,
+        );
+
+        const editor = activeVscodeApi.window.activeTextEditor;
+        if (!editor) {
+          throw new Error('Active text editor was not found');
+        }
+
+        await editor.edit((editBuilder) => {
+          editBuilder.insert(new activeVscodeApi.Position(1, 0), '  int value = 1;\n');
+        });
+        await document.save();
+
+        await waitFor(() => fs.existsSync(saveSarifPath));
+        await waitFor(() => fs.existsSync(mavenLogPath));
+        await waitFor(() => activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(javaFilePath)).length === 2);
+
+        const diagnostics = activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(javaFilePath));
+        const messages = diagnostics.map((diagnostic) => diagnostic.message);
+        const sarifFindings = loadSarifFindings(saveSarifPath);
+        const sarifMessages = sarifFindings.map((finding) => finding.message);
+
+        assert.strictEqual(diagnostics.length, 2);
+        assert.ok(messages.includes('Missing Javadoc'));
+        assert.ok(messages.includes('Unused local variable'));
+        assert.ok(!messages.includes('Potential issue'));
+        assert.match(fs.readFileSync(mavenLogPath, 'utf8'), /checkstyle:check/u);
+        assert.match(fs.readFileSync(mavenLogPath, 'utf8'), /pmd:check/u);
+        assert.ok(!fs.existsSync(semgrepLogPath));
+        assert.ok(sarifMessages.includes('Missing Javadoc'));
+        assert.ok(sarifMessages.includes('Unused local variable'));
+        assert.ok(!sarifMessages.includes('Potential issue'));
       } finally {
         restoreMavenLog();
         restoreSemgrepLog();
@@ -2580,6 +2765,160 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
   });
 
   /**
+   * 外部実プロジェクトの Java 保存時に、実際に開始した各ツール名だけを個別トーストで表示すること。
+   * @returns 実行完了を待つ Promise を返す。
+   */
+  test('Shows single-tool save toasts for an external Java project file', async function() {
+    this.timeout(180000);
+
+    const activeVscodeApi = vscodeApi;
+    const realProjectRoot = resolveRealProjectRoot(activeVscodeApi);
+    const targetFilePath = realProjectRoot
+      ? path.join(
+        realProjectRoot,
+        'src',
+        'main',
+        'java',
+        'jp',
+        'meibinlab',
+        'wrapper',
+        'service',
+        'ApplicationTaskService.java',
+      )
+      : '';
+    if (!realProjectRoot || !fs.existsSync(targetFilePath)) {
+      this.skip();
+      return;
+    }
+
+    const targetFileUri = activeVscodeApi.Uri.file(targetFilePath);
+    const saveSarifPath = path.join(realProjectRoot, SAVE_SARIF_OUTPUT);
+    const semgrepBinDirectory = path.join(realProjectRoot, 'bin');
+    const semgrepLogPath = path.join(semgrepBinDirectory, 'semgrep.log');
+    const semgrepWrapperPath = process.platform === 'win32'
+      ? path.join(semgrepBinDirectory, 'semgrep.cmd')
+      : path.join(semgrepBinDirectory, 'semgrep');
+    const restoreTargetFile = createRestoreAction(targetFilePath);
+    const restoreSemgrepWrapper = createRestoreAction(semgrepWrapperPath);
+    const restoreSemgrepLog = createRestoreAction(semgrepLogPath);
+    const restoreSaveSarif = createRestoreAction(saveSarifPath);
+    const messageCapture = captureWindowMessages(activeVscodeApi);
+    const outputCapture = captureOutputChannelLines(activeVscodeApi, 'Mamori Inspector');
+    const alreadyOpened = (activeVscodeApi.workspace.workspaceFolders || []).some(
+      (workspaceFolder) => workspaceFolder.uri.fsPath === realProjectRoot,
+    );
+    const updateSucceeded = activeVscodeApi.workspace.updateWorkspaceFolders(
+      activeVscodeApi.workspace.workspaceFolders?.length || 0,
+      0,
+      {
+        uri: activeVscodeApi.Uri.file(realProjectRoot),
+        name: 'mamori-real-project-save-toast',
+      },
+    );
+
+    if (!updateSucceeded && !alreadyOpened) {
+      messageCapture.restore();
+      outputCapture.restore();
+      throw new Error('Failed to add external project workspace folder');
+    }
+
+    try {
+      let targetDocumentSaved = false;
+      const saveListener = activeVscodeApi.workspace.onDidSaveTextDocument((savedDocument) => {
+        if (savedDocument.uri.fsPath === targetFilePath) {
+          targetDocumentSaved = true;
+        }
+      });
+      try {
+        await waitFor(() => (activeVscodeApi.workspace.workspaceFolders?.length || 0) >= 2);
+        fs.mkdirSync(semgrepBinDirectory, { recursive: true });
+        fs.rmSync(semgrepLogPath, { force: true });
+        fs.rmSync(saveSarifPath, { force: true });
+        writeEmptySemgrepWrapper(semgrepBinDirectory, semgrepLogPath);
+        setSemgrepCommandOverride(semgrepWrapperPath);
+        setExecutablePathEnvironment(`${semgrepBinDirectory}${path.delimiter}${originalPath}`);
+
+        await getMamoriExtension(activeVscodeApi).activate();
+        const document = await activeVscodeApi.workspace.openTextDocument(targetFileUri);
+        await activeVscodeApi.window.showTextDocument(document);
+        await activeVscodeApi.workspace.getConfiguration('mamori-inspector', targetFileUri).update(
+          'enabled',
+          true,
+          activeVscodeApi.ConfigurationTarget.Workspace,
+        );
+        await waitFor(
+          () => activeVscodeApi.workspace.getConfiguration('mamori-inspector', targetFileUri).get<boolean>('enabled', false),
+          120000,
+        );
+        const informationCountBeforeSave = messageCapture.informationMessages.length;
+
+        const editor = activeVscodeApi.window.activeTextEditor;
+        if (!editor) {
+          throw new Error('Active text editor was not found');
+        }
+
+        const originalText = document.getText();
+        const insertionOffset = originalText.indexOf('  public void saveError(');
+        if (insertionOffset < 0) {
+          throw new Error('Target method signature was not found');
+        }
+
+        await editor.edit((editBuilder) => {
+          editBuilder.insert(document.positionAt(insertionOffset), '\n');
+        });
+        await document.save();
+
+        await waitFor(() => targetDocumentSaved, 120000);
+        await waitFor(
+          () => outputCapture.outputLines.some(
+            (line) => line === `Mamori Inspector save check started for ${targetFilePath}.`,
+          ),
+          120000,
+        );
+        await waitFor(() => fs.existsSync(saveSarifPath), 120000);
+        await waitFor(() => {
+          const saveRunMessages = messageCapture.informationMessages.slice(informationCountBeforeSave);
+          return saveRunMessages.includes('Mamori Inspector: ApplicationTaskService.java - Spotless')
+            && saveRunMessages.includes('Mamori Inspector: ApplicationTaskService.java - Checkstyle')
+            && saveRunMessages.includes('Mamori Inspector: ApplicationTaskService.java - PMD')
+            && saveRunMessages.includes('Mamori Inspector: ApplicationTaskService.java - Semgrep');
+        }, 120000);
+
+        const saveRunMessages = messageCapture.informationMessages.slice(informationCountBeforeSave);
+
+        assert.deepStrictEqual(messageCapture.errorMessages, []);
+        assert.ok(saveRunMessages.includes('Mamori Inspector: ApplicationTaskService.java - Spotless'));
+        assert.ok(saveRunMessages.includes('Mamori Inspector: ApplicationTaskService.java - Checkstyle'));
+        assert.ok(saveRunMessages.includes('Mamori Inspector: ApplicationTaskService.java - PMD'));
+        assert.ok(saveRunMessages.includes('Mamori Inspector: ApplicationTaskService.java - Semgrep'));
+        assert.match(fs.readFileSync(semgrepLogPath, 'utf8'), /ApplicationTaskService\.java/u);
+      } finally {
+        saveListener.dispose();
+      }
+    } finally {
+      messageCapture.restore();
+      outputCapture.restore();
+      restoreTargetFile();
+      restoreSemgrepWrapper();
+      restoreSemgrepLog();
+      restoreSaveSarif();
+      await activeVscodeApi.workspace.getConfiguration('mamori-inspector', targetFileUri).update(
+        'enabled',
+        undefined,
+        activeVscodeApi.ConfigurationTarget.Workspace,
+      );
+      await updateWorkspaceMamoriEnabledSetting(activeVscodeApi, realProjectRoot, undefined);
+      const workspaceFolders = activeVscodeApi.workspace.workspaceFolders || [];
+      const secondaryWorkspaceIndex = workspaceFolders.findIndex(
+        (workspaceFolder) => workspaceFolder.uri.fsPath === realProjectRoot,
+      );
+      if (secondaryWorkspaceIndex >= 0) {
+        activeVscodeApi.workspace.updateWorkspaceFolders(secondaryWorkspaceIndex, 1);
+      }
+    }
+  });
+
+  /**
    * 外部実プロジェクトで手動実行後に対象 PMD finding を修正して保存すると、save 結果と Problems の両方から消えること。
    * @returns 実行完了を待つ Promise を返す。
    */
@@ -2590,16 +2929,16 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
     const realProjectRoot = resolveRealProjectRoot(activeVscodeApi);
     const targetFilePath = realProjectRoot
       ? path.join(
-          realProjectRoot,
-          'src',
-          'main',
-          'java',
-          'jp',
-          'meibinlab',
-          'wrapper',
-          'service',
-          'ApplicationTaskService.java',
-        )
+        realProjectRoot,
+        'src',
+        'main',
+        'java',
+        'jp',
+        'meibinlab',
+        'wrapper',
+        'service',
+        'ApplicationTaskService.java',
+      )
       : '';
     if (!realProjectRoot || !fs.existsSync(targetFilePath)) {
       this.skip();
@@ -2655,6 +2994,38 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
       const document = await activeVscodeApi.workspace.openTextDocument(targetFileUri);
       await activeVscodeApi.window.showTextDocument(document);
 
+      await activeVscodeApi.workspace.getConfiguration('mamori-inspector', targetFileUri).update(
+        'enabled',
+        false,
+        activeVscodeApi.ConfigurationTarget.Workspace,
+      );
+      await waitFor(
+        () => !activeVscodeApi.workspace.getConfiguration('mamori-inspector', targetFileUri).get<boolean>('enabled', false),
+        120000,
+      );
+
+      const setupEditor = activeVscodeApi.window.activeTextEditor;
+      if (!setupEditor) {
+        throw new Error('Active text editor was not found');
+      }
+
+      const existingText = document.getText();
+      const existingSignatureOffset = existingText.indexOf(updatedSignature);
+      if (existingSignatureOffset >= 0) {
+        await setupEditor.edit((editBuilder) => {
+          editBuilder.replace(
+            new activeVscodeApi.Range(
+              document.positionAt(existingSignatureOffset),
+              document.positionAt(existingSignatureOffset + updatedSignature.length),
+            ),
+            originalSignature,
+          );
+        });
+        await document.save();
+      } else if (!existingText.includes(originalSignature)) {
+        throw new Error('Target method signature was not found');
+      }
+
       await activeVscodeApi.commands.executeCommand('mamori-inspector.runWorkspaceCheck');
 
       await waitFor(() => fs.existsSync(manualSarifPath), 120000);
@@ -2665,46 +3036,79 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
         120000,
       );
 
-      await activeVscodeApi.commands.executeCommand('mamori-inspector.enableInWorkspace');
-
-      const editor = activeVscodeApi.window.activeTextEditor;
-      if (!editor) {
-        throw new Error('Active text editor was not found');
-      }
-
-      const signatureOffset = document.getText().indexOf(originalSignature);
-      if (signatureOffset < 0) {
-        throw new Error('Target method signature was not found');
-      }
-
-      await editor.edit((editBuilder) => {
-        editBuilder.replace(
-          new activeVscodeApi.Range(
-            document.positionAt(signatureOffset),
-            document.positionAt(signatureOffset + originalSignature.length),
-          ),
-          updatedSignature,
-        );
-      });
-      await document.save();
-
-      await waitFor(() => fs.existsSync(saveSarifPath), 120000);
+      await activeVscodeApi.workspace.getConfiguration('mamori-inspector', targetFileUri).update(
+        'enabled',
+        true,
+        activeVscodeApi.ConfigurationTarget.Workspace,
+      );
       await waitFor(
-        () => !activeVscodeApi.languages.getDiagnostics(targetFileUri).some(
-          (diagnostic) => diagnostic.message === targetMessage,
-        ),
+        () => activeVscodeApi.workspace.getConfiguration('mamori-inspector', targetFileUri).get<boolean>('enabled', false),
         120000,
       );
+
+      const informationCountBeforeSave = messageCapture.informationMessages.length;
+      let targetDocumentSaved = false;
+      const saveListener = activeVscodeApi.workspace.onDidSaveTextDocument((savedDocument) => {
+        if (savedDocument.uri.fsPath === targetFilePath) {
+          targetDocumentSaved = true;
+        }
+      });
+
+      try {
+        const editor = activeVscodeApi.window.activeTextEditor;
+        if (!editor) {
+          throw new Error('Active text editor was not found');
+        }
+
+        const signatureOffset = document.getText().indexOf(originalSignature);
+        if (signatureOffset < 0) {
+          throw new Error('Target method signature was not found');
+        }
+
+        await editor.edit((editBuilder) => {
+          editBuilder.replace(
+            new activeVscodeApi.Range(
+              document.positionAt(signatureOffset),
+              document.positionAt(signatureOffset + originalSignature.length),
+            ),
+            updatedSignature,
+          );
+        });
+        await document.save();
+
+        await waitFor(() => targetDocumentSaved, 120000);
+        await waitFor(() => fs.existsSync(saveSarifPath), 120000);
+        await waitFor(
+          () => !activeVscodeApi.languages.getDiagnostics(targetFileUri).some(
+            (diagnostic) => diagnostic.message === targetMessage,
+          ),
+          120000,
+        );
+        await waitFor(() => {
+          const saveRunMessages = messageCapture.informationMessages.slice(informationCountBeforeSave);
+          return saveRunMessages.includes('Mamori Inspector: ApplicationTaskService.java - Spotless')
+            && saveRunMessages.includes('Mamori Inspector: ApplicationTaskService.java - Checkstyle')
+            && saveRunMessages.includes('Mamori Inspector: ApplicationTaskService.java - PMD')
+            && saveRunMessages.includes('Mamori Inspector: ApplicationTaskService.java - Semgrep');
+        }, 120000);
+      } finally {
+        saveListener.dispose();
+      }
 
       const diagnosticsAfterSave = activeVscodeApi.languages.getDiagnostics(targetFileUri);
       const saveFindings = loadSarifFindings(saveSarifPath);
       const saveFindingMessages = saveFindings
         .filter((finding) => finding.uri.replaceAll('\\', '/').endsWith(targetFileSuffix))
         .map((finding) => finding.message);
+      const saveRunMessages = messageCapture.informationMessages.slice(informationCountBeforeSave);
 
       assert.deepStrictEqual(messageCapture.errorMessages, []);
       assert.ok(!diagnosticsAfterSave.some((diagnostic) => diagnostic.message === targetMessage));
       assert.ok(!saveFindingMessages.includes(targetMessage));
+      assert.ok(saveRunMessages.includes('Mamori Inspector: ApplicationTaskService.java - Spotless'));
+      assert.ok(saveRunMessages.includes('Mamori Inspector: ApplicationTaskService.java - Checkstyle'));
+      assert.ok(saveRunMessages.includes('Mamori Inspector: ApplicationTaskService.java - PMD'));
+      assert.ok(saveRunMessages.includes('Mamori Inspector: ApplicationTaskService.java - Semgrep'));
     } finally {
       messageCapture.restore();
       restoreTargetFile();
@@ -2712,6 +3116,11 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
       restoreSemgrepLog();
       restoreManualSarif();
       restoreSaveSarif();
+      await activeVscodeApi.workspace.getConfiguration('mamori-inspector', targetFileUri).update(
+        'enabled',
+        undefined,
+        activeVscodeApi.ConfigurationTarget.Workspace,
+      );
       await updateWorkspaceMamoriEnabledSetting(activeVscodeApi, realProjectRoot, undefined);
       const workspaceFolders = activeVscodeApi.workspace.workspaceFolders || [];
       const secondaryWorkspaceIndex = workspaceFolders.findIndex(

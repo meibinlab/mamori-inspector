@@ -607,7 +607,40 @@ function resolvePythonLauncher(workspaceRoot, env) {
     }
   }
 
+  if (process.platform === 'win32') {
+    const standardWindowsLauncher = resolveWindowsPythonLauncher(env);
+    if (standardWindowsLauncher) {
+      return standardWindowsLauncher;
+    }
+  }
+
   throw new Error('python command not found for Semgrep installation');
+}
+
+/**
+ * Windows の標準配置から Python ランチャーを解決する。
+ * @param {NodeJS.ProcessEnv} env 環境変数を表す。
+ * @returns {{command: string, baseArgs: string[]}|undefined} Python ランチャー情報を返す。
+ */
+function resolveWindowsPythonLauncher(env) {
+  const executableExtensions = (env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter((value) => Boolean(value));
+  const systemRootCandidates = [env.SystemRoot, env.WINDIR]
+    .filter((value) => typeof value === 'string' && value.trim() !== '');
+
+  for (const systemRoot of systemRootCandidates) {
+    const resolvedPath = resolvePathWithExecutableExtensions(
+      path.join(systemRoot, 'py'),
+      executableExtensions,
+    );
+    if (resolvedPath) {
+      return {
+        command: resolvedPath,
+        baseArgs: ['-3'],
+      };
+    }
+  }
+
+  return undefined;
 }
 
 /**
@@ -908,4 +941,5 @@ module.exports = {
   ensureWorkspaceTooling,
   getManagedDirectories,
   resolveCommandEntryRuntime,
+  resolvePythonLauncher,
 };

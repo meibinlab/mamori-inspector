@@ -705,6 +705,20 @@ function buildSkippedCommandResult(moduleRoot, commandEntry) {
 }
 
 /**
+ * 開始したツールを標準出力へ通知する。
+ * @param {string} tool 開始したツール名を表す。
+ * @param {string} moduleRoot 対象モジュールルートを表す。
+ * @param {string|undefined} phase 実行フェーズを表す。
+ * @returns {void} 返り値はない。
+ */
+function printToolStart(tool, moduleRoot, phase) {
+  const phaseName = typeof phase === 'string' && phase.trim() !== ''
+    ? phase
+    : 'check';
+  process.stdout.write(`mamori: tool-start tool=${tool} phase=${phaseName} moduleRoot=${moduleRoot}\n`);
+}
+
+/**
  * pre-commit の再ステージ対象ファイル一覧を返す。
  * @param {string} currentWorkingDirectory 現在の作業ディレクトリを表す。
  * @param {string[]|undefined} files 対象ファイル一覧を表す。
@@ -975,6 +989,8 @@ async function executeCommandEntry(workspaceRoot, moduleRoot, commandEntry, exec
       };
       return commandResult;
     }
+
+    printToolStart(commandEntry.tool, moduleRoot, commandEntry.phase);
 
     const result = await executor(runtimeCommand, runtimeArguments, {
       cwd: commandEntry.cwd,
