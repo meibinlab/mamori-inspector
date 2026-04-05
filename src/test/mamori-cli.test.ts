@@ -1486,7 +1486,7 @@ suite('Mamori CLI Test Suite', () => {
       path.relative(temporaryDirectory, targetFilePath),
     ]);
 
-    assert.strictEqual(result.status, 0);
+    assert.strictEqual(result.status, 0, result.stderr || result.stdout);
     assert.match(result.stdout, /source=discovery/u);
     assert.match(result.stdout, /eslint\.config\.ts/u);
   });
@@ -3300,6 +3300,10 @@ suite('Mamori CLI Test Suite', () => {
 
     assert.strictEqual(result.status, 0);
     assert.match(result.stdout, /mamori: execution-result/u);
+    assert.match(result.stdout, /mamori: tool-start tool=spotless/u);
+    assert.match(result.stdout, /mamori: tool-start tool=checkstyle/u);
+    assert.match(result.stdout, /mamori: tool-start tool=pmd/u);
+    assert.match(result.stdout, /mamori: tool-start tool=semgrep/u);
     assert.match(result.stdout, /checkstyle:ok exitCode=0/u);
     assert.match(result.stdout, /pmd:ok exitCode=0/u);
     assert.match(result.stdout, /spotless:ok exitCode=0/u);
@@ -4672,6 +4676,48 @@ suite('Mamori CLI Test Suite', () => {
     assert.strictEqual(result.status, 2);
     assert.match(result.stderr, /failed to install managed Node tool eslint/u);
     assert.match(result.stderr, /eslint install failed/u);
+  });
+
+  /**
+   * Windows では PATH に py がなくても標準配置の py ランチャーで Semgrep 導入を継続できること。
+   * @returns 返り値はない。
+   */
+  test('Uses the standard Windows py launcher for managed Semgrep setup when PATH does not include py', function() {
+    if (process.platform !== 'win32') {
+      this.skip();
+      return;
+    }
+
+    const temporaryDirectory = createTemporaryDirectory();
+    const fakeSystemRoot = path.join(temporaryDirectory, 'fake-system-root');
+    fs.mkdirSync(fakeSystemRoot, { recursive: true });
+    writeCommandWrapper(fakeSystemRoot, 'py', 'py-systemroot.log');
+
+    const provisionModulePath = path.join(
+      path.resolve(__dirname, '..', '..'),
+      '.mamori',
+      'tools',
+      'provision.js',
+    );
+    const { resolvePythonLauncher } = require(provisionModulePath) as {
+      resolvePythonLauncher: (workspaceRoot: string, env: NodeJS.ProcessEnv) => {
+        command: string;
+        baseArgs: string[];
+      };
+    };
+
+    const launcher = resolvePythonLauncher(temporaryDirectory, {
+      ...process.env,
+      PATH: createCommandBinDirectory(temporaryDirectory),
+      SystemRoot: fakeSystemRoot,
+      WINDIR: fakeSystemRoot,
+    });
+
+    assert.strictEqual(
+      launcher.command.toLowerCase(),
+      path.join(fakeSystemRoot, 'py.cmd').toLowerCase(),
+    );
+    assert.deepStrictEqual(launcher.baseArgs, ['-3']);
   });
 
   /**

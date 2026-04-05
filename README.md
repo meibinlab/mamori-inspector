@@ -36,11 +36,13 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 
 - For web tools, Mamori prefers the nearest project `node_modules/.bin` executable and falls back to `.mamori/node` only when the project copy is missing.
 - For Maven, Gradle, and Semgrep, Mamori uses an existing command on `PATH` first and only installs the managed copy when the command is missing.
-- Managed Node tool installation requires `npm` on `PATH`. Managed Semgrep installation requires a usable Python launcher such as `py`, `python`, or `python3`.
+- Managed Node tool installation requires `npm` on `PATH`. Managed Semgrep installation installs the Semgrep package automatically, but still requires a usable Python launcher such as `py`, `python`, or `python3`. On Windows, Mamori also probes the standard `py` launcher location under the system root.
 
 ## Current Behavior
 - Java, JavaScript, JavaScript React, TypeScript, TypeScript React, CSS, SCSS, Sass, and HTML files trigger an automatic background check on save with debounce and recursion suppression only when `Mamori Inspector: Enable In Workspace` has been run for that workspace folder.
 - Save-time validation formats supported files first, then publishes diagnostics from the generated SARIF.
+- If a save-time run ends with an execution error after writing partial SARIF output, Mamori still reflects the diagnostics that were already generated and keeps the failure detail in the output log.
+- Save-time validation also shows a toast each time a formatter or checker actually starts, using the saved file name plus the single running tool name.
 - JavaScript save-time validation uses Prettier and ESLint, preferring explicit or discovered project configuration and otherwise using Mamori's bundled minimal ESLint config.
 - TypeScript save-time validation uses ESLint when project configuration is available through explicit settings, workspace discovery, or `package.json#eslintConfig`.
 - CSS and SCSS and Sass save-time validation use Prettier and Stylelint, preferring explicit or discovered project configuration and otherwise using Mamori's bundled minimal Stylelint config.

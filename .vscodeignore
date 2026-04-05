@@ -14,3 +14,10 @@ scripts/**
 *.log
 *.vsix
 target/**
+bin/**
+pom.xml
+mvnw
+mvnw.cmd
+.mamori/out/**
+.tmp-*
+.tmp-*/**

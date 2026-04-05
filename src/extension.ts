@@ -14,6 +14,12 @@ import {
 } from './hooks-command-report';
 // SARIF Diagnostics 変換器を表す
 import { loadSarifFindings, SarifFinding } from './sarif-diagnostics';
+// 保存時通知文言補助を表す
+import {
+  getSaveCheckStartToastMessage as buildSaveCheckStartToastMessage,
+  getSaveCheckToolLabel as buildSaveCheckToolLabel,
+  parseSaveCheckToolStartLine as parseSaveCheckToolStartOutputLine,
+} from './save-check-notifications';
 // 保存時チェックのスケジューラーを表す
 import { SaveCheckScheduler } from './save-check-scheduler';
 
@@ -231,6 +237,37 @@ function getSaveCheckStatusMessage(diagnosticsCount: number): string {
 }
 
 /**
+ * 保存時 CLI 出力から開始したツール ID を抽出する。
+ * @param outputLine CLI の標準出力 1 行を表す。
+ * @returns ツール ID を返す。
+ */
+function parseSaveCheckToolStartLine(outputLine: string): string | undefined {
+  return parseSaveCheckToolStartOutputLine(outputLine);
+}
+
+/**
+ * 保存時通知に表示するツール名を返す。
+ * @param toolId CLI が通知したツール ID を表す。
+ * @returns 表示用ツール名を返す。
+ */
+function getSaveCheckToolLabel(toolId: string): string {
+  return buildSaveCheckToolLabel(toolId);
+}
+
+/**
+ * 保存時開始トースト文言を返す。
+ * @param fileName 対象ファイル名を表す。
+ * @param toolLabel 表示用ツール名を表す。
+ * @returns トースト文言を返す。
+ */
+function getSaveCheckStartToastMessage(fileName: string, toolLabel: string): string {
+  return localize(
+    buildSaveCheckStartToastMessage(fileName, toolLabel),
+    'Information toast shown when a save-time formatter or checker starts for a file.',
+  );
+}
+
+/**
  * 利用可能ワークスペースなしの警告文言を返す。
  * @returns 警告文言を返す。
  */
@@ -333,6 +370,14 @@ interface MamoriCliCommandResult {
   stdout: string;
   /** 標準エラー出力を表す。 */
   stderr: string;
+}
+
+/**
+ * Mamori CLI 実行中の逐次イベントを表す。
+ */
+interface MamoriCliCommandEvents {
+  /** 標準出力 1 行を受け取る処理を表す。 */
+  onStdoutLine?: (line: string) => void;
 }
 
 /**
@@ -532,8 +577,53 @@ function runMamoriCli(
   workspaceFolder: vscode.WorkspaceFolder,
   options: MamoriCliRunOptions,
   extensionRootPath: string,
+  events?: MamoriCliCommandEvents,
 ): Promise<MamoriCliCommandResult> {
-  return runMamoriCliCommand(workspaceFolder, buildMamoriCliArguments(options), extensionRootPath);
+  return runMamoriCliCommand(
+    workspaceFolder,
+    buildMamoriCliArguments(options),
+    extensionRootPath,
+    events,
+  );
+}
+
+/**
+ * 受信した出力テキストから完結した行を通知し、未完了の末尾行を返す。
+ * @param pendingLine 前回チャンクから継続している末尾行を表す。
+ * @param chunkText 今回受信したテキストを表す。
+ * @param onLine 完結した行の通知先を表す。
+ * @returns 次回へ持ち越す末尾行を返す。
+ */
+function emitCompletedOutputLines(
+  pendingLine: string,
+  chunkText: string,
+  onLine?: (line: string) => void,
+): string {
+  const lines = `${pendingLine}${chunkText}`.split(/\r?\n/u);
+  const nextPendingLine = lines.pop() || '';
+
+  if (typeof onLine === 'function') {
+    for (const line of lines) {
+      onLine(line);
+    }
+  }
+
+  return nextPendingLine;
+}
+
+/**
+ * 子プロセス終了時に未通知の末尾行を通知する。
+ * @param pendingLine 未通知の末尾行を表す。
+ * @param onLine 行の通知先を表す。
+ * @returns 返り値はない。
+ */
+function emitPendingOutputLine(
+  pendingLine: string,
+  onLine?: (line: string) => void,
+): void {
+  if (pendingLine !== '' && typeof onLine === 'function') {
+    onLine(pendingLine);
+  }
 }
 
 /**
@@ -546,6 +636,7 @@ function runMamoriCliCommand(
   workspaceFolder: vscode.WorkspaceFolder,
   argumentsList: string[],
   extensionRootPath: string,
+  events?: MamoriCliCommandEvents,
 ): Promise<MamoriCliCommandResult> {
   const cliPath = getMamoriCliPath(workspaceFolder, extensionRootPath);
   const cliExecutablePath = getMamoriCliExecutablePath();
@@ -575,9 +666,16 @@ function runMamoriCliCommand(
     );
     let stdout = '';
     let stderr = '';
+    let pendingStdoutLine = '';
 
     child.stdout.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString('utf8');
+      const chunkText = chunk.toString('utf8');
+      stdout += chunkText;
+      pendingStdoutLine = emitCompletedOutputLines(
+        pendingStdoutLine,
+        chunkText,
+        events?.onStdoutLine,
+      );
     });
 
     child.stderr.on('data', (chunk: Buffer) => {
@@ -589,6 +687,8 @@ function runMamoriCliCommand(
     });
 
     child.on('close', (code) => {
+      emitPendingOutputLine(pendingStdoutLine, events?.onStdoutLine);
+
       if (typeof code === 'number' && code <= 1) {
         resolve({ stdout, stderr });
         return;
@@ -970,6 +1070,33 @@ function publishTrackedDiagnostics(
 }
 
 /**
+ * 保存時 SARIF から Diagnostics を反映する。
+ * @param workspaceFolder 対象ワークスペースフォルダーを表す。
+ * @param documentUri 対象ドキュメント URI を表す。
+ * @param sarifPath 保存時 SARIF パスを表す。
+ * @param diagnosticsState Diagnostics 保持状態を表す。
+ * @param diagnosticCollection 診断コレクションを表す。
+ * @returns 保存時 Diagnostics 件数を返す。
+ */
+function publishSaveDiagnosticsFromSarif(
+  workspaceFolder: vscode.WorkspaceFolder,
+  documentUri: vscode.Uri,
+  sarifPath: string,
+  diagnosticsState: DiagnosticsState,
+  diagnosticCollection: vscode.DiagnosticCollection,
+): number {
+  const saveDiagnosticsByUri = buildDiagnosticsByUri(workspaceFolder, sarifPath);
+  clearDocumentDiagnosticsByUri(diagnosticsState.manualDiagnosticsByUri, documentUri);
+  replaceWorkspaceDiagnosticsByUri(
+    diagnosticsState.saveDiagnosticsByUri,
+    workspaceFolder,
+    saveDiagnosticsByUri,
+  );
+  publishTrackedDiagnostics(diagnosticCollection, diagnosticsState);
+  return countDiagnosticsByUri(saveDiagnosticsByUri);
+}
+
+/**
  * 対象 URI に対応するワークスペースフォルダーを返す。
  * @param resourceUri 対象 URI を表す。
  * @returns ワークスペースフォルダーを返す。
@@ -1220,6 +1347,12 @@ async function runSaveCheck(
 ): Promise<void> {
   const sarifPath = getSarifOutputPath(workspaceFolder, SAVE_SARIF_OUTPUT);
   const documentUri = vscode.Uri.file(filePath);
+  const fileName = path.basename(filePath);
+  const notifiedToolIds = new Set<string>();
+
+  fs.rmSync(sarifPath, { force: true });
+
+  outputChannel.appendLine(`Mamori Inspector save check started for ${filePath}.`);
 
   try {
     await runMamoriCli(workspaceFolder, {
@@ -1227,26 +1360,65 @@ async function runSaveCheck(
       scope: 'file',
       files: [filePath],
       sarifOutputPath: sarifPath,
-    }, extensionRootPath);
+    }, extensionRootPath, {
+      onStdoutLine: (outputLine: string) => {
+        const toolId = parseSaveCheckToolStartLine(outputLine);
+        if (!toolId || notifiedToolIds.has(toolId)) {
+          return;
+        }
+
+        notifiedToolIds.add(toolId);
+        const toolLabel = getSaveCheckToolLabel(toolId);
+        outputChannel.appendLine(`Mamori Inspector save check running for ${filePath}: ${toolLabel}`);
+        setTimeout(() => {
+          void vscode.window.showInformationMessage(
+            getSaveCheckStartToastMessage(fileName, toolLabel),
+          );
+        }, 0);
+      },
+    });
     if (!isWorkspaceEnabled(workspaceFolder)) {
       return;
     }
 
-    const saveDiagnosticsByUri = buildDiagnosticsByUri(workspaceFolder, sarifPath);
-    clearDocumentDiagnosticsByUri(diagnosticsState.manualDiagnosticsByUri, documentUri);
-    replaceWorkspaceDiagnosticsByUri(
-      diagnosticsState.saveDiagnosticsByUri,
+    const diagnosticsCount = publishSaveDiagnosticsFromSarif(
       workspaceFolder,
-      saveDiagnosticsByUri,
+      documentUri,
+      sarifPath,
+      diagnosticsState,
+      diagnosticCollection,
     );
-    publishTrackedDiagnostics(diagnosticCollection, diagnosticsState);
+    outputChannel.appendLine(
+      `Mamori Inspector save check completed for ${filePath}: published ${String(diagnosticsCount)} diagnostics.`,
+    );
     void vscode.window.setStatusBarMessage(
-      getSaveCheckStatusMessage(countDiagnosticsByUri(saveDiagnosticsByUri)),
+      getSaveCheckStatusMessage(diagnosticsCount),
       3000,
     );
   } catch (error) {
     outputChannel.appendLine(
       `Mamori Inspector save check failed for ${filePath}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+
+    if (!isWorkspaceEnabled(workspaceFolder)) {
+      return;
+    }
+
+    const diagnosticsCount = publishSaveDiagnosticsFromSarif(
+      workspaceFolder,
+      documentUri,
+      sarifPath,
+      diagnosticsState,
+      diagnosticCollection,
+    );
+    if (diagnosticsCount > 0) {
+      outputChannel.appendLine(
+        `Mamori Inspector reflected ${diagnosticsCount} partial save-check diagnostics for ${filePath}.`,
+      );
+    }
+    void vscode.window.setStatusBarMessage(
+      getSaveCheckStatusMessage(diagnosticsCount),
+      3000,
     );
   }
 }

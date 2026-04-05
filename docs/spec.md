@@ -28,6 +28,9 @@
 2) チェック
 3) 結果を統合し、VS Code Problems（Diagnostics）に反映
 
+- 保存時実行が一部ツール失敗で終了コード 2 となっても、生成済みの SARIF がある場合は、その時点までの Diagnostics を Problems に反映し、失敗詳細はログへ残す
+- 保存時検証では、対象ファイルに対して実際に開始した formatter / checker ごとに、ファイル名と単一ツール名だけを情報トーストで表示する
+
 整形:
 - Java: Spotless（ビルド定義検出できる場合のみ）
 - JavaScript/CSS/HTML: Prettier
