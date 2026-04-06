@@ -1508,6 +1508,7 @@ function createRunWorkspaceCheckCommand(
         },
         async(progress) => {
           for (const [index, sarifOutput] of sarifOutputs.entries()) {
+            fs.rmSync(sarifOutput.sarifPath, { force: true });
             progress.report({
               increment: 100 / sarifOutputs.length,
               message: `${sarifOutput.workspaceFolder.name} (${String(index + 1)}/${String(sarifOutputs.length)})`,
@@ -1537,7 +1538,8 @@ function createRunWorkspaceCheckCommand(
       }
       diagnosticsState.manualDiagnosticsByUri.clear();
       mergeDiagnosticsByUri(diagnosticsState.manualDiagnosticsByUri, diagnosticsByUri);
-      const diagnosticsCount = publishTrackedDiagnostics(diagnosticCollection, diagnosticsState);
+      publishTrackedDiagnostics(diagnosticCollection, diagnosticsState);
+      const diagnosticsCount = countDiagnosticsByUri(diagnosticsByUri);
       void vscode.window.showInformationMessage(getWorkspaceCheckSuccessMessage(diagnosticsCount));
     } catch (error) {
       const details = error instanceof Error ? error.message : String(error);

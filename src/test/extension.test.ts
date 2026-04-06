@@ -2694,6 +2694,7 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
     const manualSarifPath = path.join(workspaceRoot, '.mamori', 'out', 'combined.sarif');
     const saveSarifPath = path.join(workspaceRoot, SAVE_SARIF_OUTPUT);
     const restoreCliScript = createRestoreAction(cliScriptPath);
+    const restoreManualSarif = createRestoreAction(manualSarifPath);
     const messageCapture = captureWindowMessages(activeVscodeApi);
 
     try {
@@ -2783,6 +2784,110 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
     } finally {
       messageCapture.restore();
       restoreCliScript();
+      restoreManualSarif();
+    }
+  });
+
+  /**
+   * stale な manual SARIF が残っていても、手動全体チェックで再利用しないこと。
+   * @returns 実行完了を待つ Promise を返す。
+   */
+  test('Ignores stale manual SARIF when a clean workspace check produces no new SARIF output', async function() {
+    this.timeout(120000);
+
+    const activeVscodeApi = vscodeApi;
+    const workspaceRoot = activeVscodeApi.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceRoot) {
+      throw new Error('Workspace root was not found');
+    }
+
+    const cliScriptPath = path.join(workspaceRoot, '.mamori', 'mamori.js');
+    const manualSarifPath = path.join(workspaceRoot, '.mamori', 'out', 'combined.sarif');
+    const restoreCliScript = createRestoreAction(cliScriptPath);
+    const restoreManualSarif = createRestoreAction(manualSarifPath);
+    const messageCapture = captureWindowMessages(activeVscodeApi);
+
+    try {
+      fs.writeFileSync(
+        manualSarifPath,
+        JSON.stringify({
+          version: '2.1.0',
+          runs: [
+            {
+              tool: {
+                driver: {
+                  name: 'pmd',
+                  rules: [{ id: 'LongVariable' }],
+                },
+              },
+              results: [
+                {
+                  ruleId: 'LongVariable',
+                  level: 'warning',
+                  message: {
+                    text: 'Avoid excessively long variable names like staleVariable',
+                  },
+                  locations: [
+                    {
+                      physicalLocation: {
+                        artifactLocation: {
+                          uri: path.join(workspaceRoot, 'src', 'extension.ts'),
+                        },
+                        region: {
+                          startLine: 1,
+                          startColumn: 1,
+                        },
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        }),
+        'utf8',
+      );
+
+      fs.writeFileSync(
+        cliScriptPath,
+        [
+          '#!/usr/bin/env node',
+          'process.exit(0);',
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+      makeExecutable(cliScriptPath);
+
+      await getMamoriExtension(activeVscodeApi).activate();
+      const informationCountBeforeManual = messageCapture.informationMessages.length;
+      const errorCountBeforeManual = messageCapture.errorMessages.length;
+      await activeVscodeApi.commands.executeCommand('mamori-inspector.runWorkspaceCheck');
+
+      await waitFor(
+        () => messageCapture.errorMessages.length > errorCountBeforeManual
+          || messageCapture.informationMessages.slice(informationCountBeforeManual).some(
+            (message) => getDiagnosticsReflectedPattern(0).test(message),
+          ),
+        120000,
+      );
+
+      const newErrorMessages = messageCapture.errorMessages.slice(errorCountBeforeManual);
+      if (newErrorMessages.length > 0) {
+        throw new Error(newErrorMessages.join('\n'));
+      }
+
+      const diagnostics = activeVscodeApi.languages.getDiagnostics().flatMap(([, entries]) => entries);
+      const manualMessages = messageCapture.informationMessages.slice(informationCountBeforeManual);
+
+      assert.deepStrictEqual(messageCapture.errorMessages, []);
+      assert.ok(!diagnostics.some((diagnostic) => diagnostic.message.includes('staleVariable')));
+      assert.ok(manualMessages.some((message) => getDiagnosticsReflectedPattern(0).test(message)));
+      assert.ok(!fs.existsSync(manualSarifPath));
+    } finally {
+      messageCapture.restore();
+      restoreCliScript();
+      restoreManualSarif();
     }
   });
 
