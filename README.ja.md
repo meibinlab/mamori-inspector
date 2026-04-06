@@ -2,9 +2,10 @@
 Mamori Inspector は、複数の解析ツールを統合し、開発者が扱いやすい形で VS Code 上に結果を集約するコード検査プラットフォームです。
 
 - English: [README.md](README.md)
+- Marketplace 表示名: Mamori Suite Inspector
 
 ## 導入方法
-1. VS Code に Mamori Inspector 拡張をインストールします。
+1. VS Code に Mamori Inspector 拡張をインストールします。Marketplace では Mamori Suite Inspector と表示されます。
 2. 対象リポジトリを VS Code のワークスペースとして開きます。
 3. 保存時検証を使いたいワークスペースフォルダーで、コマンド `Mamori Inspector: Enable In Workspace` を実行します。
 4. 対応ファイルを保存すると、保存時検証が始まります。

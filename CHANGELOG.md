@@ -4,6 +4,16 @@
 
 形式は Keep a Changelog を参考にしつつ、このリポジトリの実装状況に合わせて整理します。
 
+## [0.2.32] - 2026-04-07
+
+### Changed
+- VS Marketplace で既存拡張と混同しにくいよう、表示名を `Mamori Suite Inspector` に変更しました。
+
+## [0.2.31] - 2026-04-07
+
+### Fixed
+- GitHub Actions の遅い実行環境でも、run execution 時の `.git/info/exclude` 更新回帰テストが既定タイムアウトで不安定にならないよう調整しました。
+
 ## [0.2.30] - 2026-04-07
 
 ### Fixed
