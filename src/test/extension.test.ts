@@ -10,6 +10,8 @@ import * as os from 'os';
 import * as path from 'path';
 // hooks 通知補助関数を表す
 import { reportHooksCommandSuccess } from '../hooks-command-report';
+// 保守コマンド通知補助関数を表す
+import { reportMaintenanceCommandSuccess } from '../maintenance-command-report';
 // SARIF 読み込み関数を表す
 import { loadSarifFindings } from '../sarif-diagnostics';
 
@@ -1249,6 +1251,34 @@ suite('Extension Utility Test Suite', () => {
     ]);
     assert.deepStrictEqual(informationMessages, [
       'Mamori Inspector: Uninstalled Git hooks.',
+    ]);
+  });
+
+  /**
+   * setup warning が通知へ反映されること。
+   * @returns 返り値はない。
+   */
+  test('Reports setup maintenance warnings to notifications', () => {
+    const { informationMessages, warningMessages, presenter } = createHooksMessageRecorder();
+
+    reportMaintenanceCommandSuccess(
+      'setup',
+      'mamori: setup warnings=failed to update .git/info/exclude: access denied',
+      presenter,
+      {
+        setupSuccessMessage: 'Mamori Inspector: Set up managed tools.',
+        cacheClearSuccessMessage: 'Mamori Inspector: Cleared the cache.',
+        buildWarningMessage: (_action: 'setup' | 'cache-clear', warnings: string) => (
+          `warning ${warnings}`
+        ),
+      },
+    );
+
+    assert.deepStrictEqual(warningMessages, [
+      'warning failed to update .git/info/exclude: access denied',
+    ]);
+    assert.deepStrictEqual(informationMessages, [
+      'Mamori Inspector: Set up managed tools.',
     ]);
   });
 

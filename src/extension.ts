@@ -20,6 +20,11 @@ import {
   getSaveCheckToolLabel as buildSaveCheckToolLabel,
   parseSaveCheckToolStartLine as parseSaveCheckToolStartOutputLine,
 } from './save-check-notifications';
+// 保守コマンドの warning 通知補助を表す
+import {
+  reportMaintenanceCommandSuccess,
+  type MaintenanceCommandMessages,
+} from './maintenance-command-report';
 // 保存時チェックのスケジューラーを表す
 import { SaveCheckScheduler } from './save-check-scheduler';
 
@@ -201,6 +206,40 @@ function getMaintenanceSuccessMessage(action: MamoriMaintenanceAction): string {
       'Mamori Inspector: Cleared the cache.',
       'Information message shown after the extension cache is cleared successfully.',
     );
+}
+
+/**
+ * 保守コマンド warning 通知文言を返す。
+ * @param action 保守コマンド種別を表す。
+ * @param warnings 警告内容を表す。
+ * @returns 警告通知文言を返す。
+ */
+function getMaintenanceWarningMessage(action: MamoriMaintenanceAction, warnings: string): string {
+  return action === 'setup'
+    ? localize(
+      'Mamori Inspector: Managed tool setup completed, but local Git exclude updates were skipped. {0}',
+      'Warning message shown when setup succeeds but local Git exclude updates could not be completed.',
+      [warnings],
+    )
+    : localize(
+      'Mamori Inspector: Cache clear completed with warnings. {0}',
+      'Warning message shown when cache clear succeeds with warnings.',
+      [warnings],
+    );
+}
+
+/**
+ * 保守コマンド通知文言を返す。
+ * @returns 保守コマンド通知文言を返す。
+ */
+function getMaintenanceCommandMessages(): MaintenanceCommandMessages {
+  return {
+    setupSuccessMessage: getMaintenanceSuccessMessage('setup'),
+    cacheClearSuccessMessage: getMaintenanceSuccessMessage('cache-clear'),
+    buildWarningMessage: (action: 'setup' | 'cache-clear', warnings: string) => (
+      getMaintenanceWarningMessage(action, warnings)
+    ),
+  };
 }
 
 /**
@@ -855,7 +894,12 @@ function createManageMaintenanceCommand(
       if (commandResult && commandResult.stdout.trim() !== '') {
         outputChannel.appendLine(commandResult.stdout.trim());
       }
-      void vscode.window.showInformationMessage(getMaintenanceSuccessMessage(action));
+      reportMaintenanceCommandSuccess(
+        action,
+        commandResult ? commandResult.stdout : '',
+        vscode.window,
+        getMaintenanceCommandMessages(),
+      );
     } catch (error) {
       const details = error instanceof Error ? error.message : String(error);
       outputChannel.appendLine(
