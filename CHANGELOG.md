@@ -4,6 +4,12 @@
 
 形式は Keep a Changelog を参考にしつつ、このリポジトリの実装状況に合わせて整理します。
 
+## [0.2.19] - 2026-04-06
+
+### Fixed
+- `setup` と `run --execute` で、ワークスペースルートの `/.mamori/` に加えて、リポジトリ配下で見つかった repo-relative な nested `.mamori` もローカルの `.git/info/exclude` へ best-effort で追加するようにしました。
+- nested `.mamori` の追記、探索除外、既存 root 追記の回帰を確認する CLI テストを追加しました。
+
 ## [0.2.18] - 2026-04-06
 
 ### Fixed

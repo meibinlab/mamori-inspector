@@ -26,7 +26,7 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 - 初回実行前にまとめて取得したい場合は `Mamori Inspector: Setup Managed Tools` を使います。
 - `.mamori/tools` と `.mamori/node` を削除して次回実行時に再取得したい場合は `Mamori Inspector: Clear Managed Tool Cache` を使います。
 - CLI では `mamori.js setup` と `mamori.js cache-clear` が同じ役割を持ちます。
-- Mamori は `setup` と `run --execute` の実行時に、ワークスペースが Git リポジトリであれば、ローカルの `.git/info/exclude` へ `/.mamori/` を best-effort で追記します。これは `.gitignore` を変更せず、Git で既に追跡されているファイルにも影響しません。
+- Mamori は `setup` と `run --execute` の実行時に、ワークスペースが Git リポジトリであれば、ローカルの `.git/info/exclude` へワークスペースルートの `/.mamori/` と、リポジトリ配下で見つかった repo-relative な nested `.mamori` エントリを best-effort で追記します。これは `.gitignore` を変更せず、Git で既に追跡されているファイルにも影響しません。
 
 | ツール群 | 管理バージョン | 導入先 | 補足 |
 | ---- | ---- | ---- | ---- |
@@ -66,7 +66,7 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 - コマンド `Mamori Inspector: Clear Managed Tool Cache` は、`.mamori/tools` と `.mamori/node` の管理キャッシュを削除します。
 - コマンド `Mamori Inspector: Install Git Hooks` と `Mamori Inspector: Uninstall Git Hooks` は、CLI と同じランナーを呼び出し、`.git/hooks/pre-commit` と `.git/hooks/pre-push` を管理します。
 - Maven と Gradle の build 定義を解析して、Checkstyle、PMD、Spotless、CPD、SpotBugs などの Java ツール設定を解決します。
-- `mamori.js setup` は VS Code の setup コマンドと同じ管理ツール一式を準備し、best-effort でローカルの `.git/info/exclude` へ `/.mamori/` を追記します。`mamori.js cache-clear` は VS Code の cache-clear コマンドと同じキャッシュ削除を行います。
+- `mamori.js setup` は VS Code の setup コマンドと同じ管理ツール一式を準備し、best-effort でローカルの `.git/info/exclude` へワークスペースルートの `/.mamori/` と、リポジトリ配下で見つかった repo-relative な nested `.mamori` エントリを追記します。`mamori.js cache-clear` は VS Code の cache-clear コマンドと同じキャッシュ削除を行います。
 - `mamori.js hooks install` と `mamori.js hooks uninstall` は、`.git/hooks` 配下の管理対象 `pre-commit` と `pre-push` を作成または削除します。
 
 ## HTML 内の JS / CSS チェック

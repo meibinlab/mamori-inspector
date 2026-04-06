@@ -28,6 +28,16 @@ const MANAGED_NODE_TOOL_NAMES = Object.keys(NODE_TOOL_PACKAGES);
 const MANAGED_TOOL_CACHE_DIRECTORY_NAMES = ['cache', 'gradle', 'maven', 'python'];
 // ローカル Git 除外へ追記する Mamori 管理ディレクトリエントリを表す
 const MAMORI_GIT_EXCLUDE_ENTRY = '/.mamori/';
+// nested `.mamori` 探索で再帰走査から除外するディレクトリ名を表す
+const MAMORI_GIT_EXCLUDE_SCAN_SKIP_DIRECTORY_NAMES = new Set([
+  '.git',
+  '.gradle',
+  'build',
+  'dist',
+  'node_modules',
+  'out',
+  'target',
+]);
 // Windows の一時ディレクトリ rename 失敗で再試行するエラーコード一覧を表す
 const WINDOWS_RETRYABLE_RENAME_ERROR_CODES = new Set(['EACCES', 'EBUSY', 'ENOTEMPTY', 'EPERM']);
 
@@ -49,16 +59,86 @@ function getManagedDirectories(workspaceRoot) {
 }
 
 /**
- * `.git/info/exclude` に Mamori 管理ディレクトリの除外が既にあるか判定する。
- * @param {string} line 判定対象の 1 行を表す。
- * @returns {boolean} 既存の Mamori 除外行なら true を返す。
+ * `.git/info/exclude` の 1 行を Mamori 管理ディレクトリエントリへ正規化する。
+ * @param {string} line 正規化対象の 1 行を表す。
+ * @returns {string} 正規化済みエントリを返す。Mamori 管理ディレクトリ以外は空文字を返す。
  */
-function isMamoriGitExcludeLine(line) {
-  const normalizedLine = line.trim();
-  return normalizedLine === '.mamori'
-    || normalizedLine === '.mamori/'
-    || normalizedLine === '/.mamori'
-    || normalizedLine === MAMORI_GIT_EXCLUDE_ENTRY;
+function normalizeMamoriGitExcludeEntry(line) {
+  const normalizedLine = line.trim().replace(/\\/gu, '/');
+  if (normalizedLine === '') {
+    return '';
+  }
+
+  const canonicalPath = normalizedLine
+    .replace(/^\/+/u, '')
+    .replace(/\/+$/u, '');
+  if (canonicalPath === '.mamori') {
+    return MAMORI_GIT_EXCLUDE_ENTRY;
+  }
+  if (!canonicalPath.endsWith('/.mamori')) {
+    return '';
+  }
+
+  return `/${canonicalPath}/`;
+}
+
+/**
+ * `.git/info/exclude` へ追記する Mamori 管理ディレクトリエントリへ変換する。
+ * @param {string} relativeDirectoryPath ワークスペースルート基準の相対ディレクトリを表す。
+ * @returns {string} `.git/info/exclude` 用のエントリを返す。
+ */
+function toMamoriGitExcludeEntry(relativeDirectoryPath) {
+  const normalizedRelativePath = relativeDirectoryPath
+    .replace(/\\/gu, '/')
+    .replace(/^\.\//u, '')
+    .replace(/^\/+/u, '')
+    .replace(/\/+$/u, '');
+
+  if (normalizedRelativePath === '' || normalizedRelativePath === '.mamori') {
+    return MAMORI_GIT_EXCLUDE_ENTRY;
+  }
+
+  return `/${normalizedRelativePath}/`;
+}
+
+/**
+ * ワークスペース配下にある nested `.mamori` ディレクトリの Git 除外エントリを収集する。
+ * @param {string} workspaceRoot ワークスペースルートを表す。
+ * @param {string} relativeDirectoryPath 走査中ディレクトリの相対パスを表す。
+ * @returns {string[]} 収集した Git 除外エントリ一覧を返す。
+ */
+function collectNestedMamoriGitExcludeEntries(workspaceRoot, relativeDirectoryPath = '') {
+  const directoryPath = relativeDirectoryPath === ''
+    ? workspaceRoot
+    : path.join(workspaceRoot, relativeDirectoryPath);
+  const directoryEntries = fs.readdirSync(directoryPath, { withFileTypes: true })
+    .sort((leftEntry, rightEntry) => leftEntry.name.localeCompare(rightEntry.name));
+  const nestedEntries = [];
+
+  for (const directoryEntry of directoryEntries) {
+    if (!directoryEntry.isDirectory()) {
+      continue;
+    }
+    if (MAMORI_GIT_EXCLUDE_SCAN_SKIP_DIRECTORY_NAMES.has(directoryEntry.name)) {
+      continue;
+    }
+
+    const childRelativeDirectoryPath = relativeDirectoryPath === ''
+      ? directoryEntry.name
+      : path.posix.join(relativeDirectoryPath, directoryEntry.name);
+    if (directoryEntry.name === '.mamori') {
+      if (childRelativeDirectoryPath !== '.mamori') {
+        nestedEntries.push(toMamoriGitExcludeEntry(childRelativeDirectoryPath));
+      }
+      continue;
+    }
+
+    nestedEntries.push(
+      ...collectNestedMamoriGitExcludeEntries(workspaceRoot, childRelativeDirectoryPath),
+    );
+  }
+
+  return nestedEntries;
 }
 
 /**
@@ -82,7 +162,17 @@ function ensureMamoriGitExclude(workspaceRoot) {
       ? fs.readFileSync(excludePath, 'utf8')
       : '';
     const existingLines = existingContent.split(/\r?\n/u);
-    if (existingLines.some((line) => isMamoriGitExcludeLine(line))) {
+    const existingEntries = new Set(
+      existingLines
+        .map((line) => normalizeMamoriGitExcludeEntry(line))
+        .filter((line) => line !== ''),
+    );
+    const requiredEntries = Array.from(new Set([
+      MAMORI_GIT_EXCLUDE_ENTRY,
+      ...collectNestedMamoriGitExcludeEntries(workspaceRoot),
+    ]));
+    const missingEntries = requiredEntries.filter((entry) => !existingEntries.has(entry));
+    if (missingEntries.length === 0) {
       return {
         updated: false,
         warnings: [],
@@ -96,7 +186,7 @@ function ensureMamoriGitExclude(workspaceRoot) {
       : '\n';
     fs.writeFileSync(
       excludePath,
-      `${normalizedContent}${separator}${MAMORI_GIT_EXCLUDE_ENTRY}\n`,
+      `${normalizedContent}${separator}${missingEntries.join('\n')}\n`,
       'utf8',
     );
     return {
