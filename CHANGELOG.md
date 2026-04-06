@@ -4,6 +4,15 @@
 
 形式は Keep a Changelog を参考にしつつ、このリポジトリの実装状況に合わせて整理します。
 
+## [0.2.17] - 2026-04-06
+
+### Added
+- `setup` と `run --execute` で、ワークスペースが Git リポジトリの場合にローカルの `.git/info/exclude` へ `/.mamori/` を best-effort で追加するようにしました。
+- `.git/info/exclude` への追記と冪等性を確認する CLI 回帰テストを追加しました。
+
+### Changed
+- `Mamori Inspector: Setup Managed Tools` 成功時に warning があれば、成功通知に加えて warning 通知も表示するようにしました。
+
 ## [0.2.16] - 2026-04-05
 
 ### Added

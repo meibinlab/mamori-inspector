@@ -26,6 +26,7 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 - Use `Mamori Inspector: Setup Managed Tools` when you want to download the managed toolchain in advance.
 - Use `Mamori Inspector: Clear Managed Tool Cache` when you want to remove `.mamori/tools` and `.mamori/node` and force a fresh download on the next run.
 - CLI equivalents are `mamori.js setup` and `mamori.js cache-clear`.
+- During `setup` and `run --execute`, Mamori also updates the local `.git/info/exclude` with `/.mamori/` on a best-effort basis when the workspace contains a Git repository. This does not modify `.gitignore`, and it does not affect files that are already tracked by Git.
 
 | Tool group | Managed version | Install location | Notes |
 | ---- | ---- | ---- | ---- |
@@ -65,7 +66,7 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 - The command `Mamori Inspector: Clear Managed Tool Cache` removes the managed cache directories under `.mamori/tools` and `.mamori/node`.
 - The commands `Mamori Inspector: Install Git Hooks` and `Mamori Inspector: Uninstall Git Hooks` call the same runner as the CLI and manage `.git/hooks/pre-commit` and `.git/hooks/pre-push`.
 - Maven and Gradle build definitions are inspected to resolve Java tooling such as Checkstyle, PMD, Spotless, CPD, and SpotBugs.
-- `mamori.js setup` prepares the same managed toolchain as the VS Code setup command, and `mamori.js cache-clear` removes the same cache directories as the VS Code cache-clear command.
+- `mamori.js setup` prepares the same managed toolchain as the VS Code setup command and best-effort updates the local `.git/info/exclude` with `/.mamori/`, while `mamori.js cache-clear` removes the same cache directories as the VS Code cache-clear command.
 - `mamori.js hooks install` and `mamori.js hooks uninstall` create or remove managed `pre-commit` and `pre-push` hooks under `.git/hooks`.
 
 ## HTML Inline JS And CSS Checks

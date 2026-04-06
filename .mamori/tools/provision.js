@@ -26,6 +26,8 @@ const {
 const MANAGED_NODE_TOOL_NAMES = Object.keys(NODE_TOOL_PACKAGES);
 // `.mamori/tools` 配下で cache-clear が削除対象にする管理ディレクトリ名を表す
 const MANAGED_TOOL_CACHE_DIRECTORY_NAMES = ['cache', 'gradle', 'maven', 'python'];
+// ローカル Git 除外へ追記する Mamori 管理ディレクトリエントリを表す
+const MAMORI_GIT_EXCLUDE_ENTRY = '/.mamori/';
 // Windows の一時ディレクトリ rename 失敗で再試行するエラーコード一覧を表す
 const WINDOWS_RETRYABLE_RENAME_ERROR_CODES = new Set(['EACCES', 'EBUSY', 'ENOTEMPTY', 'EPERM']);
 
@@ -44,6 +46,71 @@ function getManagedDirectories(workspaceRoot) {
     cacheRoot: path.join(toolsRoot, 'cache'),
     pythonPackagesRoot: path.join(toolsRoot, 'python', 'packages'),
   };
+}
+
+/**
+ * `.git/info/exclude` に Mamori 管理ディレクトリの除外が既にあるか判定する。
+ * @param {string} line 判定対象の 1 行を表す。
+ * @returns {boolean} 既存の Mamori 除外行なら true を返す。
+ */
+function isMamoriGitExcludeLine(line) {
+  const normalizedLine = line.trim();
+  return normalizedLine === '.mamori'
+    || normalizedLine === '.mamori/'
+    || normalizedLine === '/.mamori'
+    || normalizedLine === MAMORI_GIT_EXCLUDE_ENTRY;
+}
+
+/**
+ * ローカル Git 除外ファイルへ Mamori 管理ディレクトリを追記する。
+ * @param {string} workspaceRoot ワークスペースルートを表す。
+ * @returns {{updated: boolean, warnings: string[]}} 更新結果を返す。
+ */
+function ensureMamoriGitExclude(workspaceRoot) {
+  const gitDirectoryPath = path.join(workspaceRoot, '.git');
+  const excludePath = path.join(gitDirectoryPath, 'info', 'exclude');
+
+  try {
+    if (!fs.existsSync(gitDirectoryPath) || !fs.statSync(gitDirectoryPath).isDirectory()) {
+      return {
+        updated: false,
+        warnings: [],
+      };
+    }
+
+    const existingContent = fs.existsSync(excludePath)
+      ? fs.readFileSync(excludePath, 'utf8')
+      : '';
+    const existingLines = existingContent.split(/\r?\n/u);
+    if (existingLines.some((line) => isMamoriGitExcludeLine(line))) {
+      return {
+        updated: false,
+        warnings: [],
+      };
+    }
+
+    ensureDirectory(path.dirname(excludePath));
+    const normalizedContent = existingContent.replace(/\r?\n/gu, '\n');
+    const separator = normalizedContent === '' || normalizedContent.endsWith('\n')
+      ? ''
+      : '\n';
+    fs.writeFileSync(
+      excludePath,
+      `${normalizedContent}${separator}${MAMORI_GIT_EXCLUDE_ENTRY}\n`,
+      'utf8',
+    );
+    return {
+      updated: true,
+      warnings: [],
+    };
+  } catch (error) {
+    return {
+      updated: false,
+      warnings: [
+        `failed to update .git/info/exclude: ${error instanceof Error ? error.message : String(error)}`,
+      ],
+    };
+  }
 }
 
 /**
@@ -938,6 +1005,7 @@ async function resolveCommandEntryRuntime(workspaceRoot, moduleRoot, commandEntr
 
 module.exports = {
   clearManagedToolCaches,
+  ensureMamoriGitExclude,
   ensureWorkspaceTooling,
   getManagedDirectories,
   resolveCommandEntryRuntime,

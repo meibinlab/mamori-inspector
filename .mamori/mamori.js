@@ -19,7 +19,11 @@ const { runResolvedConfiguration } = require('./core/runner');
 // SARIF 出力器を表す
 const { buildCombinedSarif, writeSarifFile } = require('./core/sarif');
 // ツール自動導入器を表す
-const { clearManagedToolCaches, ensureWorkspaceTooling } = require('./tools/provision');
+const {
+  clearManagedToolCaches,
+  ensureMamoriGitExclude,
+  ensureWorkspaceTooling,
+} = require('./tools/provision');
 
 // コマンドライン引数を取得する
 const args = process.argv.slice(2);
@@ -79,6 +83,20 @@ function printHelp() {
       '',
     ].join('\n'),
   );
+}
+
+/**
+ * コマンド実行時の警告一覧を標準出力へ書き出す。
+ * @param {string} commandName 対象コマンド名を表す。
+ * @param {string[]} warnings 警告一覧を表す。
+ * @returns {void} 返り値はない。
+ */
+function printCommandWarnings(commandName, warnings) {
+  if (!Array.isArray(warnings) || warnings.length === 0) {
+    return;
+  }
+
+  process.stdout.write(`mamori: ${commandName} warnings=${warnings.join(' | ')}\n`);
 }
 
 /**
@@ -715,6 +733,11 @@ async function runMinimal() {
     return 0;
   }
 
+  if (parsedArguments.execute) {
+    const gitExcludeResult = ensureMamoriGitExclude(process.cwd());
+    printCommandWarnings('run', gitExcludeResult.warnings);
+  }
+
   // CLI 向けの解決結果を表す
   const resolution = resolveRunConfiguration({
     cwd: process.cwd(),
@@ -748,8 +771,10 @@ async function runMinimal() {
  * @returns {Promise<number>} 終了コードを返す。
  */
 async function runSetupCommand() {
+  const gitExcludeResult = ensureMamoriGitExclude(process.cwd());
   const results = await ensureWorkspaceTooling(process.cwd());
   process.stdout.write('mamori: setup completed\n');
+  printCommandWarnings('setup', gitExcludeResult.warnings);
   process.stdout.write(
     `mamori: setup tools=${results.map((entry) => `${entry.tool}:${entry.location}`).join(' | ')}\n`,
   );

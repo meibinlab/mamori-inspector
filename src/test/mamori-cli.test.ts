@@ -56,6 +56,17 @@ function createTemporaryDirectory(): string {
 }
 
 /**
+ * テスト用の `.git/info` ディレクトリを作成する。
+ * @param workingDirectory 作業ディレクトリを表す。
+ * @returns 作成した `.git/info` ディレクトリの絶対パスを返す。
+ */
+function createGitInfoDirectory(workingDirectory: string): string {
+  const infoDirectory = path.join(workingDirectory, '.git', 'info');
+  fs.mkdirSync(infoDirectory, { recursive: true });
+  return infoDirectory;
+}
+
+/**
  * Mamori CLI を実行する。
  * @param workingDirectory 実行時の作業ディレクトリを表す。
  * @param argumentsList コマンド引数一覧を表す。
@@ -4508,6 +4519,57 @@ suite('Mamori CLI Test Suite', () => {
   });
 
   /**
+   * setup で `.git/info/exclude` へ `/.mamori/` を冪等に追加できること。
+   * @returns 返り値はない。
+   */
+  test('Adds /.mamori/ to local git exclude during setup without duplication', function() {
+    this.timeout(15000);
+    const temporaryDirectory = createTemporaryDirectory();
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const mavenSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'maven-exclude-distribution',
+      'mvn',
+      'maven-exclude.log',
+    );
+    const gradleSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'gradle-exclude-distribution',
+      'gradle',
+      'gradle-exclude.log',
+    );
+    const gitInfoDirectory = createGitInfoDirectory(temporaryDirectory);
+    const excludePath = path.join(gitInfoDirectory, 'exclude');
+
+    fs.writeFileSync(excludePath, '# local excludes\n', 'utf8');
+    writeNpmInstallWrapper(binDirectory, 'npm-exclude.log');
+    writeCommandWrapper(binDirectory, 'semgrep', 'semgrep-exclude.log');
+
+    const semgrepCommandPath = path.join(
+      binDirectory,
+      process.platform === 'win32' ? 'semgrep.cmd' : 'semgrep',
+    );
+    const environment = {
+      ...process.env,
+      PATH: buildTestPath(binDirectory),
+      MAMORI_TOOL_MAVEN_SOURCE_URL: toFileUrl(mavenSourceDirectory),
+      MAMORI_TOOL_GRADLE_SOURCE_URL: toFileUrl(gradleSourceDirectory),
+      MAMORI_TOOL_SEMGREP_COMMAND: semgrepCommandPath,
+    };
+
+    const firstResult = runMamoriCli(temporaryDirectory, ['setup'], { env: environment });
+    const secondResult = runMamoriCli(temporaryDirectory, ['setup'], { env: environment });
+
+    assert.strictEqual(firstResult.status, 0);
+    assert.strictEqual(secondResult.status, 0);
+    const excludeLines = fs.readFileSync(excludePath, 'utf8')
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter((line) => Boolean(line));
+    assert.strictEqual(excludeLines.filter((line) => line === '/.mamori/').length, 1);
+  });
+
+  /**
    * 空白を含む npm 実行パスでも setup が成功すること。
    * @returns 返り値はない。
    */
@@ -4797,6 +4859,35 @@ suite('Mamori CLI Test Suite', () => {
       ),
       /pmd:check/u,
     );
+  });
+
+  /**
+   * run 実行時も `.git/info/exclude` へ `/.mamori/` を追加できること。
+   * @returns 返り値はない。
+   */
+  test('Adds /.mamori/ to local git exclude during run execution', function() {
+    const temporaryDirectory = createTemporaryDirectory();
+    const gitInfoDirectory = createGitInfoDirectory(temporaryDirectory);
+    const excludePath = path.join(gitInfoDirectory, 'exclude');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-empty.sarif');
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      [
+        'run',
+        '--mode',
+        'manual',
+        '--scope',
+        'workspace',
+        '--execute',
+        '--sarif-output',
+        path.relative(temporaryDirectory, sarifOutputPath),
+      ],
+    );
+
+    assert.strictEqual(result.status, 0);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(excludePath, 'utf8'), /\/\.mamori\//u);
   });
 
   /**
