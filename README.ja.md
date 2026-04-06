@@ -15,6 +15,7 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 - GitHub Actions は `push`、`pull_request`、`workflow_dispatch` で実行します。
 - quality ジョブでは Ubuntu と Windows の両方で `npm ci`、`npm run compile`、`npm run lint`、`npm test` を実行します。
 - integration ジョブでは、quality 成功後に Ubuntu 上で `xvfb-run -a npm run test:integration` を実行します。
+- prerelease ではない GitHub Release を公開すると、release tag と `package.json` の version が一致することを確認したうえで、`vX.Y.Z` と `X.Y.Z` の両形式を許容して `VSCE_PAT` を使い VS Code Marketplace へ公開します。prerelease の公開では同じ確認を行いますが、Marketplace への公開は行いません。
 
 ## 初期セットアップ時の注意
 - 保存時検証は既定で無効です。対象ワークスペースフォルダーごとに `Mamori Inspector: Enable In Workspace` を実行したあとで開始します。
