@@ -67,6 +67,18 @@ function createGitInfoDirectory(workingDirectory: string): string {
 }
 
 /**
+ * `.git/info/exclude` の有効な行一覧を返す。
+ * @param excludePath `.git/info/exclude` の絶対パスを表す。
+ * @returns 空行を除いた行一覧を返す。
+ */
+function readGitExcludeLines(excludePath: string): string[] {
+  return fs.readFileSync(excludePath, 'utf8')
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => Boolean(line));
+}
+
+/**
  * Mamori CLI を実行する。
  * @param workingDirectory 実行時の作業ディレクトリを表す。
  * @param argumentsList コマンド引数一覧を表す。
@@ -4562,11 +4574,67 @@ suite('Mamori CLI Test Suite', () => {
 
     assert.strictEqual(firstResult.status, 0);
     assert.strictEqual(secondResult.status, 0);
-    const excludeLines = fs.readFileSync(excludePath, 'utf8')
-      .split(/\r?\n/u)
-      .map((line) => line.trim())
-      .filter((line) => Boolean(line));
+    const excludeLines = readGitExcludeLines(excludePath);
     assert.strictEqual(excludeLines.filter((line) => line === '/.mamori/').length, 1);
+  });
+
+  /**
+   * setup で nested `.mamori` を repo-relative にローカル Git 除外へ追加できること。
+   * @returns 返り値はない。
+   */
+  test('Adds nested .mamori entries to local git exclude during setup', function() {
+    this.timeout(15000);
+    const temporaryDirectory = createTemporaryDirectory();
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const mavenSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'maven-nested-exclude-distribution',
+      'mvn',
+      'maven-nested-exclude.log',
+    );
+    const gradleSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'gradle-nested-exclude-distribution',
+      'gradle',
+      'gradle-nested-exclude.log',
+    );
+    const gitInfoDirectory = createGitInfoDirectory(temporaryDirectory);
+    const excludePath = path.join(gitInfoDirectory, 'exclude');
+
+    fs.mkdirSync(path.join(temporaryDirectory, 'mamori-inspector', '.mamori', 'tools'), { recursive: true });
+    fs.mkdirSync(path.join(temporaryDirectory, 'packages', 'sample', '.mamori', 'cache'), { recursive: true });
+    fs.mkdirSync(path.join(temporaryDirectory, 'node_modules', 'ignored-package', '.mamori'), { recursive: true });
+    fs.mkdirSync(path.join(temporaryDirectory, 'out', 'ignored-build', '.mamori'), { recursive: true });
+    fs.mkdirSync(path.join(temporaryDirectory, 'dist', 'ignored-dist', '.mamori'), { recursive: true });
+    fs.mkdirSync(path.join(temporaryDirectory, 'target', 'ignored-target', '.mamori'), { recursive: true });
+
+    fs.writeFileSync(excludePath, '# local excludes\n', 'utf8');
+    writeNpmInstallWrapper(binDirectory, 'npm-nested-exclude.log');
+    writeCommandWrapper(binDirectory, 'semgrep', 'semgrep-nested-exclude.log');
+
+    const semgrepCommandPath = path.join(
+      binDirectory,
+      process.platform === 'win32' ? 'semgrep.cmd' : 'semgrep',
+    );
+    const environment = {
+      ...process.env,
+      PATH: buildTestPath(binDirectory),
+      MAMORI_TOOL_MAVEN_SOURCE_URL: toFileUrl(mavenSourceDirectory),
+      MAMORI_TOOL_GRADLE_SOURCE_URL: toFileUrl(gradleSourceDirectory),
+      MAMORI_TOOL_SEMGREP_COMMAND: semgrepCommandPath,
+    };
+
+    const result = runMamoriCli(temporaryDirectory, ['setup'], { env: environment });
+
+    assert.strictEqual(result.status, 0);
+    const excludeLines = readGitExcludeLines(excludePath);
+    assert.ok(excludeLines.includes('/.mamori/'));
+    assert.ok(excludeLines.includes('/mamori-inspector/.mamori/'));
+    assert.ok(excludeLines.includes('/packages/sample/.mamori/'));
+    assert.ok(!excludeLines.includes('/node_modules/ignored-package/.mamori/'));
+    assert.ok(!excludeLines.includes('/out/ignored-build/.mamori/'));
+    assert.ok(!excludeLines.includes('/dist/ignored-dist/.mamori/'));
+    assert.ok(!excludeLines.includes('/target/ignored-target/.mamori/'));
   });
 
   /**
@@ -4888,6 +4956,41 @@ suite('Mamori CLI Test Suite', () => {
     assert.strictEqual(result.status, 0);
     assert.ok(fs.existsSync(sarifOutputPath));
     assert.match(fs.readFileSync(excludePath, 'utf8'), /\/\.mamori\//u);
+  });
+
+  /**
+   * run --execute 実行時も nested `.mamori` を repo-relative にローカル Git 除外へ追加できること。
+   * @returns 返り値はない。
+   */
+  test('Adds nested .mamori entries to local git exclude during run execution', function() {
+    const temporaryDirectory = createTemporaryDirectory();
+    const gitInfoDirectory = createGitInfoDirectory(temporaryDirectory);
+    const excludePath = path.join(gitInfoDirectory, 'exclude');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-nested-empty.sarif');
+
+    fs.mkdirSync(path.join(temporaryDirectory, 'mamori-inspector', '.mamori', 'tools'), { recursive: true });
+    fs.mkdirSync(path.join(temporaryDirectory, 'modules', 'demo', '.mamori', 'cache'), { recursive: true });
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      [
+        'run',
+        '--mode',
+        'manual',
+        '--scope',
+        'workspace',
+        '--execute',
+        '--sarif-output',
+        path.relative(temporaryDirectory, sarifOutputPath),
+      ],
+    );
+
+    assert.strictEqual(result.status, 0);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    const excludeLines = readGitExcludeLines(excludePath);
+    assert.ok(excludeLines.includes('/.mamori/'));
+    assert.ok(excludeLines.includes('/mamori-inspector/.mamori/'));
+    assert.ok(excludeLines.includes('/modules/demo/.mamori/'));
   });
 
   /**

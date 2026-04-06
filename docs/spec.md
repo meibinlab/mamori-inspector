@@ -119,7 +119,7 @@ SpotBugsの例外仕様（確定）:
 
 - 目的: VS Code外（git hooks）でも確実に同じ処理を実行する
 - 前提: Node必須（git hooksでも必須）
-- `setup` と `run --execute` では、ワークスペースが Git リポジトリであれば、ローカルの `.git/info/exclude` へ `/.mamori/` を best-effort で追加する
+- `setup` と `run --execute` では、ワークスペースが Git リポジトリであれば、ローカルの `.git/info/exclude` へワークスペースルートの `/.mamori/` と、リポジトリ配下で見つかった repo-relative な nested `.mamori` を best-effort で追加する
 - `.git/info/exclude` の更新失敗は warning として扱い、Mamori の処理自体は継続する
 
 終了コード（確定）:
@@ -203,7 +203,7 @@ SpotBugsのclass探索は別系統（除外に巻き込まない）:
 - 探索候補: `**/target/classes`、`**/build/classes/java/main`
 
 Git のローカル除外（確定）:
-- `setup` と `run --execute` は、ワークスペースが Git リポジトリであれば、ローカルの `.git/info/exclude` へ `/.mamori/` を best-effort で追加する
+- `setup` と `run --execute` は、ワークスペースが Git リポジトリであれば、ローカルの `.git/info/exclude` へワークスペースルートの `/.mamori/` と、リポジトリ配下で見つかった repo-relative な nested `.mamori` を best-effort で追加する
 - これはリポジトリ共有の `.gitignore` を変更しない
 - 既に Git で追跡されているファイルには影響しない
 
