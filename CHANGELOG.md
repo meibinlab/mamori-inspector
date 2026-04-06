@@ -4,6 +4,11 @@
 
 形式は Keep a Changelog を参考にしつつ、このリポジトリの実装状況に合わせて整理します。
 
+## [0.2.30] - 2026-04-07
+
+### Fixed
+- GitHub Actions の遅い実行環境でも、direct JavaScript と非 JavaScript inline script の混在ケースの CLI 回帰テストが既定タイムアウトで不安定にならないよう調整しました。
+
 ## [0.2.29] - 2026-04-07
 
 ### Fixed

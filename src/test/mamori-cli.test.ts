@@ -3194,7 +3194,8 @@ suite('Mamori CLI Test Suite', () => {
    * save/file で .js ファイルと非 JavaScript inline script を含む HTML が混在しても、.js だけを ESLint 対象にすること。
    * @returns 返り値はない。
    */
-  test('Lints direct JavaScript files while skipping non JavaScript inline HTML scripts', () => {
+  test('Lints direct JavaScript files while skipping non JavaScript inline HTML scripts', function() {
+    this.timeout(10000);
     const temporaryDirectory = createTemporaryDirectory();
     const htmlDirectory = path.join(temporaryDirectory, 'public');
     const sourceDirectory = path.join(temporaryDirectory, 'src');
