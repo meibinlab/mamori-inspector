@@ -19,5 +19,7 @@ pom.xml
 mvnw
 mvnw.cmd
 .mamori/out/**
+.mamori/tools/**
+.mamori/node/**
 .tmp-*
 .tmp-*/**
