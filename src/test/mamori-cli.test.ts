@@ -4171,6 +4171,10 @@ suite('Mamori CLI Test Suite', () => {
     const targetFilePath = path.join(sourceDirectory, 'App.java');
     const pomFilePath = path.join(temporaryDirectory, 'pom.xml');
     const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const missingSemgrepCommandPath = path.join(
+      temporaryDirectory,
+      process.platform === 'win32' ? 'missing-semgrep.cmd' : 'missing-semgrep',
+    );
 
     fs.mkdirSync(sourceDirectory, { recursive: true });
     fs.writeFileSync(targetFilePath, 'class App {}\n', 'utf8');
@@ -4206,6 +4210,7 @@ suite('Mamori CLI Test Suite', () => {
         env: {
           ...process.env,
           PATH: buildTestPath(binDirectory),
+          MAMORI_TOOL_SEMGREP_COMMAND: missingSemgrepCommandPath,
         },
       },
     );
