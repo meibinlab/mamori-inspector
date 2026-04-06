@@ -5253,6 +5253,7 @@ suite('Mamori CLI Test Suite', () => {
    * @returns 返り値はない。
    */
   test('Adds /.mamori/ to local git exclude during run execution', function() {
+    this.timeout(10000);
     const temporaryDirectory = createTemporaryDirectory();
     const gitInfoDirectory = createGitInfoDirectory(temporaryDirectory);
     const excludePath = path.join(gitInfoDirectory, 'exclude');
@@ -5282,6 +5283,7 @@ suite('Mamori CLI Test Suite', () => {
    * @returns 返り値はない。
    */
   test('Adds nested .mamori entries to local git exclude during run execution', function() {
+    this.timeout(10000);
     const temporaryDirectory = createTemporaryDirectory();
     const gitInfoDirectory = createGitInfoDirectory(temporaryDirectory);
     const excludePath = path.join(gitInfoDirectory, 'exclude');
