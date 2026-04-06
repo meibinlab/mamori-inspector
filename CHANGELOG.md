@@ -13,7 +13,6 @@
 
 ### Fixed
 - GitHub Actions の遅い実行環境でも、run execution 時の `.git/info/exclude` 更新回帰テストが既定タイムアウトで不安定にならないよう調整しました。
-
 ## [0.2.30] - 2026-04-07
 
 ### Fixed
