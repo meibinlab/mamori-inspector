@@ -10,6 +10,11 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 4. 対応ファイルを保存すると、保存時検証が始まります。
 5. commit と push 時の検証も有効にしたい場合は、コマンド `Mamori Inspector: Install Git Hooks` を一度実行します。
 
+## CI
+- GitHub Actions は `push`、`pull_request`、`workflow_dispatch` で実行します。
+- quality ジョブでは Ubuntu と Windows の両方で `npm ci`、`npm run compile`、`npm run lint`、`npm test` を実行します。
+- integration ジョブでは、quality 成功後に Ubuntu 上で `xvfb-run -a npm run test:integration` を実行します。
+
 ## 初期セットアップ時の注意
 - 保存時検証は既定で無効です。対象ワークスペースフォルダーごとに `Mamori Inspector: Enable In Workspace` を実行したあとで開始します。
 - Git hook 検証は、拡張をインストールしただけでは開始しません。管理対象の hook を明示的にインストールする必要があります。

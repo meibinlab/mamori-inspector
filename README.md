@@ -10,6 +10,11 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 4. Save a supported file to trigger automatic save-time validation.
 5. If you also want validation on commit and push, run the command `Mamori Inspector: Install Git Hooks` once.
 
+## CI
+- GitHub Actions runs on `push`, `pull_request`, and `workflow_dispatch`.
+- The quality job runs `npm ci`, `npm run compile`, `npm run lint`, and `npm test` on Ubuntu and Windows.
+- The integration job runs `xvfb-run -a npm run test:integration` on Ubuntu after the quality job succeeds.
+
 ## Initial Setup Notes
 - Save-time validation is disabled by default and starts only after you run `Mamori Inspector: Enable In Workspace` for the target workspace folder.
 - Git hook validation does not start automatically on extension installation. You must install the managed hooks explicitly.
