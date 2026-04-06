@@ -30,13 +30,15 @@ jobs:
       - name: Verify release tag and package metadata
         id: verify
         shell: bash
+        env:
+          RAW_TAG: ${{ github.event.release.tag_name }}
         run: |
           set -euo pipefail
 
-          raw_tag='${{ github.event.release.tag_name }}'
+          raw_tag="$RAW_TAG"
           normalized_tag="${raw_tag#v}"
-          package_version="$(node -p \"require('./package.json').version\")"
-          publisher="$(node -p \"require('./package.json').publisher\")"
+          package_version="$(node -p "require('./package.json').version")"
+          publisher="$(node -p "require('./package.json').publisher")"
 
           if [[ "$publisher" != "meibinlab" ]]; then
             echo "Expected publisher 'meibinlab', but found '$publisher'." >&2
