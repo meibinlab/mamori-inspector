@@ -24,8 +24,6 @@ const {
 
 // 自動導入対象の Node ツール一覧を表す
 const MANAGED_NODE_TOOL_NAMES = Object.keys(NODE_TOOL_PACKAGES);
-// `.mamori/tools` 配下で cache-clear が削除対象にする管理ディレクトリ名を表す
-const MANAGED_TOOL_CACHE_DIRECTORY_NAMES = ['cache', 'gradle', 'maven', 'python'];
 // ローカル Git 除外へ追記する Mamori 管理ディレクトリエントリを表す
 const MAMORI_GIT_EXCLUDE_ENTRY = '/.mamori/';
 // nested `.mamori` 探索で再帰走査から除外するディレクトリ名を表す
@@ -548,7 +546,14 @@ async function materializeSource(sourceUrl, cachePath, destinationDirectory, arc
     const localPath = fileURLToPath(parsedUrl);
     const localStats = fs.statSync(localPath);
     if (localStats.isDirectory()) {
-      fs.cpSync(localPath, destinationDirectory, { recursive: true });
+      ensureDirectory(destinationDirectory);
+      for (const entryName of fs.readdirSync(localPath)) {
+        fs.cpSync(
+          path.join(localPath, entryName),
+          path.join(destinationDirectory, entryName),
+          { recursive: true },
+        );
+      }
       return;
     }
 
@@ -985,17 +990,7 @@ function clearManagedToolCaches(workspaceRoot) {
   const directories = getManagedDirectories(workspaceRoot);
   const removedDirectories = [];
 
-  for (const targetPath of MANAGED_TOOL_CACHE_DIRECTORY_NAMES.map((directoryName) => (
-    path.join(directories.toolsRoot, directoryName)
-  ))) {
-    if (!fs.existsSync(targetPath)) {
-      continue;
-    }
-    removeDirectory(targetPath);
-    removedDirectories.push(targetPath);
-  }
-
-  for (const targetPath of [directories.nodeRoot]) {
+  for (const targetPath of [directories.toolsRoot, directories.nodeRoot]) {
     if (!fs.existsSync(targetPath)) {
       continue;
     }
