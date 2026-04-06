@@ -35,6 +35,8 @@ const DEFAULT_IGNORED_DIRECTORIES = new Set([
   '.git',
   '.gradle',
   '.mamori',
+  '.vscode-test',
+  '.vscode-test-web',
   'build',
   'dist',
   'node_modules',

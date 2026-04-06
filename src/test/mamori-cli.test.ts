@@ -2161,6 +2161,49 @@ suite('Mamori CLI Test Suite', () => {
   });
 
   /**
+   * workspace Web 検査で `.vscode-test` 配下を対象外にすること。
+   * @returns 返り値はない。
+   */
+  test('Ignores .vscode-test directories during workspace web checks', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const rootSourceDirectory = path.join(temporaryDirectory, 'src');
+    const rootTargetFilePath = path.join(rootSourceDirectory, 'main.js');
+    const ignoredModuleDirectory = path.join(temporaryDirectory, '.vscode-test', 'fixture-extension');
+    const ignoredSourceDirectory = path.join(ignoredModuleDirectory, 'src');
+    const ignoredTargetFilePath = path.join(ignoredSourceDirectory, 'ignored.js');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const eslintLogPath = path.join(nodeBinDirectory, 'eslint.log');
+
+    fs.mkdirSync(rootSourceDirectory, { recursive: true });
+    fs.mkdirSync(ignoredSourceDirectory, { recursive: true });
+    fs.writeFileSync(rootTargetFilePath, 'const rootValue = 1;\n', 'utf8');
+    fs.writeFileSync(ignoredTargetFilePath, 'const ignoredValue = 1;\n', 'utf8');
+    fs.writeFileSync(
+      path.join(ignoredModuleDirectory, 'package.json'),
+      JSON.stringify({ eslintConfig: { root: true } }, null, 2),
+      'utf8',
+    );
+    writeWebCommandWrapper(nodeBinDirectory, 'eslint', 'eslint.log', { stdout: '[]', exitCode: 0 });
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'manual',
+      '--scope',
+      'workspace',
+      '--execute',
+    ]);
+
+    assert.strictEqual(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /eslint:ok exitCode=0/u);
+    assert.doesNotMatch(result.stdout, /\.vscode-test/u);
+
+    const eslintLog = fs.readFileSync(eslintLogPath, 'utf8');
+    assert.match(eslintLog, /src[\\/]main\.js/u);
+    assert.doesNotMatch(eslintLog, /\.vscode-test/u);
+  });
+
+  /**
    * pre-push の Web checker 失敗時に issue を SARIF 化して gate できること。
    * @returns 返り値はない。
    */

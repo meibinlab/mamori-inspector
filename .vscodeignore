@@ -19,7 +19,10 @@ pom.xml
 mvnw
 mvnw.cmd
 .mamori/out/**
-.mamori/tools/**
+.mamori/tools/cache/**
+.mamori/tools/gradle/**
+.mamori/tools/maven/**
+.mamori/tools/python/**
 .mamori/node/**
 .tmp-*
 .tmp-*/**

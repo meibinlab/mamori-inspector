@@ -4,6 +4,22 @@
 
 形式は Keep a Changelog を参考にしつつ、このリポジトリの実装状況に合わせて整理します。
 
+## [0.2.25] - 2026-04-06
+
+### Fixed
+- `Run Workspace Check` と `manual/workspace` の Web 系ファイル探索で `.vscode-test` 配下の VS Code テスト配布物まで対象に含めていたため、不要に巨大な検査対象が組み立てられる問題を修正しました。
+
+### Added
+- `.vscode-test` 配下が workspace Web 検査の対象外であることを確認する CLI 回帰テストを追加しました。
+
+## [0.2.24] - 2026-04-06
+
+### Fixed
+- VSIX から `manual/workspace` 実行に必要な `.mamori/tools/*.js` が除外されていたため、インストール後の `Run Workspace Check` で CLI が起動できない問題を修正しました。
+
+### Changed
+- VSIX では `.mamori/tools` 配下の実装ファイルを含めつつ、ダウンロード済みツール本体やキャッシュだけを引き続き除外するようにしました。
+
 ## [0.2.23] - 2026-04-06
 
 ### Fixed
