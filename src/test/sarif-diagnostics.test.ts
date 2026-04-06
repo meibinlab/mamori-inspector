@@ -1,7 +1,13 @@
 // 断言ユーティリティを表す
 import * as assert from 'assert';
+// ファイルシステム API を表す
+import * as fs from 'fs';
+// OS 一時ディレクトリ API を表す
+import * as os from 'os';
+// パス操作 API を表す
+import * as path from 'path';
 // SARIF Diagnostics 変換器を表す
-import { parseSarifFindings } from '../sarif-diagnostics';
+import { loadSarifFindings, parseSarifFindings } from '../sarif-diagnostics';
 
 /**
  * SARIF Diagnostics 変換のテストスイートを定義する。
@@ -44,5 +50,22 @@ suite('SARIF Diagnostics Test Suite', () => {
     assert.strictEqual(findings[0].startLine, 4);
     assert.strictEqual(findings[0].startColumn, 2);
     assert.strictEqual(findings[0].ruleId, 'java.lang.security.audit');
+  });
+
+  /**
+   * SARIF ファイルが存在しない場合は空配列を返すこと。
+   * @returns 返り値はない。
+   */
+  test('Returns empty findings when SARIF file does not exist', () => {
+    const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'mamori-sarif-'));
+
+    try {
+      const sarifPath = path.join(temporaryDirectory, 'missing.sarif');
+      const findings = loadSarifFindings(sarifPath);
+
+      assert.deepStrictEqual(findings, []);
+    } finally {
+      fs.rmSync(temporaryDirectory, { recursive: true, force: true });
+    }
   });
 });

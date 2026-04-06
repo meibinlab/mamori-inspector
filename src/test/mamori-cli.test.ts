@@ -8,6 +8,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 // パス操作 API を表す
 import * as path from 'path';
+// file URL 変換 API を表す
+import { pathToFileURL } from 'url';
 
 /**
  * Mamori CLI の実行結果を表す。
@@ -30,6 +32,20 @@ interface MamoriCliOptions {
 }
 
 /**
+ * npm ラッパーの失敗注入設定を表す。
+ */
+interface NpmInstallWrapperOptions {
+  /** 失敗させるパッケージ名を表す。 */
+  failPackageName?: string;
+  /** 標準エラー出力に流す文言を表す。 */
+  stderrMessage?: string;
+  /** 標準出力に流す文言を表す。 */
+  stdoutMessage?: string;
+  /** 失敗時の終了コードを表す。 */
+  exitCode?: number;
+}
+
+/**
  * テスト用一時ディレクトリを作成する。
  * @returns 作成した一時ディレクトリの絶対パスを返す。
  */
@@ -37,6 +53,29 @@ function createTemporaryDirectory(): string {
   // 一時ディレクトリの接頭辞を表す
   const prefix = path.join(os.tmpdir(), 'mamori-cli-');
   return fs.mkdtempSync(prefix);
+}
+
+/**
+ * テスト用の `.git/info` ディレクトリを作成する。
+ * @param workingDirectory 作業ディレクトリを表す。
+ * @returns 作成した `.git/info` ディレクトリの絶対パスを返す。
+ */
+function createGitInfoDirectory(workingDirectory: string): string {
+  const infoDirectory = path.join(workingDirectory, '.git', 'info');
+  fs.mkdirSync(infoDirectory, { recursive: true });
+  return infoDirectory;
+}
+
+/**
+ * `.git/info/exclude` の有効な行一覧を返す。
+ * @param excludePath `.git/info/exclude` の絶対パスを表す。
+ * @returns 空行を除いた行一覧を返す。
+ */
+function readGitExcludeLines(excludePath: string): string[] {
+  return fs.readFileSync(excludePath, 'utf8')
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .filter((line) => Boolean(line));
 }
 
 /**
@@ -69,12 +108,96 @@ function runMamoriCli(
 }
 
 /**
+ * テスト実行に利用できる POSIX shell コマンドを返す。
+ * @returns 利用可能な shell コマンド名を返す。見つからない場合は undefined を返す。
+ */
+function resolvePosixShellCommand(): string | undefined {
+  const shellCandidates = process.platform === 'win32'
+    ? [
+      'sh.exe',
+      'sh',
+      ...[
+        process.env.ProgramFiles,
+        process.env.ProgramW6432,
+        process.env['ProgramFiles(x86)'],
+      ]
+        .filter((value): value is string => Boolean(value))
+        .flatMap((rootDirectory) => [
+          path.join(rootDirectory, 'Git', 'bin', 'sh.exe'),
+          path.join(rootDirectory, 'Git', 'usr', 'bin', 'sh.exe'),
+        ]),
+    ]
+    : ['sh'];
+
+  for (const shellCommand of shellCandidates) {
+    const result = spawnSync(shellCommand, ['-c', 'exit 0'], {
+      encoding: 'utf8',
+    });
+    if (!result.error && result.status === 0) {
+      return shellCommand;
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * shell 実行向けに hook スクリプトの引数を整形する。
+ * @param filePath 対象ファイルパスを表す。
+ * @returns shell 実行に利用する引数文字列を返す。
+ */
+function toShellScriptArgument(filePath: string): string {
+  return process.platform === 'win32' ? filePath.replace(/\\/gu, '/') : filePath;
+}
+
+/**
+ * 管理対象 hook スクリプトを実行する。
+ * @param hookPath hook スクリプトの絶対パスを表す。
+ * @param workingDirectory 実行時の作業ディレクトリを表す。
+ * @param options 実行オプションを表す。
+ * @returns 実行結果を返す。
+ */
+function runManagedHookScript(
+  hookPath: string,
+  workingDirectory: string,
+  options: MamoriCliOptions = {},
+): MamoriCliResult {
+  const shellCommand = resolvePosixShellCommand();
+  if (!shellCommand) {
+    throw new Error('POSIX shell was not found');
+  }
+
+  const result = spawnSync(shellCommand, [toShellScriptArgument(hookPath)], {
+    cwd: workingDirectory,
+    encoding: 'utf8',
+    env: options.env,
+  });
+
+  return {
+    status: result.status,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  };
+}
+
+/**
  * テスト用のコマンドラッパーディレクトリを作成する。
  * @param workingDirectory 作業ディレクトリを表す。
  * @returns ラッパーディレクトリの絶対パスを返す。
  */
 function createCommandBinDirectory(workingDirectory: string): string {
   const binDirectory = path.join(workingDirectory, 'bin');
+  fs.mkdirSync(binDirectory, { recursive: true });
+  return binDirectory;
+}
+
+/**
+ * テスト用の空白を含むコマンドラッパーディレクトリを作成する。
+ * @param workingDirectory 作業ディレクトリを表す。
+ * @returns ラッパーディレクトリの絶対パスを返す。
+ */
+function createSpacedCommandBinDirectory(workingDirectory: string): string {
+  const binDirectory = path.join(workingDirectory, 'bin with space');
   fs.mkdirSync(binDirectory, { recursive: true });
   return binDirectory;
 }
@@ -97,6 +220,24 @@ function createNodeModulesBinDirectory(workingDirectory: string): string {
  */
 function buildTestPath(binDirectory: string): string {
   return `${binDirectory}${path.delimiter}${process.env.PATH || ''}`;
+}
+
+/**
+ * Windows の zip 展開検証で必要な PowerShell を含む PATH を構築する。
+ * @param binDirectory ラッパーディレクトリを表す。
+ * @returns PATH 文字列を返す。
+ */
+function buildWindowsArchiveTestPath(binDirectory: string): string {
+  if (process.platform !== 'win32') {
+    return binDirectory;
+  }
+
+  const systemRoot = process.env.SystemRoot;
+  const powershellDirectory = systemRoot
+    ? path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0')
+    : '';
+
+  return [binDirectory, powershellDirectory].filter((value) => Boolean(value)).join(path.delimiter);
 }
 
 /**
@@ -124,6 +265,228 @@ function writeCommandWrapper(binDirectory: string, commandName: string, outputFi
   fs.writeFileSync(
     wrapperPath,
     `#!/bin/sh\nprintf '%s\n' "$*" >> "${outputPath}"\nexit 0\n`,
+    'utf8',
+  );
+  fs.chmodSync(wrapperPath, 0o755);
+}
+
+/**
+ * ローカル配布物ディレクトリを作成する。
+ * @param workingDirectory 作業ディレクトリを表す。
+ * @param directoryName 配布物ディレクトリ名を表す。
+ * @param commandName 実行コマンド名を表す。
+ * @param outputFileName 実行ログファイル名を表す。
+ * @returns 配布物ディレクトリの絶対パスを返す。
+ */
+function createManagedToolSourceDirectory(
+  workingDirectory: string,
+  directoryName: string,
+  commandName: string,
+  outputFileName: string,
+): string {
+  const distributionDirectory = path.join(workingDirectory, 'tool-sources', directoryName);
+  const binDirectory = path.join(distributionDirectory, 'bin');
+  const wrapperPath = process.platform === 'win32'
+    ? path.join(binDirectory, `${commandName}.cmd`)
+    : path.join(binDirectory, commandName);
+
+  fs.mkdirSync(binDirectory, { recursive: true });
+
+  if (process.platform === 'win32') {
+    fs.writeFileSync(
+      wrapperPath,
+      [
+        '@echo off',
+        'set SCRIPT_DIR=%~dp0',
+        `echo %*>>"%SCRIPT_DIR%${outputFileName}"`,
+        'exit /b 0',
+        '',
+      ].join('\r\n'),
+      'utf8',
+    );
+    return distributionDirectory;
+  }
+
+  fs.writeFileSync(
+    wrapperPath,
+    [
+      '#!/bin/sh',
+      'SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)',
+      `printf '%s\n' "$*" >> "$SCRIPT_DIR/${outputFileName}"`,
+      'exit 0',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  fs.chmodSync(wrapperPath, 0o755);
+  return distributionDirectory;
+}
+
+/**
+ * PowerShell の単一引用符文字列として安全な文字列へ変換する。
+ * @param value 変換対象文字列を表す。
+ * @returns 変換後文字列を返す。
+ */
+function escapePowerShellSingleQuotedString(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
+/**
+ * PowerShell の EncodedCommand 用文字列へ変換する。
+ * @param commandText PowerShell コマンド文字列を表す。
+ * @returns Base64 エンコード済み文字列を返す。
+ */
+function encodePowerShellCommand(commandText: string): string {
+  return Buffer.from(commandText, 'utf16le').toString('base64');
+}
+
+/**
+ * テスト用の管理配布物ソースを返す。
+ * Windows では zip 配布物を生成し、それ以外ではディレクトリを返す。
+ * @param workingDirectory 作業ディレクトリを表す。
+ * @param directoryName 配布物ディレクトリ名を表す。
+ * @param commandName 実行コマンド名を表す。
+ * @param outputFileName 実行ログファイル名を表す。
+ * @returns 配布物の絶対パスを返す。
+ */
+function createManagedToolSource(
+  workingDirectory: string,
+  directoryName: string,
+  commandName: string,
+  outputFileName: string,
+): string {
+  const sourceDirectory = createManagedToolSourceDirectory(
+    workingDirectory,
+    directoryName,
+    commandName,
+    outputFileName,
+  );
+
+  if (process.platform !== 'win32') {
+    return sourceDirectory;
+  }
+
+  const archivePath = path.join(workingDirectory, 'tool-sources', `${directoryName}.zip`);
+  const commandText = [
+    `$sourceDirectory = '${escapePowerShellSingleQuotedString(sourceDirectory)}'`,
+    `$archivePath = '${escapePowerShellSingleQuotedString(archivePath)}'`,
+    'if (Test-Path -LiteralPath $archivePath) { Remove-Item -LiteralPath $archivePath -Force }',
+    'Compress-Archive -Path (Join-Path -Path $sourceDirectory -ChildPath "*") -DestinationPath $archivePath -Force',
+  ].join('; ');
+  const result = spawnSync(
+    'powershell',
+    [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-EncodedCommand',
+      encodePowerShellCommand(commandText),
+    ],
+    {
+      encoding: 'utf8',
+      windowsHide: true,
+    },
+  );
+
+  if (result.status !== 0) {
+    throw new Error(result.stderr || result.stdout || `failed to create archive: ${archivePath}`);
+  }
+
+  return archivePath;
+}
+
+/**
+ * パスを file URL へ変換する。
+ * @param filePath 対象パスを表す。
+ * @returns file URL 文字列を返す。
+ */
+function toFileUrl(filePath: string): string {
+  return pathToFileURL(filePath).toString();
+}
+
+/**
+ * テスト用の npm ラッパーを作成する。
+ * @param binDirectory ラッパーディレクトリを表す。
+ * @param outputFileName 出力ファイル名を表す。
+ * @returns 返り値はない。
+ */
+function writeNpmInstallWrapper(
+  binDirectory: string,
+  outputFileName: string,
+  options: NpmInstallWrapperOptions = {},
+): void {
+  const outputPath = path.join(binDirectory, outputFileName);
+  const helperScriptPath = path.join(binDirectory, 'npm-install-wrapper.js');
+  const wrapperPath = process.platform === 'win32'
+    ? path.join(binDirectory, 'npm.cmd')
+    : path.join(binDirectory, 'npm');
+
+  fs.writeFileSync(
+    helperScriptPath,
+    [
+      'const fs = require("fs");',
+      'const path = require("path");',
+      `const outputPath = ${JSON.stringify(outputPath)};`,
+      `const failPackageName = ${JSON.stringify(options.failPackageName || '')};`,
+      `const stderrMessage = ${JSON.stringify(options.stderrMessage || '')};`,
+      `const stdoutMessage = ${JSON.stringify(options.stdoutMessage || '')};`,
+      `const exitCode = ${String(options.exitCode || 1)};`,
+      'const args = process.argv.slice(2);',
+      'fs.appendFileSync(outputPath, `${args.join(" ")}\\n`, "utf8");',
+      'const prefixIndex = args.indexOf("--prefix");',
+      'if (prefixIndex < 0 || !args[prefixIndex + 1]) {',
+      '  process.stderr.write("missing --prefix");',
+      '  process.exit(2);',
+      '}',
+      'if (failPackageName !== "" && args.includes(failPackageName)) {',
+      '  if (stdoutMessage !== "") {',
+      '    process.stdout.write(stdoutMessage);',
+      '  }',
+      '  if (stderrMessage !== "") {',
+      '    process.stderr.write(stderrMessage);',
+      '  }',
+      '  process.exit(exitCode);',
+      '}',
+      'const prefixPath = args[prefixIndex + 1];',
+      'const nodeBinDirectory = path.join(prefixPath, "node_modules", ".bin");',
+      'fs.mkdirSync(nodeBinDirectory, { recursive: true });',
+      'for (const argument of args) {',
+      '  if (argument === "install" || argument.startsWith("-")) {',
+      '    continue;',
+      '  }',
+      '  if (argument === prefixPath) {',
+      '    continue;',
+      '  }',
+      '  const packageName = argument.split("@", 1)[0];',
+      '  const executableName = process.platform === "win32" ? `${packageName}.cmd` : packageName;',
+      '  const executablePath = path.join(nodeBinDirectory, executableName);',
+      '  const packageLogPath = path.join(prefixPath, `${packageName}.log`);',
+      '  if (process.platform === "win32") {',
+      '    fs.writeFileSync(executablePath, `@echo off\\r\\necho %*>>"${packageLogPath}"\\r\\nexit /b 0\\r\\n`, "utf8");',
+      '  } else {',
+      '    fs.writeFileSync(executablePath, `#!/bin/sh\\nprintf \'%s\\n\' "$*" >> "${packageLogPath}"\\nexit 0\\n`, "utf8");',
+      '    fs.chmodSync(executablePath, 0o755);',
+      '  }',
+      '}',
+      'process.exit(0);',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+
+  if (process.platform === 'win32') {
+    fs.writeFileSync(
+      wrapperPath,
+      `@echo off\r\nnode "${helperScriptPath}" %*\r\nexit /b %ERRORLEVEL%\r\n`,
+      'utf8',
+    );
+    return;
+  }
+
+  fs.writeFileSync(
+    wrapperPath,
+    `#!/bin/sh\nnode '${helperScriptPath}' "$@"\n`,
     'utf8',
   );
   fs.chmodSync(wrapperPath, 0o755);
@@ -551,6 +914,161 @@ function writeMavenIssueWrapper(binDirectory: string, outputFileName: string): v
 }
 
 /**
+ * PMD を既定レポートファイルへ出力するテスト用 Maven ラッパーを作成する。
+ * @param binDirectory ラッパーディレクトリを表す。
+ * @param outputFileName 出力ファイル名を表す。
+ * @returns 返り値はない。
+ */
+function writeMavenPmdReportWrapper(binDirectory: string, outputFileName: string): void {
+  const outputPath = path.join(binDirectory, outputFileName);
+  const checkstyleXml = '<?xml version="1.0"?><checkstyle version="10.0"><file name="src/main/java/App.java"><error line="2" column="5" severity="warning" message="Missing Javadoc" source="com.puppycrawl.tools.checkstyle.checks.javadoc.JavadocTypeCheck"/></file></checkstyle>';
+  const pmdXml = '<?xml version="1.0"?><pmd version="7.0.0"><file name="src/main/java/App.java"><violation beginline="3" begincolumn="9" priority="3" rule="UnusedLocalVariable">Unused local variable</violation></file></pmd>';
+  const wrapperPath = process.platform === 'win32'
+    ? path.join(path.dirname(binDirectory), 'mvnw.cmd')
+    : path.join(path.dirname(binDirectory), 'mvnw');
+  const pmdReportPath = path.join(path.dirname(binDirectory), 'target', 'pmd.xml');
+
+  if (process.platform === 'win32') {
+    const encodedCheckstyleXml = Buffer.from(checkstyleXml, 'utf8').toString('base64');
+    const encodedPmdXml = Buffer.from(pmdXml, 'utf8').toString('base64');
+    fs.writeFileSync(
+      wrapperPath,
+      [
+        '@echo off',
+        `echo %*>>"${outputPath}"`,
+        'echo %* | findstr /C:"checkstyle:check" >nul',
+        `if not errorlevel 1 node -e "process.stdout.write(Buffer.from('${encodedCheckstyleXml}','base64').toString('utf8'))"`,
+        'echo %* | findstr /C:"pmd:check" >nul',
+        `if not errorlevel 1 if not exist "${path.dirname(pmdReportPath)}" mkdir "${path.dirname(pmdReportPath)}"`,
+        `if not errorlevel 1 node -e "require('fs').writeFileSync('${pmdReportPath.split('\\').join('\\\\')}', Buffer.from('${encodedPmdXml}','base64').toString('utf8'), 'utf8')"`,
+        'exit /b 0',
+        '',
+      ].join('\r\n'),
+      'utf8',
+    );
+    return;
+  }
+
+  fs.writeFileSync(
+    wrapperPath,
+    [
+      '#!/bin/sh',
+      `printf '%s\n' "$*" >> "${outputPath}"`,
+      'case "$*" in',
+      `  *"checkstyle:check"*) printf '%s' '${checkstyleXml}' ;;`,
+      `  *"pmd:check"*) mkdir -p '${path.dirname(pmdReportPath)}'; printf '%s' '${pmdXml}' > '${pmdReportPath}' ;;`,
+      'esac',
+      'exit 0',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  fs.chmodSync(wrapperPath, 0o755);
+}
+
+/**
+ * 既存 PMD レポートを残したまま pmd:check を失敗終了させるテスト用 Maven ラッパーを作成する。
+ * @param binDirectory ラッパーディレクトリを表す。
+ * @param outputFileName 出力ファイル名を表す。
+ * @returns 返り値はない。
+ */
+function writeMavenExistingPmdReportFailureWrapper(binDirectory: string, outputFileName: string): void {
+  const outputPath = path.join(binDirectory, outputFileName);
+  const pmdXml = '<?xml version="1.0"?><pmd version="7.0.0"><file name="src/main/java/App.java"><violation beginline="3" begincolumn="9" priority="3" rule="UnusedLocalVariable">Unused local variable</violation></file></pmd>';
+  const wrapperPath = process.platform === 'win32'
+    ? path.join(path.dirname(binDirectory), 'mvnw.cmd')
+    : path.join(path.dirname(binDirectory), 'mvnw');
+  const pmdReportPath = path.join(path.dirname(binDirectory), 'target', 'pmd.xml');
+
+  fs.mkdirSync(path.dirname(pmdReportPath), { recursive: true });
+  fs.writeFileSync(pmdReportPath, pmdXml, 'utf8');
+
+  if (process.platform === 'win32') {
+    fs.writeFileSync(
+      wrapperPath,
+      [
+        '@echo off',
+        `echo %*>>"${outputPath}"`,
+        'echo %* | findstr /C:"pmd:check" >nul',
+        'if not errorlevel 1 exit /b 1',
+        'exit /b 0',
+        '',
+      ].join('\r\n'),
+      'utf8',
+    );
+    return;
+  }
+
+  fs.writeFileSync(
+    wrapperPath,
+    [
+      '#!/bin/sh',
+      `printf '%s\n' "$*" >> "${outputPath}"`,
+      'case "$*" in',
+      '  *"pmd:check"*) exit 1 ;;',
+      'esac',
+      'exit 0',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  fs.chmodSync(wrapperPath, 0o755);
+}
+
+/**
+ * Checkstyle を既定レポートファイルへ出力するテスト用 Maven ラッパーを作成する。
+ * @param binDirectory ラッパーディレクトリを表す。
+ * @param outputFileName 出力ファイル名を表す。
+ * @returns 返り値はない。
+ */
+function writeMavenCheckstyleReportWrapper(binDirectory: string, outputFileName: string): void {
+  const outputPath = path.join(binDirectory, outputFileName);
+  const checkstyleXml = '<?xml version="1.0"?><checkstyle version="10.0"><file name="src/main/java/App.java"><error line="2" column="5" severity="warning" message="Missing Javadoc" source="com.puppycrawl.tools.checkstyle.checks.javadoc.JavadocTypeCheck"/></file></checkstyle>';
+  const pmdXml = '<?xml version="1.0"?><pmd version="7.0.0"><file name="src/main/java/App.java"><violation beginline="3" begincolumn="9" priority="3" rule="UnusedLocalVariable">Unused local variable</violation></file></pmd>';
+  const wrapperPath = process.platform === 'win32'
+    ? path.join(path.dirname(binDirectory), 'mvnw.cmd')
+    : path.join(path.dirname(binDirectory), 'mvnw');
+  const checkstyleReportPath = path.join(path.dirname(binDirectory), 'target', 'checkstyle-result.xml');
+
+  if (process.platform === 'win32') {
+    const encodedCheckstyleXml = Buffer.from(checkstyleXml, 'utf8').toString('base64');
+    const encodedPmdXml = Buffer.from(pmdXml, 'utf8').toString('base64');
+    fs.writeFileSync(
+      wrapperPath,
+      [
+        '@echo off',
+        `echo %*>>"${outputPath}"`,
+        'echo %* | findstr /C:"checkstyle:check" >nul',
+        `if not errorlevel 1 if not exist "${path.dirname(checkstyleReportPath)}" mkdir "${path.dirname(checkstyleReportPath)}"`,
+        `if not errorlevel 1 node -e "require('fs').writeFileSync('${checkstyleReportPath.split('\\').join('\\\\')}', Buffer.from('${encodedCheckstyleXml}','base64').toString('utf8'), 'utf8')"`,
+        'echo %* | findstr /C:"pmd:check" >nul',
+        `if not errorlevel 1 node -e "process.stdout.write(Buffer.from('${encodedPmdXml}','base64').toString('utf8'))"`,
+        'exit /b 0',
+        '',
+      ].join('\r\n'),
+      'utf8',
+    );
+    return;
+  }
+
+  fs.writeFileSync(
+    wrapperPath,
+    [
+      '#!/bin/sh',
+      `printf '%s\n' "$*" >> "${outputPath}"`,
+      'case "$*" in',
+      `  *"checkstyle:check"*) mkdir -p '${path.dirname(checkstyleReportPath)}'; printf '%s' '${checkstyleXml}' > '${checkstyleReportPath}' ;;`,
+      `  *"pmd:check"*) printf '%s' '${pmdXml}' ;;`,
+      'esac',
+      'exit 0',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  fs.chmodSync(wrapperPath, 0o755);
+}
+
+/**
  * pre-commit の Git 再ステージ検証向け Maven ラッパーを作成する。
  * @param binDirectory ラッパーディレクトリを表す。
  * @param outputFileName 出力ファイル名を表す。
@@ -824,6 +1342,117 @@ function writeMavenPrepushWrapper(binDirectory: string, outputFileName: string):
 }
 
 /**
+ * CPD と SpotBugs を既定レポートファイルへ出力するテスト用 Maven ラッパーを作成する。
+ * @param binDirectory ラッパーディレクトリを表す。
+ * @param outputFileName 出力ファイル名を表す。
+ * @returns 返り値はない。
+ */
+function writeMavenPrepushReportWrapper(binDirectory: string, outputFileName: string): void {
+  const outputPath = path.join(binDirectory, outputFileName);
+  const cpdXml = '<?xml version="1.0"?><pmd-cpd><duplication lines="6" tokens="40"><file path="src/main/java/App.java" line="8"/><file path="src/main/java/Other.java" line="12"/></duplication></pmd-cpd>';
+  const spotbugsXml = '<?xml version="1.0"?><BugCollection><BugInstance type="NP_NULL_ON_SOME_PATH" priority="2"><LongMessage>Possible null pointer dereference</LongMessage><Class classname="App"/><SourceLine classname="App" sourcepath="src/main/java/App.java" start="14"/></BugInstance></BugCollection>';
+  const wrapperPath = process.platform === 'win32'
+    ? path.join(path.dirname(binDirectory), 'mvnw.cmd')
+    : path.join(path.dirname(binDirectory), 'mvnw');
+  const cpdReportPath = path.join(path.dirname(binDirectory), 'target', 'cpd.xml');
+  const spotbugsReportPath = path.join(path.dirname(binDirectory), 'target', 'spotbugsXml.xml');
+
+  if (process.platform === 'win32') {
+    const encodedCpdXml = Buffer.from(cpdXml, 'utf8').toString('base64');
+    const encodedSpotbugsXml = Buffer.from(spotbugsXml, 'utf8').toString('base64');
+    fs.writeFileSync(
+      wrapperPath,
+      [
+        '@echo off',
+        `echo %*>>"${outputPath}"`,
+        'echo %* | findstr /C:"pmd:cpd-check" >nul',
+        `if not errorlevel 1 if not exist "${path.dirname(cpdReportPath)}" mkdir "${path.dirname(cpdReportPath)}"`,
+        `if not errorlevel 1 node -e "require('fs').writeFileSync('${cpdReportPath.split('\\').join('\\\\')}', Buffer.from('${encodedCpdXml}','base64').toString('utf8'), 'utf8')"`,
+        'echo %* | findstr /C:"spotbugs:check" >nul',
+        `if not errorlevel 1 if not exist "${path.dirname(spotbugsReportPath)}" mkdir "${path.dirname(spotbugsReportPath)}"`,
+        `if not errorlevel 1 node -e "require('fs').writeFileSync('${spotbugsReportPath.split('\\').join('\\\\')}', Buffer.from('${encodedSpotbugsXml}','base64').toString('utf8'), 'utf8')"`,
+        'exit /b 0',
+        '',
+      ].join('\r\n'),
+      'utf8',
+    );
+    return;
+  }
+
+  fs.writeFileSync(
+    wrapperPath,
+    [
+      '#!/bin/sh',
+      `printf '%s\n' "$*" >> "${outputPath}"`,
+      'case "$*" in',
+      `  *"pmd:cpd-check"*) mkdir -p '${path.dirname(cpdReportPath)}'; printf '%s' '${cpdXml}' > '${cpdReportPath}' ;;`,
+      `  *"spotbugs:check"*) mkdir -p '${path.dirname(spotbugsReportPath)}'; printf '%s' '${spotbugsXml}' > '${spotbugsReportPath}' ;;`,
+      'esac',
+      'exit 0',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  fs.chmodSync(wrapperPath, 0o755);
+}
+
+/**
+ * pre-push 向け Maven 実行結果に Checkstyle finding を含めるテスト用ラッパーを作成する。
+ * @param binDirectory ラッパーディレクトリを表す。
+ * @param outputFileName 出力ファイル名を表す。
+ * @returns 返り値はない。
+ */
+function writeMavenPrepushCheckstyleWrapper(binDirectory: string, outputFileName: string): void {
+  const outputPath = path.join(binDirectory, outputFileName);
+  const checkstyleXml = '<?xml version="1.0"?><checkstyle version="10.0"><file name="src/main/java/App.java"><error line="2" column="5" severity="warning" message="Missing Javadoc" source="com.puppycrawl.tools.checkstyle.checks.javadoc.JavadocTypeCheck"/></file></checkstyle>';
+  const cpdXml = '<?xml version="1.0"?><pmd-cpd><duplication lines="6" tokens="40"><file path="src/main/java/App.java" line="8"/><file path="src/main/java/Other.java" line="12"/></duplication></pmd-cpd>';
+  const spotbugsXml = '<?xml version="1.0"?><BugCollection><BugInstance type="NP_NULL_ON_SOME_PATH" priority="2"><LongMessage>Possible null pointer dereference</LongMessage><Class classname="App"/><SourceLine classname="App" sourcepath="src/main/java/App.java" start="14"/></BugInstance></BugCollection>';
+  const wrapperPath = process.platform === 'win32'
+    ? path.join(path.dirname(binDirectory), 'mvnw.cmd')
+    : path.join(path.dirname(binDirectory), 'mvnw');
+
+  if (process.platform === 'win32') {
+    const encodedCheckstyleXml = Buffer.from(checkstyleXml, 'utf8').toString('base64');
+    const encodedCpdXml = Buffer.from(cpdXml, 'utf8').toString('base64');
+    const encodedSpotbugsXml = Buffer.from(spotbugsXml, 'utf8').toString('base64');
+    fs.writeFileSync(
+      wrapperPath,
+      [
+        '@echo off',
+        `echo %*>>"${outputPath}"`,
+        'echo %* | findstr /C:"checkstyle:check" >nul',
+        `if not errorlevel 1 node -e "process.stdout.write(Buffer.from('${encodedCheckstyleXml}','base64').toString('utf8'))"`,
+        'echo %* | findstr /C:"pmd:cpd-check" >nul',
+        `if not errorlevel 1 node -e "process.stdout.write(Buffer.from('${encodedCpdXml}','base64').toString('utf8'))"`,
+        'echo %* | findstr /C:"spotbugs:check" >nul',
+        `if not errorlevel 1 node -e "process.stdout.write(Buffer.from('${encodedSpotbugsXml}','base64').toString('utf8'))"`,
+        'exit /b 0',
+        '',
+      ].join('\r\n'),
+      'utf8',
+    );
+    return;
+  }
+
+  fs.writeFileSync(
+    wrapperPath,
+    [
+      '#!/bin/sh',
+      `printf '%s\n' "$*" >> "${outputPath}"`,
+      'case "$*" in',
+      `  *"checkstyle:check"*) printf '%s' '${checkstyleXml}' ;;`,
+      `  *"pmd:cpd-check"*) printf '%s' '${cpdXml}' ;;`,
+      `  *"spotbugs:check"*) printf '%s' '${spotbugsXml}' ;;`,
+      'esac',
+      'exit 0',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  fs.chmodSync(wrapperPath, 0o755);
+}
+
+/**
  * Semgrep 用の SARIF 出力ラッパーを作成する。
  * @param binDirectory ラッパーディレクトリを表す。
  * @param outputFileName 出力ファイル名を表す。
@@ -953,7 +1582,7 @@ suite('Mamori CLI Test Suite', () => {
       path.relative(temporaryDirectory, targetFilePath),
     ]);
 
-    assert.strictEqual(result.status, 0);
+    assert.strictEqual(result.status, 0, result.stderr || result.stdout);
     assert.match(result.stdout, /source=discovery/u);
     assert.match(result.stdout, /eslint\.config\.ts/u);
   });
@@ -1017,6 +1646,212 @@ suite('Mamori CLI Test Suite', () => {
     assert.doesNotMatch(stylelintLine ? stylelintLine[0] : '', /main\.js|index\.html/u);
     assert.match(htmlhintLine ? htmlhintLine[0] : '', /index\.html/u);
     assert.doesNotMatch(htmlhintLine ? htmlhintLine[0] : '', /main\.js|site\.css/u);
+  });
+
+  /**
+   * save/file で TypeScript ファイルを ESLint 対象に含めること。
+   * @returns 返り値はない。
+   */
+  test('Builds save command plans for TypeScript files with ESLint targets', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src');
+    const targetFilePath = path.join(sourceDirectory, 'main.ts');
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.writeFileSync(targetFilePath, 'export const sample: number = 1;\n', 'utf8');
+    fs.writeFileSync(path.join(temporaryDirectory, 'eslint.config.mjs'), 'export default [];\n', 'utf8');
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'save',
+      '--scope',
+      'file',
+      '--files',
+      path.relative(temporaryDirectory, targetFilePath),
+    ]);
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /checks=eslint:enabled/u);
+    assert.match(result.stdout, /eslint:eslint --config .*eslint\.config\.mjs/u);
+    assert.match(result.stdout, /main\.ts/u);
+    assert.doesNotMatch(result.stdout, /formatters=prettier:enabled/u);
+  });
+
+  /**
+   * save/file で CSS ファイルの Stylelint finding を SARIF 化できること。
+   * @returns 返り値はない。
+   */
+  test('Reports direct CSS Stylelint findings during save checks', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const styleDirectory = path.join(temporaryDirectory, 'styles');
+    const cssFilePath = path.join(styleDirectory, 'site.css');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const prettierLogPath = path.join(nodeBinDirectory, 'prettier.log');
+    const stylelintLogPath = path.join(nodeBinDirectory, 'stylelint.log');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-css-save.sarif');
+    const stylelintOutput = JSON.stringify([
+      {
+        source: cssFilePath,
+        warnings: [
+          {
+            line: 1,
+            column: 15,
+            rule: 'color-no-invalid-hex',
+            severity: 'error',
+            text: 'Unexpected invalid hex color "#12" (color-no-invalid-hex)',
+          },
+        ],
+      },
+    ]);
+
+    fs.mkdirSync(styleDirectory, { recursive: true });
+    fs.writeFileSync(cssFilePath, 'body { color: #12; }\n', 'utf8');
+    fs.writeFileSync(path.join(temporaryDirectory, 'stylelint.config.mjs'), 'export default {};\n', 'utf8');
+    writeWebCommandWrapper(nodeBinDirectory, 'prettier', 'prettier.log');
+    writeWebCommandWrapper(nodeBinDirectory, 'stylelint', 'stylelint.log', {
+      stdout: stylelintOutput,
+      exitCode: 2,
+    });
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'save',
+      '--scope',
+      'file',
+      '--files',
+      path.relative(temporaryDirectory, cssFilePath),
+      '--execute',
+      '--sarif-output',
+      path.relative(temporaryDirectory, sarifOutputPath),
+    ]);
+
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /stylelint:failed exitCode=2/u);
+    assert.match(result.stdout, /Unexpected invalid hex color/u);
+    assert.match(fs.readFileSync(prettierLogPath, 'utf8'), /site\.css/u);
+    assert.match(fs.readFileSync(stylelintLogPath, 'utf8'), /site\.css/u);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /color-no-invalid-hex/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /site\.css/u);
+  });
+
+  /**
+   * save/file で HTML 本体の htmlhint finding を SARIF 化できること。
+   * @returns 返り値はない。
+   */
+  test('Reports direct HTML htmlhint findings during save checks', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const htmlDirectory = path.join(temporaryDirectory, 'public');
+    const htmlFilePath = path.join(htmlDirectory, 'index.html');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const prettierLogPath = path.join(nodeBinDirectory, 'prettier.log');
+    const htmlhintLogPath = path.join(nodeBinDirectory, 'htmlhint.log');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-html-save.sarif');
+    const htmlhintOutput = JSON.stringify([
+      {
+        file: htmlFilePath,
+        messages: [
+          {
+            type: 'warning',
+            message: 'Tag must be paired.',
+            line: 2,
+            col: 1,
+            rule: { id: 'tag-pair' },
+          },
+        ],
+      },
+    ]);
+
+    fs.mkdirSync(htmlDirectory, { recursive: true });
+    fs.writeFileSync(htmlFilePath, '<!doctype html>\n<div>\n', 'utf8');
+    fs.writeFileSync(path.join(temporaryDirectory, '.htmlhintrc'), '{"tag-pair": true}\n', 'utf8');
+    writeWebCommandWrapper(nodeBinDirectory, 'prettier', 'prettier.log');
+    writeWebCommandWrapper(nodeBinDirectory, 'htmlhint', 'htmlhint.log', {
+      stdout: htmlhintOutput,
+      exitCode: 1,
+    });
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'save',
+      '--scope',
+      'file',
+      '--files',
+      path.relative(temporaryDirectory, htmlFilePath),
+      '--execute',
+      '--sarif-output',
+      path.relative(temporaryDirectory, sarifOutputPath),
+    ]);
+
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /htmlhint:failed exitCode=1/u);
+    assert.match(result.stdout, /Tag must be paired\./u);
+    assert.match(result.stdout, /eslint:skipped reason=no-target-files/u);
+    assert.match(result.stdout, /stylelint:skipped reason=no-target-files/u);
+    assert.match(fs.readFileSync(prettierLogPath, 'utf8'), /index\.html/u);
+    assert.match(fs.readFileSync(htmlhintLogPath, 'utf8'), /index\.html/u);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /tag-pair/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /index\.html/u);
+  });
+
+  /**
+   * save/file で TypeScript ファイルの ESLint finding を SARIF 化できること。
+   * @returns 返り値はない。
+   */
+  test('Reports direct TypeScript ESLint findings during save checks', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src');
+    const typescriptFilePath = path.join(sourceDirectory, 'main.ts');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const eslintLogPath = path.join(nodeBinDirectory, 'eslint.log');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-typescript-save.sarif');
+    const eslintOutput = JSON.stringify([
+      {
+        filePath: typescriptFilePath,
+        messages: [
+          {
+            ruleId: '@typescript-eslint/no-unused-vars',
+            severity: 2,
+            message: 'Unused variable value.',
+            line: 1,
+            column: 7,
+          },
+        ],
+      },
+    ]);
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.writeFileSync(typescriptFilePath, 'const value: number = 1;\n', 'utf8');
+    fs.writeFileSync(path.join(temporaryDirectory, 'eslint.config.mjs'), 'export default [];\n', 'utf8');
+    writeWebCommandWrapper(nodeBinDirectory, 'eslint', 'eslint.log', {
+      stdout: eslintOutput,
+      exitCode: 1,
+    });
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'save',
+      '--scope',
+      'file',
+      '--files',
+      path.relative(temporaryDirectory, typescriptFilePath),
+      '--execute',
+      '--sarif-output',
+      path.relative(temporaryDirectory, sarifOutputPath),
+    ]);
+
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /eslint:failed exitCode=1/u);
+    assert.match(result.stdout, /Unused variable value\./u);
+    assert.match(fs.readFileSync(eslintLogPath, 'utf8'), /main\.ts/u);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /@typescript-eslint\/no-unused-vars/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /main\.ts/u);
   });
 
   /**
@@ -1211,6 +2046,34 @@ suite('Mamori CLI Test Suite', () => {
   });
 
   /**
+   * 設定未検出の TypeScript ファイルでは JS 向け ESLint fallback を適用しないこと。
+   * @returns 返り値はない。
+   */
+  test('Skips TypeScript ESLint checks when project configuration is not detected', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src');
+    const targetFilePath = path.join(sourceDirectory, 'main.ts');
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.writeFileSync(targetFilePath, 'const value: number = 1;\n', 'utf8');
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'save',
+      '--scope',
+      'file',
+      '--files',
+      path.relative(temporaryDirectory, targetFilePath),
+    ]);
+
+    assert.strictEqual(result.status, 0);
+    assert.doesNotMatch(result.stdout, /commands=eslint:eslint/u);
+    assert.match(result.stdout, /mamori: execution-plan\n  - none/u);
+    assert.match(result.stdout, /mamori: command-plan\n  - none/u);
+  });
+
+  /**
    * Web 専用ワークスペースでも plan が空にならないこと。
    * @returns 返り値はない。
    */
@@ -1295,6 +2158,49 @@ suite('Mamori CLI Test Suite', () => {
     assert.match(result.stdout, /eslint\.default\.json/u);
     assert.match(result.stdout, /packages[\\/]app[\\/]eslint\.config\.mjs/u);
     assert.ok((result.stdout.match(/commands=eslint:eslint/gu) || []).length >= 2);
+  });
+
+  /**
+   * workspace Web 検査で `.vscode-test` 配下を対象外にすること。
+   * @returns 返り値はない。
+   */
+  test('Ignores .vscode-test directories during workspace web checks', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const rootSourceDirectory = path.join(temporaryDirectory, 'src');
+    const rootTargetFilePath = path.join(rootSourceDirectory, 'main.js');
+    const ignoredModuleDirectory = path.join(temporaryDirectory, '.vscode-test', 'fixture-extension');
+    const ignoredSourceDirectory = path.join(ignoredModuleDirectory, 'src');
+    const ignoredTargetFilePath = path.join(ignoredSourceDirectory, 'ignored.js');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const eslintLogPath = path.join(nodeBinDirectory, 'eslint.log');
+
+    fs.mkdirSync(rootSourceDirectory, { recursive: true });
+    fs.mkdirSync(ignoredSourceDirectory, { recursive: true });
+    fs.writeFileSync(rootTargetFilePath, 'const rootValue = 1;\n', 'utf8');
+    fs.writeFileSync(ignoredTargetFilePath, 'const ignoredValue = 1;\n', 'utf8');
+    fs.writeFileSync(
+      path.join(ignoredModuleDirectory, 'package.json'),
+      JSON.stringify({ eslintConfig: { root: true } }, null, 2),
+      'utf8',
+    );
+    writeWebCommandWrapper(nodeBinDirectory, 'eslint', 'eslint.log', { stdout: '[]', exitCode: 0 });
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'manual',
+      '--scope',
+      'workspace',
+      '--execute',
+    ]);
+
+    assert.strictEqual(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /eslint:ok exitCode=0/u);
+    assert.doesNotMatch(result.stdout, /\.vscode-test/u);
+
+    const eslintLog = fs.readFileSync(eslintLogPath, 'utf8');
+    assert.match(eslintLog, /src[\\/]main\.js/u);
+    assert.doesNotMatch(eslintLog, /\.vscode-test/u);
   });
 
   /**
@@ -1383,6 +2289,101 @@ suite('Mamori CLI Test Suite', () => {
     assert.match(result.stdout, /Unexpected console statement\./u);
     assert.match(result.stdout, /Unexpected invalid hex color/u);
     assert.match(result.stdout, /Tag must be paired\./u);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /no-console/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /color-no-invalid-hex/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /tag-pair/u);
+  });
+
+  /**
+   * manual/workspace の Web checker 失敗時に issue を SARIF 化して反映できること。
+   * @returns 返り値はない。
+   */
+  test('Fails manual workspace when web checkers report findings and writes SARIF issues', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const scriptDirectory = path.join(temporaryDirectory, 'src');
+    const styleDirectory = path.join(temporaryDirectory, 'styles');
+    const htmlDirectory = path.join(temporaryDirectory, 'public');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-web-manual.sarif');
+    const javascriptFilePath = path.join(scriptDirectory, 'main.js');
+    const cssFilePath = path.join(styleDirectory, 'site.css');
+    const htmlFilePath = path.join(htmlDirectory, 'index.html');
+    const eslintOutput = JSON.stringify([
+      {
+        filePath: javascriptFilePath,
+        messages: [
+          {
+            ruleId: 'no-console',
+            severity: 2,
+            message: 'Unexpected console statement.',
+            line: 1,
+            column: 1,
+          },
+        ],
+      },
+    ]);
+    const stylelintOutput = JSON.stringify([
+      {
+        source: cssFilePath,
+        warnings: [
+          {
+            line: 1,
+            column: 8,
+            rule: 'color-no-invalid-hex',
+            severity: 'error',
+            text: 'Unexpected invalid hex color "#12" (color-no-invalid-hex)',
+          },
+        ],
+      },
+    ]);
+    const htmlhintOutput = JSON.stringify([
+      {
+        file: htmlFilePath,
+        messages: [
+          {
+            type: 'warning',
+            message: 'Tag must be paired.',
+            line: 2,
+            col: 3,
+            rule: { id: 'tag-pair' },
+          },
+        ],
+      },
+    ]);
+
+    fs.mkdirSync(scriptDirectory, { recursive: true });
+    fs.mkdirSync(styleDirectory, { recursive: true });
+    fs.mkdirSync(htmlDirectory, { recursive: true });
+    fs.writeFileSync(javascriptFilePath, 'console.log("sample");\n', 'utf8');
+    fs.writeFileSync(cssFilePath, 'body { color: #12; }\n', 'utf8');
+    fs.writeFileSync(htmlFilePath, '<!doctype html>\n<div>\n', 'utf8');
+    fs.writeFileSync(path.join(temporaryDirectory, 'eslint.config.mjs'), 'export default [];\n', 'utf8');
+    fs.writeFileSync(path.join(temporaryDirectory, 'stylelint.config.mjs'), 'export default {};\n', 'utf8');
+    fs.writeFileSync(path.join(temporaryDirectory, '.htmlhintrc'), '{"tag-pair": true}\n', 'utf8');
+    writeWebCommandWrapper(nodeBinDirectory, 'eslint', 'eslint.log', { stdout: eslintOutput, exitCode: 1 });
+    writeWebCommandWrapper(nodeBinDirectory, 'stylelint', 'stylelint.log', { stdout: stylelintOutput, exitCode: 2 });
+    writeWebCommandWrapper(nodeBinDirectory, 'htmlhint', 'htmlhint.log', { stdout: htmlhintOutput, exitCode: 1 });
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'manual',
+      '--scope',
+      'workspace',
+      '--execute',
+      '--sarif-output',
+      path.relative(temporaryDirectory, sarifOutputPath),
+    ]);
+
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /issues=3/u);
+    assert.match(result.stdout, /Unexpected console statement\./u);
+    assert.match(result.stdout, /Unexpected invalid hex color/u);
+    assert.match(result.stdout, /Tag must be paired\./u);
+    assert.match(result.stdout, /eslint:failed exitCode=1/u);
+    assert.match(result.stdout, /stylelint:failed exitCode=2/u);
+    assert.match(result.stdout, /htmlhint:failed exitCode=1/u);
     assert.ok(fs.existsSync(sarifOutputPath));
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /no-console/u);
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /color-no-invalid-hex/u);
@@ -2285,8 +3286,105 @@ suite('Mamori CLI Test Suite', () => {
     assert.match(result.stdout, /pre-commit/u);
     assert.match(result.stdout, /pre-push/u);
     assert.match(fs.readFileSync(preCommitHookPath, 'utf8'), /mamori-inspector-managed-hook/u);
+    assert.match(fs.readFileSync(preCommitHookPath, 'utf8'), /runner was not found/u);
+    assert.match(fs.readFileSync(preCommitHookPath, 'utf8'), /node command was not found/u);
     assert.match(fs.readFileSync(preCommitHookPath, 'utf8'), /--mode precommit --scope staged --execute/u);
     assert.match(fs.readFileSync(prePushHookPath, 'utf8'), /--mode prepush --scope workspace --execute/u);
+  });
+
+  /**
+   * 管理対象 hook が runner 欠落時に warning を出して安全終了すること。
+   * @returns 返り値はない。
+   */
+  test('Skips managed hook with warning when runner is missing', function() {
+    if (!resolvePosixShellCommand()) {
+      this.skip();
+      return;
+    }
+
+    const temporaryDirectory = createTemporaryDirectory();
+    const hooksDirectory = path.join(temporaryDirectory, '.git', 'hooks');
+    const preCommitHookPath = path.join(hooksDirectory, 'pre-commit');
+
+    fs.mkdirSync(hooksDirectory, { recursive: true });
+    runMamoriCli(temporaryDirectory, ['hooks', 'install']);
+
+    const result = runManagedHookScript(preCommitHookPath, temporaryDirectory);
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stderr, /pre-commit skipped because runner was not found/u);
+    assert.doesNotMatch(result.stderr, /node command was not found/u);
+  });
+
+  /**
+   * 管理対象 hook が通常時は runner の終了コードを返すこと。
+   * @returns 返り値はない。
+   */
+  test('Returns the runner exit code from the managed hook', function() {
+    if (!resolvePosixShellCommand()) {
+      this.skip();
+      return;
+    }
+
+    const temporaryDirectory = createTemporaryDirectory();
+    const hooksDirectory = path.join(temporaryDirectory, '.git', 'hooks');
+    const prePushHookPath = path.join(hooksDirectory, 'pre-push');
+    const runnerPath = path.join(temporaryDirectory, '.mamori', 'mamori.js');
+    const invocationLogPath = path.join(temporaryDirectory, 'hook-runner-args.json');
+
+    fs.mkdirSync(hooksDirectory, { recursive: true });
+    fs.mkdirSync(path.dirname(runnerPath), { recursive: true });
+    fs.writeFileSync(
+      runnerPath,
+      [
+        "'use strict';",
+        'const fs = require("fs");',
+        `fs.writeFileSync(${JSON.stringify(invocationLogPath)}, JSON.stringify(process.argv.slice(2)), 'utf8');`,
+        'process.exit(1);',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    runMamoriCli(temporaryDirectory, ['hooks', 'install']);
+
+    const result = runManagedHookScript(prePushHookPath, temporaryDirectory);
+
+    assert.strictEqual(result.status, 1);
+    assert.deepStrictEqual(
+      JSON.parse(fs.readFileSync(invocationLogPath, 'utf8')),
+      ['run', '--mode', 'prepush', '--scope', 'workspace', '--execute'],
+    );
+  });
+
+  /**
+   * 管理対象 hook が node 未解決時に warning を出して安全終了すること。
+   * @returns 返り値はない。
+   */
+  test('Skips managed hook with warning when node command is missing', function() {
+    if (!resolvePosixShellCommand()) {
+      this.skip();
+      return;
+    }
+
+    const temporaryDirectory = createTemporaryDirectory();
+    const hooksDirectory = path.join(temporaryDirectory, '.git', 'hooks');
+    const preCommitHookPath = path.join(hooksDirectory, 'pre-commit');
+    const runnerPath = path.join(temporaryDirectory, '.mamori', 'mamori.js');
+
+    fs.mkdirSync(hooksDirectory, { recursive: true });
+    fs.mkdirSync(path.dirname(runnerPath), { recursive: true });
+    fs.writeFileSync(runnerPath, "'use strict';\nprocess.exit(1);\n", 'utf8');
+    runMamoriCli(temporaryDirectory, ['hooks', 'install']);
+
+    const result = runManagedHookScript(preCommitHookPath, temporaryDirectory, {
+      env: {
+        ...process.env,
+        NODE: 'missing-node-command-for-mamori-test',
+      },
+    });
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stderr, /node command was not found: missing-node-command-for-mamori-test/u);
   });
 
   /**
@@ -2533,6 +3631,10 @@ suite('Mamori CLI Test Suite', () => {
 
     assert.strictEqual(result.status, 0);
     assert.match(result.stdout, /mamori: execution-result/u);
+    assert.match(result.stdout, /mamori: tool-start tool=spotless/u);
+    assert.match(result.stdout, /mamori: tool-start tool=checkstyle/u);
+    assert.match(result.stdout, /mamori: tool-start tool=pmd/u);
+    assert.match(result.stdout, /mamori: tool-start tool=semgrep/u);
     assert.match(result.stdout, /checkstyle:ok exitCode=0/u);
     assert.match(result.stdout, /pmd:ok exitCode=0/u);
     assert.match(result.stdout, /spotless:ok exitCode=0/u);
@@ -2549,6 +3651,205 @@ suite('Mamori CLI Test Suite', () => {
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Missing Javadoc/u);
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Unused local variable/u);
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Potential issue/u);
+  });
+
+  /**
+   * save で生成された PMD 既定レポートから finding を SARIF 化できること。
+   * @returns 返り値はない。
+   */
+  test('Loads PMD findings from generated Maven report files during save checks', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src', 'main', 'java');
+    const targetFilePath = path.join(sourceDirectory, 'App.java');
+    const pomFilePath = path.join(temporaryDirectory, 'pom.xml');
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-test.sarif');
+    const semgrepLogPath = path.join(binDirectory, 'semgrep-pmd-report.log');
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.writeFileSync(targetFilePath, 'class App {}\n', 'utf8');
+    fs.writeFileSync(
+      pomFilePath,
+      [
+        '<project>',
+        '  <build>',
+        '    <plugins>',
+        '      <plugin><artifactId>maven-checkstyle-plugin</artifactId></plugin>',
+        '      <plugin><artifactId>maven-pmd-plugin</artifactId></plugin>',
+        '    </plugins>',
+        '  </build>',
+        '</project>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    writeMavenPmdReportWrapper(binDirectory, 'mvn-pmd-report.log');
+    writeSemgrepSarifWrapper(binDirectory, 'semgrep-pmd-report.log');
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      [
+        'run',
+        '--mode',
+        'save',
+        '--scope',
+        'file',
+        '--files',
+        path.relative(temporaryDirectory, targetFilePath),
+        '--execute',
+        '--sarif-output',
+        path.relative(temporaryDirectory, sarifOutputPath),
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(binDirectory),
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /mamori: execution-result/u);
+    assert.match(result.stdout, /checkstyle:ok exitCode=0/u);
+    assert.match(result.stdout, /pmd:ok exitCode=0/u);
+    assert.match(result.stdout, /semgrep:ok exitCode=0/u);
+    assert.match(result.stdout, /issues=3/u);
+    assert.match(result.stdout, /Missing Javadoc/u);
+    assert.match(result.stdout, /Unused local variable/u);
+    assert.match(fs.readFileSync(semgrepLogPath, 'utf8'), /App\.java/u);
+    assert.ok(fs.existsSync(path.join(temporaryDirectory, 'target', 'pmd.xml')));
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Unused local variable/u);
+  });
+
+  /**
+   * save で生成された Checkstyle 既定レポートから finding を SARIF 化できること。
+   * @returns 返り値はない。
+   */
+  test('Loads Checkstyle findings from generated Maven report files during save checks', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src', 'main', 'java');
+    const targetFilePath = path.join(sourceDirectory, 'App.java');
+    const pomFilePath = path.join(temporaryDirectory, 'pom.xml');
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-checkstyle-report.sarif');
+    const semgrepLogPath = path.join(binDirectory, 'semgrep-checkstyle-report.log');
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.writeFileSync(targetFilePath, 'class App {}\n', 'utf8');
+    fs.writeFileSync(
+      pomFilePath,
+      [
+        '<project>',
+        '  <build>',
+        '    <plugins>',
+        '      <plugin><artifactId>maven-checkstyle-plugin</artifactId></plugin>',
+        '      <plugin><artifactId>maven-pmd-plugin</artifactId></plugin>',
+        '    </plugins>',
+        '  </build>',
+        '</project>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    writeMavenCheckstyleReportWrapper(binDirectory, 'mvn-checkstyle-report.log');
+    writeSemgrepSarifWrapper(binDirectory, 'semgrep-checkstyle-report.log');
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      [
+        'run',
+        '--mode',
+        'save',
+        '--scope',
+        'file',
+        '--files',
+        path.relative(temporaryDirectory, targetFilePath),
+        '--execute',
+        '--sarif-output',
+        path.relative(temporaryDirectory, sarifOutputPath),
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(binDirectory),
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /mamori: execution-result/u);
+    assert.match(result.stdout, /checkstyle:ok exitCode=0/u);
+    assert.match(result.stdout, /pmd:ok exitCode=0/u);
+    assert.match(result.stdout, /semgrep:ok exitCode=0/u);
+    assert.match(result.stdout, /issues=3/u);
+    assert.match(result.stdout, /Missing Javadoc/u);
+    assert.match(result.stdout, /Unused local variable/u);
+    assert.match(fs.readFileSync(semgrepLogPath, 'utf8'), /App\.java/u);
+    assert.ok(fs.existsSync(path.join(temporaryDirectory, 'target', 'checkstyle-result.xml')));
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Missing Javadoc/u);
+  });
+
+  /**
+   * manual/workspace で既存 PMD レポートだけが残っている場合でも finding を SARIF 化できること。
+   * @returns 返り値はない。
+   */
+  test('Loads PMD findings from an existing Maven report file during manual workspace checks', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src', 'main', 'java');
+    const targetFilePath = path.join(sourceDirectory, 'App.java');
+    const pomFilePath = path.join(temporaryDirectory, 'pom.xml');
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-manual-existing-report.sarif');
+    const semgrepLogPath = path.join(binDirectory, 'semgrep-manual-existing-report.log');
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.writeFileSync(targetFilePath, 'class App {}\n', 'utf8');
+    fs.writeFileSync(
+      pomFilePath,
+      [
+        '<project>',
+        '  <build>',
+        '    <plugins>',
+        '      <plugin><artifactId>maven-pmd-plugin</artifactId></plugin>',
+        '    </plugins>',
+        '  </build>',
+        '</project>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    writeMavenExistingPmdReportFailureWrapper(binDirectory, 'mvn-manual-existing-report.log');
+    writeSemgrepSarifWrapper(binDirectory, 'semgrep-manual-existing-report.log');
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      [
+        'run',
+        '--mode',
+        'manual',
+        '--scope',
+        'workspace',
+        '--execute',
+        '--sarif-output',
+        path.relative(temporaryDirectory, sarifOutputPath),
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(binDirectory),
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /pmd:failed exitCode=1/u);
+    assert.match(result.stdout, /Unused local variable/u);
+    assert.match(fs.readFileSync(semgrepLogPath, 'utf8'), /scan --sarif --config p\/java/u);
+    assert.ok(fs.existsSync(path.join(temporaryDirectory, 'target', 'pmd.xml')));
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Unused local variable/u);
   });
 
   /**
@@ -3258,6 +4559,141 @@ suite('Mamori CLI Test Suite', () => {
   });
 
   /**
+   * pre-push 実行で Checkstyle finding が SARIF に含まれること。
+   * @returns 返り値はない。
+   */
+  test('Includes Checkstyle findings in prepush Maven SARIF output', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src', 'main', 'java');
+    const classDirectory = path.join(temporaryDirectory, 'target', 'classes');
+    const pomFilePath = path.join(temporaryDirectory, 'pom.xml');
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-prepush-checkstyle.sarif');
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.mkdirSync(classDirectory, { recursive: true });
+    fs.writeFileSync(path.join(sourceDirectory, 'App.java'), 'class App {}\n', 'utf8');
+    fs.writeFileSync(path.join(sourceDirectory, 'Other.java'), 'class Other {}\n', 'utf8');
+    fs.writeFileSync(path.join(classDirectory, 'App.class'), 'compiled', 'utf8');
+    fs.writeFileSync(
+      pomFilePath,
+      [
+        '<project>',
+        '  <build>',
+        '    <plugins>',
+        '      <plugin><artifactId>maven-checkstyle-plugin</artifactId></plugin>',
+        '      <plugin><artifactId>maven-pmd-plugin</artifactId></plugin>',
+        '      <plugin><artifactId>spotless-maven-plugin</artifactId></plugin>',
+        '      <plugin><artifactId>spotbugs-maven-plugin</artifactId></plugin>',
+        '    </plugins>',
+        '  </build>',
+        '</project>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    writeMavenPrepushCheckstyleWrapper(binDirectory, 'mvn-prepush-checkstyle.log');
+    writeSemgrepSarifWrapper(binDirectory, 'semgrep-prepush-checkstyle.log');
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      [
+        'run',
+        '--mode',
+        'prepush',
+        '--scope',
+        'workspace',
+        '--execute',
+        '--sarif-output',
+        path.relative(temporaryDirectory, sarifOutputPath),
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(binDirectory),
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /Missing Javadoc/u);
+    assert.match(fs.readFileSync(path.join(binDirectory, 'mvn-prepush-checkstyle.log'), 'utf8'), /checkstyle:check/u);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Missing Javadoc/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /JavadocTypeCheck/u);
+  });
+
+  /**
+   * pre-push で生成された CPD と SpotBugs の既定レポートから finding を SARIF 化できること。
+   * @returns 返り値はない。
+   */
+  test('Loads CPD and SpotBugs findings from generated Maven report files during prepush checks', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src', 'main', 'java');
+    const classDirectory = path.join(temporaryDirectory, 'target', 'classes');
+    const pomFilePath = path.join(temporaryDirectory, 'pom.xml');
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-prepush-report-files.sarif');
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.mkdirSync(classDirectory, { recursive: true });
+    fs.writeFileSync(path.join(sourceDirectory, 'App.java'), 'class App {}\n', 'utf8');
+    fs.writeFileSync(path.join(sourceDirectory, 'Other.java'), 'class Other {}\n', 'utf8');
+    fs.writeFileSync(path.join(classDirectory, 'App.class'), 'compiled', 'utf8');
+    fs.writeFileSync(
+      pomFilePath,
+      [
+        '<project>',
+        '  <build>',
+        '    <plugins>',
+        '      <plugin><artifactId>maven-checkstyle-plugin</artifactId></plugin>',
+        '      <plugin><artifactId>maven-pmd-plugin</artifactId></plugin>',
+        '      <plugin><artifactId>spotless-maven-plugin</artifactId></plugin>',
+        '      <plugin><artifactId>spotbugs-maven-plugin</artifactId></plugin>',
+        '    </plugins>',
+        '  </build>',
+        '</project>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    writeMavenPrepushReportWrapper(binDirectory, 'mvn-prepush-report-files.log');
+    writeSemgrepSarifWrapper(binDirectory, 'semgrep-prepush-report-files.log');
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      [
+        'run',
+        '--mode',
+        'prepush',
+        '--scope',
+        'workspace',
+        '--execute',
+        '--sarif-output',
+        path.relative(temporaryDirectory, sarifOutputPath),
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(binDirectory),
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /cpd:ok exitCode=0/u);
+    assert.match(result.stdout, /spotbugs:ok exitCode=0/u);
+    assert.match(result.stdout, /Duplicated block detected/u);
+    assert.match(result.stdout, /Possible null pointer dereference/u);
+    assert.match(result.stdout, /issues=4/u);
+    assert.ok(fs.existsSync(path.join(temporaryDirectory, 'target', 'cpd.xml')));
+    assert.ok(fs.existsSync(path.join(temporaryDirectory, 'target', 'spotbugsXml.xml')));
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Duplicated block detected/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Possible null pointer dereference/u);
+  });
+
+  /**
    * Gradle の pre-push 実行でも CPD と SpotBugs を Issue 化できること。
    * @returns 返り値はない。
    */
@@ -3334,5 +4770,663 @@ suite('Mamori CLI Test Suite', () => {
     assert.ok(fs.existsSync(sarifOutputPath));
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Duplicated block detected/u);
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Dead store to local variable/u);
+  });
+
+  /**
+   * setup で管理対象ツールを `.mamori` 配下へ導入できること。
+   * @returns 返り値はない。
+   */
+  test('Sets up managed tools into the workspace cache directories', function() {
+    this.timeout(15000);
+    const temporaryDirectory = createTemporaryDirectory();
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const mavenSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'maven-distribution',
+      'mvn',
+      'maven-setup.log',
+    );
+    const gradleSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'gradle-distribution',
+      'gradle',
+      'gradle-setup.log',
+    );
+
+    writeNpmInstallWrapper(binDirectory, 'npm-setup.log');
+    writeCommandWrapper(binDirectory, 'semgrep', 'semgrep-setup.log');
+
+    const semgrepCommandPath = path.join(
+      binDirectory,
+      process.platform === 'win32' ? 'semgrep.cmd' : 'semgrep',
+    );
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      ['setup'],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(binDirectory),
+          MAMORI_TOOL_MAVEN_SOURCE_URL: toFileUrl(mavenSourceDirectory),
+          MAMORI_TOOL_GRADLE_SOURCE_URL: toFileUrl(gradleSourceDirectory),
+          MAMORI_TOOL_SEMGREP_COMMAND: semgrepCommandPath,
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /mamori: setup completed/u);
+    assert.ok(fs.existsSync(path.join(temporaryDirectory, '.mamori', 'tools', 'maven', '3.9.11', 'bin')));
+    assert.ok(fs.existsSync(path.join(temporaryDirectory, '.mamori', 'tools', 'gradle', '8.14.4', 'bin')));
+    assert.ok(fs.existsSync(path.join(
+      temporaryDirectory,
+      '.mamori',
+      'node',
+      'node_modules',
+      '.bin',
+      process.platform === 'win32' ? 'eslint.cmd' : 'eslint',
+    )));
+    assert.ok(fs.existsSync(path.join(
+      temporaryDirectory,
+      '.mamori',
+      'node',
+      'node_modules',
+      '.bin',
+      process.platform === 'win32' ? 'prettier.cmd' : 'prettier',
+    )));
+    assert.match(fs.readFileSync(path.join(binDirectory, 'npm-setup.log'), 'utf8'), /install/u);
+  });
+
+  /**
+   * setup で `.git/info/exclude` へ `/.mamori/` を冪等に追加できること。
+   * @returns 返り値はない。
+   */
+  test('Adds /.mamori/ to local git exclude during setup without duplication', function() {
+    this.timeout(15000);
+    const temporaryDirectory = createTemporaryDirectory();
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const mavenSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'maven-exclude-distribution',
+      'mvn',
+      'maven-exclude.log',
+    );
+    const gradleSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'gradle-exclude-distribution',
+      'gradle',
+      'gradle-exclude.log',
+    );
+    const gitInfoDirectory = createGitInfoDirectory(temporaryDirectory);
+    const excludePath = path.join(gitInfoDirectory, 'exclude');
+
+    fs.writeFileSync(excludePath, '# local excludes\n', 'utf8');
+    writeNpmInstallWrapper(binDirectory, 'npm-exclude.log');
+    writeCommandWrapper(binDirectory, 'semgrep', 'semgrep-exclude.log');
+
+    const semgrepCommandPath = path.join(
+      binDirectory,
+      process.platform === 'win32' ? 'semgrep.cmd' : 'semgrep',
+    );
+    const environment = {
+      ...process.env,
+      PATH: buildTestPath(binDirectory),
+      MAMORI_TOOL_MAVEN_SOURCE_URL: toFileUrl(mavenSourceDirectory),
+      MAMORI_TOOL_GRADLE_SOURCE_URL: toFileUrl(gradleSourceDirectory),
+      MAMORI_TOOL_SEMGREP_COMMAND: semgrepCommandPath,
+    };
+
+    const firstResult = runMamoriCli(temporaryDirectory, ['setup'], { env: environment });
+    const secondResult = runMamoriCli(temporaryDirectory, ['setup'], { env: environment });
+
+    assert.strictEqual(firstResult.status, 0);
+    assert.strictEqual(secondResult.status, 0);
+    const excludeLines = readGitExcludeLines(excludePath);
+    assert.strictEqual(excludeLines.filter((line) => line === '/.mamori/').length, 1);
+  });
+
+  /**
+   * setup で nested `.mamori` を repo-relative にローカル Git 除外へ追加できること。
+   * @returns 返り値はない。
+   */
+  test('Adds nested .mamori entries to local git exclude during setup', function() {
+    this.timeout(15000);
+    const temporaryDirectory = createTemporaryDirectory();
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const mavenSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'maven-nested-exclude-distribution',
+      'mvn',
+      'maven-nested-exclude.log',
+    );
+    const gradleSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'gradle-nested-exclude-distribution',
+      'gradle',
+      'gradle-nested-exclude.log',
+    );
+    const gitInfoDirectory = createGitInfoDirectory(temporaryDirectory);
+    const excludePath = path.join(gitInfoDirectory, 'exclude');
+
+    fs.mkdirSync(path.join(temporaryDirectory, 'mamori-inspector', '.mamori', 'tools'), { recursive: true });
+    fs.mkdirSync(path.join(temporaryDirectory, 'packages', 'sample', '.mamori', 'cache'), { recursive: true });
+    fs.mkdirSync(path.join(temporaryDirectory, 'node_modules', 'ignored-package', '.mamori'), { recursive: true });
+    fs.mkdirSync(path.join(temporaryDirectory, 'out', 'ignored-build', '.mamori'), { recursive: true });
+    fs.mkdirSync(path.join(temporaryDirectory, 'dist', 'ignored-dist', '.mamori'), { recursive: true });
+    fs.mkdirSync(path.join(temporaryDirectory, 'target', 'ignored-target', '.mamori'), { recursive: true });
+
+    fs.writeFileSync(excludePath, '# local excludes\n', 'utf8');
+    writeNpmInstallWrapper(binDirectory, 'npm-nested-exclude.log');
+    writeCommandWrapper(binDirectory, 'semgrep', 'semgrep-nested-exclude.log');
+
+    const semgrepCommandPath = path.join(
+      binDirectory,
+      process.platform === 'win32' ? 'semgrep.cmd' : 'semgrep',
+    );
+    const environment = {
+      ...process.env,
+      PATH: buildTestPath(binDirectory),
+      MAMORI_TOOL_MAVEN_SOURCE_URL: toFileUrl(mavenSourceDirectory),
+      MAMORI_TOOL_GRADLE_SOURCE_URL: toFileUrl(gradleSourceDirectory),
+      MAMORI_TOOL_SEMGREP_COMMAND: semgrepCommandPath,
+    };
+
+    const result = runMamoriCli(temporaryDirectory, ['setup'], { env: environment });
+
+    assert.strictEqual(result.status, 0);
+    const excludeLines = readGitExcludeLines(excludePath);
+    assert.ok(excludeLines.includes('/.mamori/'));
+    assert.ok(excludeLines.includes('/mamori-inspector/.mamori/'));
+    assert.ok(excludeLines.includes('/packages/sample/.mamori/'));
+    assert.ok(!excludeLines.includes('/node_modules/ignored-package/.mamori/'));
+    assert.ok(!excludeLines.includes('/out/ignored-build/.mamori/'));
+    assert.ok(!excludeLines.includes('/dist/ignored-dist/.mamori/'));
+    assert.ok(!excludeLines.includes('/target/ignored-target/.mamori/'));
+  });
+
+  /**
+   * 空白を含む npm 実行パスでも setup が成功すること。
+   * @returns 返り値はない。
+   */
+  test('Sets up managed tools when npm command path contains spaces', function() {
+    const temporaryDirectory = createTemporaryDirectory();
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const spacedBinDirectory = createSpacedCommandBinDirectory(temporaryDirectory);
+    const mavenSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'maven-space-distribution',
+      'mvn',
+      'maven-space.log',
+    );
+    const gradleSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'gradle-space-distribution',
+      'gradle',
+      'gradle-space.log',
+    );
+
+    this.timeout(15000);
+    writeNpmInstallWrapper(spacedBinDirectory, 'npm-space.log');
+    writeCommandWrapper(binDirectory, 'semgrep', 'semgrep-space.log');
+
+    const semgrepCommandPath = path.join(
+      binDirectory,
+      process.platform === 'win32' ? 'semgrep.cmd' : 'semgrep',
+    );
+    const npmCommandPath = path.join(
+      spacedBinDirectory,
+      process.platform === 'win32' ? 'npm.cmd' : 'npm',
+    );
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      ['setup'],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(binDirectory),
+          MAMORI_TOOL_NPM_COMMAND: npmCommandPath,
+          MAMORI_TOOL_MAVEN_SOURCE_URL: toFileUrl(mavenSourceDirectory),
+          MAMORI_TOOL_GRADLE_SOURCE_URL: toFileUrl(gradleSourceDirectory),
+          MAMORI_TOOL_SEMGREP_COMMAND: semgrepCommandPath,
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /mamori: setup completed/u);
+    assert.match(fs.readFileSync(path.join(spacedBinDirectory, 'npm-space.log'), 'utf8'), /install/u);
+    assert.ok(fs.existsSync(path.join(
+      temporaryDirectory,
+      '.mamori',
+      'node',
+      'node_modules',
+      '.bin',
+      process.platform === 'win32' ? 'eslint.cmd' : 'eslint',
+    )));
+  });
+
+  /**
+   * npm 実行の子プロセス失敗理由を setup エラーへ含めること。
+   * @returns 返り値はない。
+   */
+  test('Reports child process npm errors during managed tool setup', function() {
+    this.timeout(15000);
+    const temporaryDirectory = createTemporaryDirectory();
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const mavenSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'maven-error-distribution',
+      'mvn',
+      'maven-error.log',
+    );
+    const gradleSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'gradle-error-distribution',
+      'gradle',
+      'gradle-error.log',
+    );
+
+    writeCommandWrapper(binDirectory, 'semgrep', 'semgrep-error.log');
+
+    const semgrepCommandPath = path.join(
+      binDirectory,
+      process.platform === 'win32' ? 'semgrep.cmd' : 'semgrep',
+    );
+    const missingNpmCommandPath = path.join(
+      temporaryDirectory,
+      process.platform === 'win32' ? 'missing-npm.cmd' : 'missing-npm',
+    );
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      ['setup'],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(binDirectory),
+          MAMORI_TOOL_NPM_COMMAND: missingNpmCommandPath,
+          MAMORI_TOOL_MAVEN_SOURCE_URL: toFileUrl(mavenSourceDirectory),
+          MAMORI_TOOL_GRADLE_SOURCE_URL: toFileUrl(gradleSourceDirectory),
+          MAMORI_TOOL_SEMGREP_COMMAND: semgrepCommandPath,
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 2);
+    if (process.platform === 'win32') {
+      assert.match(result.stderr, /missing-npm\.cmd/u);
+    } else {
+      assert.match(result.stderr, /spawnSync/u);
+      assert.match(result.stderr, /ENOENT/u);
+    }
+    assert.doesNotMatch(result.stderr, /failed to install managed Node tools\s*$/u);
+  });
+
+  /**
+   * setup 時に失敗した managed Node ツール名をエラーへ含めること。
+   * @returns 返り値はない。
+   */
+  test('Reports the failing managed Node tool when npm installation fails during setup', function() {
+    this.timeout(15000);
+    const temporaryDirectory = createTemporaryDirectory();
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const mavenSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'maven-package-failure-distribution',
+      'mvn',
+      'maven-package-failure.log',
+    );
+    const gradleSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'gradle-package-failure-distribution',
+      'gradle',
+      'gradle-package-failure.log',
+    );
+
+    writeNpmInstallWrapper(binDirectory, 'npm-package-failure.log', {
+      failPackageName: 'eslint',
+      stderrMessage: 'eslint install failed',
+      exitCode: 23,
+    });
+    writeCommandWrapper(binDirectory, 'semgrep', 'semgrep-package-failure.log');
+
+    const semgrepCommandPath = path.join(
+      binDirectory,
+      process.platform === 'win32' ? 'semgrep.cmd' : 'semgrep',
+    );
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      ['setup'],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(binDirectory),
+          MAMORI_TOOL_MAVEN_SOURCE_URL: toFileUrl(mavenSourceDirectory),
+          MAMORI_TOOL_GRADLE_SOURCE_URL: toFileUrl(gradleSourceDirectory),
+          MAMORI_TOOL_SEMGREP_COMMAND: semgrepCommandPath,
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 2);
+    assert.match(result.stderr, /failed to install managed Node tool eslint/u);
+    assert.match(result.stderr, /eslint install failed/u);
+  });
+
+  /**
+   * Windows では PATH に py がなくても標準配置の py ランチャーで Semgrep 導入を継続できること。
+   * @returns 返り値はない。
+   */
+  test('Uses the standard Windows py launcher for managed Semgrep setup when PATH does not include py', function() {
+    if (process.platform !== 'win32') {
+      this.skip();
+      return;
+    }
+
+    const temporaryDirectory = createTemporaryDirectory();
+    const fakeSystemRoot = path.join(temporaryDirectory, 'fake-system-root');
+    fs.mkdirSync(fakeSystemRoot, { recursive: true });
+    writeCommandWrapper(fakeSystemRoot, 'py', 'py-systemroot.log');
+
+    const provisionModulePath = path.join(
+      path.resolve(__dirname, '..', '..'),
+      '.mamori',
+      'tools',
+      'provision.js',
+    );
+    const { resolvePythonLauncher } = require(provisionModulePath) as {
+      resolvePythonLauncher: (workspaceRoot: string, env: NodeJS.ProcessEnv) => {
+        command: string;
+        baseArgs: string[];
+      };
+    };
+
+    const launcher = resolvePythonLauncher(temporaryDirectory, {
+      ...process.env,
+      PATH: createCommandBinDirectory(temporaryDirectory),
+      SystemRoot: fakeSystemRoot,
+      WINDIR: fakeSystemRoot,
+    });
+
+    assert.strictEqual(
+      launcher.command.toLowerCase(),
+      path.join(fakeSystemRoot, 'py.cmd').toLowerCase(),
+    );
+    assert.deepStrictEqual(launcher.baseArgs, ['-3']);
+  });
+
+  /**
+   * mvn が存在しないときに管理配布物を自動導入して実行できること。
+   * @returns 返り値はない。
+   */
+  test('Auto provisions Maven when mvn is not available', function() {
+    this.timeout(15000);
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src', 'main', 'java');
+    const targetFilePath = path.join(sourceDirectory, 'App.java');
+    const pomFilePath = path.join(temporaryDirectory, 'pom.xml');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-auto-maven.sarif');
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const mavenSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'maven-auto-distribution',
+      'mvn',
+      'maven-auto.log',
+    );
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.writeFileSync(targetFilePath, 'class App {}\n', 'utf8');
+    fs.writeFileSync(
+      pomFilePath,
+      [
+        '<project>',
+        '  <build>',
+        '    <plugins>',
+        '      <plugin><artifactId>maven-checkstyle-plugin</artifactId></plugin>',
+        '      <plugin><artifactId>maven-pmd-plugin</artifactId></plugin>',
+        '    </plugins>',
+        '  </build>',
+        '</project>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    writeCommandWrapper(binDirectory, 'semgrep', 'semgrep-auto-maven.log');
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      [
+        'run',
+        '--mode',
+        'manual',
+        '--scope',
+        'workspace',
+        '--execute',
+        '--sarif-output',
+        path.relative(temporaryDirectory, sarifOutputPath),
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: buildWindowsArchiveTestPath(binDirectory),
+          MAMORI_TOOL_MAVEN_SOURCE_URL: toFileUrl(mavenSourceDirectory),
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /checkstyle:ok exitCode=0/u);
+    assert.match(result.stdout, /pmd:ok exitCode=0/u);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(
+      fs.readFileSync(
+        path.join(temporaryDirectory, '.mamori', 'tools', 'maven', '3.9.11', 'bin', 'maven-auto.log'),
+        'utf8',
+      ),
+      /checkstyle:check/u,
+    );
+    assert.match(
+      fs.readFileSync(
+        path.join(temporaryDirectory, '.mamori', 'tools', 'maven', '3.9.11', 'bin', 'maven-auto.log'),
+        'utf8',
+      ),
+      /pmd:check/u,
+    );
+  });
+
+  /**
+   * run 実行時も `.git/info/exclude` へ `/.mamori/` を追加できること。
+   * @returns 返り値はない。
+   */
+  test('Adds /.mamori/ to local git exclude during run execution', function() {
+    const temporaryDirectory = createTemporaryDirectory();
+    const gitInfoDirectory = createGitInfoDirectory(temporaryDirectory);
+    const excludePath = path.join(gitInfoDirectory, 'exclude');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-empty.sarif');
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      [
+        'run',
+        '--mode',
+        'manual',
+        '--scope',
+        'workspace',
+        '--execute',
+        '--sarif-output',
+        path.relative(temporaryDirectory, sarifOutputPath),
+      ],
+    );
+
+    assert.strictEqual(result.status, 0);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(excludePath, 'utf8'), /\/\.mamori\//u);
+  });
+
+  /**
+   * run --execute 実行時も nested `.mamori` を repo-relative にローカル Git 除外へ追加できること。
+   * @returns 返り値はない。
+   */
+  test('Adds nested .mamori entries to local git exclude during run execution', function() {
+    const temporaryDirectory = createTemporaryDirectory();
+    const gitInfoDirectory = createGitInfoDirectory(temporaryDirectory);
+    const excludePath = path.join(gitInfoDirectory, 'exclude');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-nested-empty.sarif');
+
+    fs.mkdirSync(path.join(temporaryDirectory, 'mamori-inspector', '.mamori', 'tools'), { recursive: true });
+    fs.mkdirSync(path.join(temporaryDirectory, 'modules', 'demo', '.mamori', 'cache'), { recursive: true });
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      [
+        'run',
+        '--mode',
+        'manual',
+        '--scope',
+        'workspace',
+        '--execute',
+        '--sarif-output',
+        path.relative(temporaryDirectory, sarifOutputPath),
+      ],
+    );
+
+    assert.strictEqual(result.status, 0);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    const excludeLines = readGitExcludeLines(excludePath);
+    assert.ok(excludeLines.includes('/.mamori/'));
+    assert.ok(excludeLines.includes('/mamori-inspector/.mamori/'));
+    assert.ok(excludeLines.includes('/modules/demo/.mamori/'));
+  });
+
+  /**
+   * gradle が存在しないときに管理配布物を自動導入して実行できること。
+   * @returns 返り値はない。
+   */
+  test('Auto provisions Gradle when gradle is not available', function() {
+    this.timeout(15000);
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src', 'main', 'java');
+    const targetFilePath = path.join(sourceDirectory, 'App.java');
+    const buildFilePath = path.join(temporaryDirectory, 'build.gradle');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-auto-gradle.sarif');
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const gradleSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'gradle-auto-distribution',
+      'gradle',
+      'gradle-auto.log',
+    );
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.writeFileSync(targetFilePath, 'class App {}\n', 'utf8');
+    fs.writeFileSync(
+      buildFilePath,
+      [
+        'plugins {',
+        '  id "checkstyle"',
+        '  id "pmd"',
+        '}',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    writeCommandWrapper(binDirectory, 'semgrep', 'semgrep-auto-gradle.log');
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      [
+        'run',
+        '--mode',
+        'manual',
+        '--scope',
+        'workspace',
+        '--execute',
+        '--sarif-output',
+        path.relative(temporaryDirectory, sarifOutputPath),
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: buildWindowsArchiveTestPath(binDirectory),
+          MAMORI_TOOL_GRADLE_SOURCE_URL: toFileUrl(gradleSourceDirectory),
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /checkstyle:ok exitCode=0/u);
+    assert.match(result.stdout, /pmd:ok exitCode=0/u);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(
+      fs.readFileSync(
+        path.join(temporaryDirectory, '.mamori', 'tools', 'gradle', '8.14.4', 'bin', 'gradle-auto.log'),
+        'utf8',
+      ),
+      /checkstyleMain/u,
+    );
+    assert.match(
+      fs.readFileSync(
+        path.join(temporaryDirectory, '.mamori', 'tools', 'gradle', '8.14.4', 'bin', 'gradle-auto.log'),
+        'utf8',
+      ),
+      /pmdMain/u,
+    );
+  });
+
+  /**
+   * cache-clear で管理キャッシュを削除できること。
+   * @returns 返り値はない。
+   */
+  test('Clears managed tool caches from the workspace', function() {
+    this.timeout(15000);
+    const temporaryDirectory = createTemporaryDirectory();
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const mavenSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'maven-cache-clear-distribution',
+      'mvn',
+      'maven-cache-clear.log',
+    );
+    const gradleSourceDirectory = createManagedToolSource(
+      temporaryDirectory,
+      'gradle-cache-clear-distribution',
+      'gradle',
+      'gradle-cache-clear.log',
+    );
+
+    writeNpmInstallWrapper(binDirectory, 'npm-cache-clear.log');
+    writeCommandWrapper(binDirectory, 'semgrep', 'semgrep-cache-clear.log');
+
+    const semgrepCommandPath = path.join(
+      binDirectory,
+      process.platform === 'win32' ? 'semgrep.cmd' : 'semgrep',
+    );
+
+    const setupResult = runMamoriCli(
+      temporaryDirectory,
+      ['setup'],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(binDirectory),
+          MAMORI_TOOL_MAVEN_SOURCE_URL: toFileUrl(mavenSourceDirectory),
+          MAMORI_TOOL_GRADLE_SOURCE_URL: toFileUrl(gradleSourceDirectory),
+          MAMORI_TOOL_SEMGREP_COMMAND: semgrepCommandPath,
+        },
+      },
+    );
+
+    assert.strictEqual(setupResult.status, 0);
+    assert.ok(fs.existsSync(path.join(temporaryDirectory, '.mamori', 'tools')));
+    assert.ok(fs.existsSync(path.join(temporaryDirectory, '.mamori', 'node')));
+
+    const cacheClearResult = runMamoriCli(temporaryDirectory, ['cache-clear']);
+    assert.strictEqual(cacheClearResult.status, 0);
+    assert.match(cacheClearResult.stdout, /mamori: cache-clear completed/u);
+    assert.ok(!fs.existsSync(path.join(temporaryDirectory, '.mamori', 'tools')));
+    assert.ok(!fs.existsSync(path.join(temporaryDirectory, '.mamori', 'node')));
   });
 });

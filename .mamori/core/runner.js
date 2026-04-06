@@ -22,9 +22,35 @@ const stylelintAdapter = require('../adapters/stylelint');
 const semgrepAdapter = require('../adapters/semgrep');
 // コマンド実行器を表す
 const { execCommand } = require('../tools/exec');
+// ツール自動導入器を表す
+const { resolveCommandEntryRuntime } = require('../tools/provision');
 
 // HTML ファイル拡張子一覧を表す
 const HTML_FILE_EXTENSIONS = new Set(['.html', '.htm']);
+
+// ツール別の既定レポート相対パス一覧を表す
+const TOOL_REPORT_RELATIVE_PATHS = {
+  checkstyle: [
+    path.join('target', 'checkstyle-result.xml'),
+    path.join('build', 'reports', 'checkstyle', 'main.xml'),
+    path.join('build', 'reports', 'checkstyle', 'test.xml'),
+  ],
+  pmd: [
+    path.join('target', 'pmd.xml'),
+    path.join('build', 'reports', 'pmd', 'main.xml'),
+    path.join('build', 'reports', 'pmd', 'test.xml'),
+    path.join('build', 'reports', 'pmd', 'pmd.xml'),
+  ],
+  cpd: [
+    path.join('target', 'cpd.xml'),
+  ],
+  spotbugs: [
+    path.join('target', 'spotbugsXml.xml'),
+    path.join('build', 'reports', 'spotbugs', 'main.xml'),
+    path.join('build', 'reports', 'spotbugs', 'test.xml'),
+    path.join('build', 'reports', 'spotbugs', 'spotbugs.xml'),
+  ],
+};
 
 // inline script 抽出用の正規表現を表す
 const INLINE_SCRIPT_PATTERN = /<script\b((?:"[^"]*"|'[^']*'|[^'">])*)>([\s\S]*?)<\/script>/giu;
@@ -46,25 +72,200 @@ function createInitialRunResult() {
 }
 
 /**
+ * ファイルの現在スナップショットを返す。
+ * @param {string} filePath 対象ファイルパスを表す。
+ * @returns {{exists: boolean, mtimeMs: number, size: number}} スナップショットを返す。
+ */
+function captureFileSnapshot(filePath) {
+  try {
+    const stats = fs.statSync(filePath);
+    return {
+      exists: true,
+      mtimeMs: stats.mtimeMs,
+      size: stats.size,
+    };
+  } catch {
+    return {
+      exists: false,
+      mtimeMs: 0,
+      size: 0,
+    };
+  }
+}
+
+/**
+ * ツールの既定レポート候補一覧を返す。
+ * @param {string} moduleRoot モジュールルートを表す。
+ * @param {string} toolName ツール名を表す。
+ * @returns {string[]} 既定レポート候補一覧を返す。
+ */
+function resolveToolReportPaths(moduleRoot, toolName) {
+  const relativePaths = TOOL_REPORT_RELATIVE_PATHS[toolName];
+  if (!Array.isArray(relativePaths)) {
+    return [];
+  }
+
+  return relativePaths.map((relativePath) => path.join(moduleRoot, relativePath));
+}
+
+/**
+ * ツール実行前のレポート状態を収集する。
+ * @param {string} moduleRoot モジュールルートを表す。
+ * @param {string} toolName ツール名を表す。
+ * @returns {{reportPaths: string[], reportSnapshots: Record<string, {exists: boolean, mtimeMs: number, size: number}>}|undefined} レポート状態を返す。
+ */
+function captureToolReportState(moduleRoot, toolName) {
+  const reportPaths = resolveToolReportPaths(moduleRoot, toolName);
+  if (reportPaths.length === 0) {
+    return undefined;
+  }
+  const reportSnapshots = {};
+
+  for (const reportPath of reportPaths) {
+    reportSnapshots[reportPath] = captureFileSnapshot(reportPath);
+  }
+
+  return {
+    reportPaths,
+    reportSnapshots,
+  };
+}
+
+/**
+ * レポートファイルが実行後に更新されたか判定する。
+ * @param {string} reportPath レポートパスを表す。
+ * @param {{exists: boolean, mtimeMs: number, size: number}|undefined} previousSnapshot 実行前スナップショットを表す。
+ * @returns {boolean} 更新されている場合は true を返す。
+ */
+function hasUpdatedReportFile(reportPath, previousSnapshot) {
+  const currentSnapshot = captureFileSnapshot(reportPath);
+  if (!currentSnapshot.exists) {
+    return false;
+  }
+
+  if (!previousSnapshot || !previousSnapshot.exists) {
+    return true;
+  }
+
+  return currentSnapshot.mtimeMs !== previousSnapshot.mtimeMs
+    || currentSnapshot.size !== previousSnapshot.size;
+}
+
+/**
+ * 実行後に更新されたレポート本文を返す。
+ * @param {{reportPaths?: string[], reportSnapshots?: Record<string, {exists: boolean, mtimeMs: number, size: number}>}} commandResult 実行結果を表す。
+ * @returns {string} レポート本文を返す。
+ */
+function loadUpdatedToolReport(commandResult) {
+  const reportPaths = Array.isArray(commandResult.reportPaths)
+    ? commandResult.reportPaths
+    : [];
+  let selectedReportPath;
+  let selectedReportMtime = -1;
+
+  for (const reportPath of reportPaths) {
+    const previousSnapshot = commandResult.reportSnapshots
+      ? commandResult.reportSnapshots[reportPath]
+      : undefined;
+    if (!hasUpdatedReportFile(reportPath, previousSnapshot)) {
+      continue;
+    }
+
+    const stats = fs.statSync(reportPath);
+    if (stats.mtimeMs > selectedReportMtime) {
+      selectedReportMtime = stats.mtimeMs;
+      selectedReportPath = reportPath;
+    }
+  }
+
+  if (!selectedReportPath) {
+    return '';
+  }
+
+  return fs.readFileSync(selectedReportPath, 'utf8');
+}
+
+/**
+ * 実行時点で存在する最新レポート本文を返す。
+ * @param {{reportPaths?: string[]}} commandResult 実行結果を表す。
+ * @returns {string} レポート本文を返す。
+ */
+function loadLatestExistingToolReport(commandResult) {
+  const reportPaths = Array.isArray(commandResult.reportPaths)
+    ? commandResult.reportPaths
+    : [];
+  let selectedReportPath;
+  let selectedReportMtime = -1;
+
+  for (const reportPath of reportPaths) {
+    const currentSnapshot = captureFileSnapshot(reportPath);
+    if (!currentSnapshot.exists) {
+      continue;
+    }
+
+    if (currentSnapshot.mtimeMs > selectedReportMtime) {
+      selectedReportMtime = currentSnapshot.mtimeMs;
+      selectedReportPath = reportPath;
+    }
+  }
+
+  if (!selectedReportPath) {
+    return '';
+  }
+
+  return fs.readFileSync(selectedReportPath, 'utf8');
+}
+
+/**
+ * 標準出力または生成レポートから Issue 一覧を抽出する。
+ * @param {{stdout?: string, reportPaths?: string[], reportSnapshots?: Record<string, {exists: boolean, mtimeMs: number, size: number}>}} commandResult 実行結果を表す。
+ * @param {(rawReport: string) => Array<object>} parser レポート解析関数を表す。
+ * @returns {Array<object>} Issue 一覧を返す。
+ */
+function extractIssuesFromStandardOutputOrReport(commandResult, parser) {
+  const standardOutputIssues = parser(commandResult.stdout || '');
+  if (standardOutputIssues.length > 0) {
+    return standardOutputIssues;
+  }
+
+  const updatedReportIssues = parser(loadUpdatedToolReport(commandResult));
+  if (updatedReportIssues.length > 0) {
+    return updatedReportIssues;
+  }
+
+  if (commandResult.status === 'failed') {
+    return parser(loadLatestExistingToolReport(commandResult));
+  }
+
+  return [];
+}
+
+/**
  * ツール実行結果から Issue 一覧を抽出する。
- * @param {{tool: string, stdout?: string}} commandResult 実行結果を表す。
+ * @param {{tool: string, stdout?: string, reportPaths?: string[], reportSnapshots?: Record<string, {exists: boolean, mtimeMs: number, size: number}>}} commandResult 実行結果を表す。
  * @returns {Array<object>} Issue 一覧を返す。
  */
 function extractIssues(commandResult) {
   if (commandResult.tool === 'checkstyle') {
-    return checkstyleAdapter.parseCheckstyleXml(commandResult.stdout || '');
+    return extractIssuesFromStandardOutputOrReport(
+      commandResult,
+      checkstyleAdapter.parseCheckstyleXml,
+    );
   }
 
   if (commandResult.tool === 'pmd') {
-    return pmdAdapter.parsePmdXml(commandResult.stdout || '');
+    return extractIssuesFromStandardOutputOrReport(commandResult, pmdAdapter.parsePmdXml);
   }
 
   if (commandResult.tool === 'cpd') {
-    return cpdAdapter.parseCpdXml(commandResult.stdout || '');
+    return extractIssuesFromStandardOutputOrReport(commandResult, cpdAdapter.parseCpdXml);
   }
 
   if (commandResult.tool === 'spotbugs') {
-    return spotbugsAdapter.parseSpotbugsXml(commandResult.stdout || '');
+    return extractIssuesFromStandardOutputOrReport(
+      commandResult,
+      spotbugsAdapter.parseSpotbugsXml,
+    );
   }
 
   if (commandResult.tool === 'semgrep') {
@@ -504,6 +705,20 @@ function buildSkippedCommandResult(moduleRoot, commandEntry) {
 }
 
 /**
+ * 開始したツールを標準出力へ通知する。
+ * @param {string} tool 開始したツール名を表す。
+ * @param {string} moduleRoot 対象モジュールルートを表す。
+ * @param {string|undefined} phase 実行フェーズを表す。
+ * @returns {void} 返り値はない。
+ */
+function printToolStart(tool, moduleRoot, phase) {
+  const phaseName = typeof phase === 'string' && phase.trim() !== ''
+    ? phase
+    : 'check';
+  process.stdout.write(`mamori: tool-start tool=${tool} phase=${phaseName} moduleRoot=${moduleRoot}\n`);
+}
+
+/**
  * pre-commit の再ステージ対象ファイル一覧を返す。
  * @param {string} currentWorkingDirectory 現在の作業ディレクトリを表す。
  * @param {string[]|undefined} files 対象ファイル一覧を表す。
@@ -719,14 +934,17 @@ function canResolveCommand(command, cwd, env) {
  * @param {(command: string, args: string[], options?: object) => Promise<{exitCode: number, stdout: string, stderr: string}>} executor 実行器を表す。
  * @returns {Promise<{moduleRoot: string, tool: string, status: string, command?: string, args?: string[], exitCode?: number, stdout?: string, stderr?: string, message?: string}>} 実行結果を返す。
  */
-async function executeCommandEntry(moduleRoot, commandEntry, executor) {
+async function executeCommandEntry(workspaceRoot, moduleRoot, commandEntry, executor) {
   const baseEnvironment = {
     ...process.env,
     ...(commandEntry.env || {}),
   };
-  const commandEnvironment = buildCommandEnvironment(commandEntry.cwd, baseEnvironment);
+  const toolReportState = captureToolReportState(commandEntry.cwd || moduleRoot, commandEntry.tool);
   let preparedCommand;
   let commandResult;
+  let runtimeCommand = commandEntry.command;
+  let runtimeArguments = [];
+  let commandEnvironment = buildCommandEnvironment(commandEntry.cwd, baseEnvironment);
 
   if (!commandEntry.enabled) {
     return buildSkippedCommandResult(moduleRoot, commandEntry);
@@ -746,20 +964,35 @@ async function executeCommandEntry(moduleRoot, commandEntry, executor) {
       return commandResult;
     }
 
-    if (!canResolveCommand(commandEntry.command, commandEntry.cwd, commandEnvironment)) {
+    const runtime = await resolveCommandEntryRuntime(
+      workspaceRoot,
+      moduleRoot,
+      commandEntry,
+      baseEnvironment,
+    );
+    runtimeCommand = runtime.command;
+    commandEnvironment = buildCommandEnvironment(commandEntry.cwd, {
+      ...baseEnvironment,
+      ...(runtime.env || {}),
+    });
+    runtimeArguments = [...(runtime.prependArgs || []), ...preparedCommand.args];
+
+    if (!canResolveCommand(runtimeCommand, commandEntry.cwd, commandEnvironment)) {
       commandResult = {
         moduleRoot,
         tool: commandEntry.tool,
         phase: commandEntry.phase,
         status: 'error',
-        command: commandEntry.command,
-        args: preparedCommand.args,
-        message: `command not found: ${commandEntry.command}`,
+        command: runtimeCommand,
+        args: runtimeArguments,
+        message: `command not found: ${runtimeCommand}`,
       };
       return commandResult;
     }
 
-    const result = await executor(commandEntry.command, preparedCommand.args, {
+    printToolStart(commandEntry.tool, moduleRoot, commandEntry.phase);
+
+    const result = await executor(runtimeCommand, runtimeArguments, {
       cwd: commandEntry.cwd,
       env: commandEnvironment,
       timeoutMs: 30000,
@@ -771,9 +1004,9 @@ async function executeCommandEntry(moduleRoot, commandEntry, executor) {
         tool: commandEntry.tool,
         phase: commandEntry.phase,
         status: 'error',
-        command: commandEntry.command,
-        args: preparedCommand.args,
-        message: result.stderr.trim() || `failed to start ${commandEntry.command}`,
+        command: runtimeCommand,
+        args: runtimeArguments,
+        message: result.stderr.trim() || `failed to start ${runtimeCommand}`,
       };
       return commandResult;
     }
@@ -783,12 +1016,14 @@ async function executeCommandEntry(moduleRoot, commandEntry, executor) {
       tool: commandEntry.tool,
       phase: commandEntry.phase,
       status: result.exitCode === 0 ? 'ok' : 'failed',
-      command: commandEntry.command,
-      args: preparedCommand.args,
+      command: runtimeCommand,
+      args: runtimeArguments,
       exitCode: result.exitCode,
       stdout: result.stdout,
       stderr: result.stderr,
       filePathMappings: preparedCommand.filePathMappings,
+      reportPaths: toolReportState ? toolReportState.reportPaths : undefined,
+      reportSnapshots: toolReportState ? toolReportState.reportSnapshots : undefined,
     };
     return commandResult;
   } catch (error) {
@@ -797,9 +1032,9 @@ async function executeCommandEntry(moduleRoot, commandEntry, executor) {
       tool: commandEntry.tool,
       phase: commandEntry.phase,
       status: 'error',
-      command: commandEntry.command,
-      args: preparedCommand && Array.isArray(preparedCommand.args)
-        ? preparedCommand.args
+      command: runtimeCommand,
+      args: runtimeArguments.length > 0
+        ? runtimeArguments
         : (commandEntry.args || []),
       message: error instanceof Error ? error.message : String(error),
     };
@@ -832,7 +1067,12 @@ async function runResolvedConfiguration(resolution, options = {}) {
   for (const modulePlan of modules) {
     const commands = Array.isArray(modulePlan.commands) ? modulePlan.commands : [];
     for (const commandEntry of commands) {
-      const commandResult = await executeCommandEntry(modulePlan.moduleRoot, commandEntry, executor);
+      const commandResult = await executeCommandEntry(
+        resolution.cwd || modulePlan.moduleRoot,
+        modulePlan.moduleRoot,
+        commandEntry,
+        executor,
+      );
       result.commandResults.push(commandResult);
 
       if (commandResult.warning) {

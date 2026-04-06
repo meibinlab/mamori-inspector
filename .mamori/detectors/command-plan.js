@@ -27,11 +27,16 @@ const TOOL_FILE_EXTENSIONS = {
   htmlhint: new Set(['.html', '.htm']),
 };
 
+// ESLint で TypeScript を扱うときの追加拡張子一覧を表す
+const TYPESCRIPT_ESLINT_EXTENSIONS = ['.ts', '.cts', '.mts', '.tsx'];
+
 // ワークスペース探索時に除外するディレクトリ一覧を表す
 const DEFAULT_IGNORED_DIRECTORIES = new Set([
   '.git',
   '.gradle',
   '.mamori',
+  '.vscode-test',
+  '.vscode-test-web',
   'build',
   'dist',
   'node_modules',
@@ -87,6 +92,34 @@ function isHtmlFile(filePath) {
 }
 
 /**
+ * ESLint で TypeScript を対象に含めるか判定する。
+ * @param {{enabled?: boolean, source?: string}|undefined} eslintResolution ESLint 設定解決結果を表す。
+ * @returns {boolean} TypeScript を対象に含める場合は true を返す。
+ */
+function shouldIncludeTypeScriptForEslint(eslintResolution) {
+  return Boolean(
+    eslintResolution
+      && eslintResolution.enabled
+      && eslintResolution.source
+      && eslintResolution.source !== 'default',
+  );
+}
+
+/**
+ * ツール別の実効拡張子一覧を返す。
+ * @param {string} toolName ツール名を表す。
+ * @param {{enabled?: boolean, source?: string}|undefined} toolResolution 設定解決結果を表す。
+ * @returns {Set<string>|undefined} 実効拡張子一覧を返す。
+ */
+function resolveToolExtensions(toolName, toolResolution = undefined) {
+  if (toolName !== 'eslint' || !shouldIncludeTypeScriptForEslint(toolResolution)) {
+    return TOOL_FILE_EXTENSIONS[toolName];
+  }
+
+  return new Set([...TOOL_FILE_EXTENSIONS.eslint, ...TYPESCRIPT_ESLINT_EXTENSIONS]);
+}
+
+/**
  * ディレクトリ配下から対象拡張子のファイル一覧を収集する。
  * @param {string} moduleRoot モジュールルートを表す。
  * @param {Set<string>} extensions 対象拡張子一覧を表す。
@@ -133,8 +166,8 @@ function discoverWorkspaceFiles(moduleRoot, extensions, excludedDirectories = []
  * @param {string} toolName ツール名を表す。
  * @returns {string[]} 対象ファイル一覧を返す。
  */
-function resolveToolFiles(moduleRoot, files, toolName, excludedDirectories = []) {
-  const extensions = TOOL_FILE_EXTENSIONS[toolName];
+function resolveToolFiles(moduleRoot, files, toolName, excludedDirectories = [], toolResolution = undefined) {
+  const extensions = resolveToolExtensions(toolName, toolResolution);
 
   if (!extensions) {
     return resolveModuleFiles(moduleRoot, files);
@@ -512,6 +545,7 @@ function buildModuleCommandPlan(modulePlan, moduleDefinition, semgrepResolution,
           files,
           toolEntry.tool,
           Array.isArray(modulePlan.excludedDirectories) ? modulePlan.excludedDirectories : [],
+          modulePlan.web && modulePlan.web[toolEntry.tool] ? modulePlan.web[toolEntry.tool] : undefined,
         ),
         {
           ...options,

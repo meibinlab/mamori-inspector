@@ -11,12 +11,21 @@ const SPOTBUGS_CLASS_ROOT_CANDIDATES = [
   'build/classes/java/main',
 ];
 
+// JavaScript 系の対象拡張子一覧を表す
+const JAVASCRIPT_FILE_EXTENSIONS = ['.js', '.cjs', '.mjs', '.jsx'];
+
+// TypeScript 系の対象拡張子一覧を表す
+const TYPESCRIPT_FILE_EXTENSIONS = ['.ts', '.cts', '.mts', '.tsx'];
+
+// HTML ファイル拡張子一覧を表す
+const HTML_FILE_EXTENSIONS = ['.html', '.htm'];
+
 // Web 系ファイル拡張子一覧を表す
 const WEB_FILE_EXTENSIONS = {
-  prettier: new Set(['.js', '.cjs', '.mjs', '.jsx', '.css', '.scss', '.sass', '.html', '.htm']),
-  eslint: new Set(['.js', '.cjs', '.mjs', '.jsx', '.html', '.htm']),
+  prettier: new Set([...JAVASCRIPT_FILE_EXTENSIONS, '.css', '.scss', '.sass', ...HTML_FILE_EXTENSIONS]),
+  eslint: new Set([...JAVASCRIPT_FILE_EXTENSIONS, ...HTML_FILE_EXTENSIONS]),
   stylelint: new Set(['.css', '.scss', '.sass', '.html', '.htm']),
-  htmlhint: new Set(['.html', '.htm']),
+  htmlhint: new Set(HTML_FILE_EXTENSIONS),
 };
 
 // ワークスペース探索時に除外するディレクトリ一覧を表す
@@ -24,6 +33,8 @@ const DEFAULT_IGNORED_DIRECTORIES = new Set([
   '.git',
   '.gradle',
   '.mamori',
+  '.vscode-test',
+  '.vscode-test-web',
   'build',
   'dist',
   'node_modules',
@@ -96,13 +107,45 @@ function hasMatchingExtension(filePath, extensions) {
 }
 
 /**
+ * ESLint で TypeScript を対象に含めるか判定する。
+ * @param {{enabled?: boolean, source?: string}|undefined} eslintResolution ESLint 設定解決結果を表す。
+ * @returns {boolean} TypeScript を対象に含める場合は true を返す。
+ */
+function shouldIncludeTypeScriptForEslint(eslintResolution) {
+  return Boolean(
+    eslintResolution
+      && eslintResolution.enabled
+      && eslintResolution.source
+      && eslintResolution.source !== 'default',
+  );
+}
+
+/**
+ * ツール別の実効拡張子一覧を返す。
+ * @param {string} toolName ツール名を表す。
+ * @param {{enabled?: boolean, source?: string}|undefined} toolResolution 設定解決結果を表す。
+ * @returns {Set<string>|undefined} 実効拡張子一覧を返す。
+ */
+function resolveWebToolExtensions(toolName, toolResolution) {
+  if (toolName !== 'eslint') {
+    return WEB_FILE_EXTENSIONS[toolName];
+  }
+
+  if (!shouldIncludeTypeScriptForEslint(toolResolution)) {
+    return WEB_FILE_EXTENSIONS.eslint;
+  }
+
+  return new Set([...JAVASCRIPT_FILE_EXTENSIONS, ...TYPESCRIPT_FILE_EXTENSIONS, ...HTML_FILE_EXTENSIONS]);
+}
+
+/**
  * 指定ツールに一致する Web ファイル一覧を返す。
  * @param {string[]|undefined} files 対象ファイル一覧を表す。
  * @param {string} toolName ツール名を表す。
  * @returns {string[]} 一致したファイル一覧を返す。
  */
-function filterWebFiles(files, toolName) {
-  const extensions = WEB_FILE_EXTENSIONS[toolName];
+function filterWebFiles(files, toolName, toolResolution = undefined) {
+  const extensions = resolveWebToolExtensions(toolName, toolResolution);
   if (!extensions || !Array.isArray(files)) {
     return [];
   }
@@ -226,7 +269,10 @@ function shouldIncludeWebModule(options) {
   }
 
   if (options.scope === 'file' || options.scope === 'staged') {
-    return filterWebFiles(options.files, 'prettier').length > 0;
+    return filterWebFiles(options.files, 'prettier').length > 0
+      || filterWebFiles(options.files, 'eslint', options.web && options.web.eslint).length > 0
+      || filterWebFiles(options.files, 'stylelint', options.web && options.web.stylelint).length > 0
+      || filterWebFiles(options.files, 'htmlhint', options.web && options.web.htmlhint).length > 0;
   }
 
   const web = options.web || {};
@@ -280,7 +326,12 @@ function resolveCommonAncestorDirectory(filePaths) {
  */
 function resolveWebModuleRoot(options) {
   if (options.scope !== 'workspace') {
-    const webFiles = filterWebFiles(options.files, 'prettier');
+    const webFiles = Array.from(new Set([
+      ...filterWebFiles(options.files, 'prettier'),
+      ...filterWebFiles(options.files, 'eslint', options.web && options.web.eslint),
+      ...filterWebFiles(options.files, 'stylelint', options.web && options.web.stylelint),
+      ...filterWebFiles(options.files, 'htmlhint', options.web && options.web.htmlhint),
+    ]));
     const commonAncestorDirectory = resolveCommonAncestorDirectory(webFiles);
     if (commonAncestorDirectory) {
       return commonAncestorDirectory;
@@ -318,15 +369,20 @@ function buildWebChecks(options, webResolution, excludedDirectories = []) {
   const modeScopeKey = buildModeScopeKey(options.mode, options.scope);
   const supportsWebChecks = modeScopeKey === 'save:file'
     || modeScopeKey === 'precommit:staged'
-    || modeScopeKey === 'prepush:workspace';
+    || modeScopeKey === 'prepush:workspace'
+    || modeScopeKey === 'manual:workspace';
 
   if (!supportsWebChecks) {
     return [];
   }
 
   const hasEslintFiles = options.scope === 'workspace'
-    ? hasWorkspaceFilesExcluding(options.cwd, WEB_FILE_EXTENSIONS.eslint, excludedDirectories)
-    : filterWebFiles(options.files, 'eslint').length > 0;
+    ? hasWorkspaceFilesExcluding(
+      options.cwd,
+      resolveWebToolExtensions('eslint', webResolution && webResolution.eslint),
+      excludedDirectories,
+    )
+    : filterWebFiles(options.files, 'eslint', webResolution && webResolution.eslint).length > 0;
   const hasStylelintFiles = options.scope === 'workspace'
     ? hasWorkspaceFilesExcluding(options.cwd, WEB_FILE_EXTENSIONS.stylelint, excludedDirectories)
     : filterWebFiles(options.files, 'stylelint').length > 0;
@@ -435,7 +491,7 @@ function buildModuleExecutionPlan(options) {
     checks = buildLightweightJavaChecks();
     if (modeScopeKey === 'manual:workspace') {
       moduleWarnings.push(
-        'manual mode currently reuses the lightweight Java check plan until heavy tools are implemented',
+        'manual mode currently reuses the lightweight Java check plan and workspace web checks until heavy tools are implemented',
       );
     }
   }

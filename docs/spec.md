@@ -14,15 +14,22 @@
 初期対応と将来拡張の前提を以下とする。
 
 - 初期: Java
-- 追加: JavaScript / CSS / HTML
+- 追加: JavaScript / TypeScript / CSS / HTML
 
 ## 3. 実行タイミング別の構成（確定）
 
 ### 3.1 保存時（on save, scope=file）
+保存時検証の有効条件（確定）:
+- ワークスペース単位の設定 `mamori-inspector.enabled` が `true` の場合のみ実行する
+- 既定値は `false` とし、拡張コマンドで切り替える
+
 実行順序（確定）:
 1) 整形（自動適用、非同期）
 2) チェック
 3) 結果を統合し、VS Code Problems（Diagnostics）に反映
+
+- 保存時実行が一部ツール失敗で終了コード 2 となっても、生成済みの SARIF がある場合は、その時点までの Diagnostics を Problems に反映し、失敗詳細はログへ残す
+- 保存時検証では、対象ファイルに対して実際に開始した formatter / checker ごとに、ファイル名と単一ツール名だけを情報トーストで表示する
 
 整形:
 - Java: Spotless（ビルド定義検出できる場合のみ）
@@ -31,6 +38,7 @@
 チェック:
 - Java: Checkstyle / PMD / Semgrep
 - JavaScript: ESLint（明示設定 → discovery → `package.json#eslintConfig` を優先し、無ければ Mamori 同梱の最小設定を使用）
+- TypeScript: ESLint（明示設定 → discovery → `package.json#eslintConfig` を優先し、TypeScript では Mamori 同梱の JavaScript 向け最小設定は使用しない）
 - HTML 内 inline script: ESLint（対象は `src` なしで JavaScript と判定されたものに限る。設定解決は明示設定 → discovery → `package.json#eslintConfig` → Mamori 同梱の最小設定。HTML 本体は引き続き htmlhint）
 - CSS: Stylelint（明示設定 → discovery → `package.json#stylelint` を優先し、無ければ Mamori 同梱の最小設定を使用）
 - HTML 内 inline style: Stylelint（対象は CSS と判定されたものに限る。設定解決は明示設定 → discovery → `package.json#stylelint` → Mamori 同梱の最小設定。HTML 本体は引き続き htmlhint）
@@ -70,6 +78,7 @@ HTML inline style の扱い（確定）:
 チェック:
 - Java: Checkstyle / PMD / Semgrep
 - JavaScript: ESLint（明示設定 → discovery → `package.json#eslintConfig` を優先し、無ければ Mamori 同梱の最小設定を使用）
+- TypeScript: ESLint（明示設定 → discovery → `package.json#eslintConfig` を優先し、TypeScript では Mamori 同梱の JavaScript 向け最小設定は使用しない）
 - HTML 内 inline script: ESLint（対象は `src` なしで JavaScript と判定されたものに限る。設定解決は明示設定 → discovery → `package.json#eslintConfig` → Mamori 同梱の最小設定。HTML 本体は引き続き htmlhint）
 - CSS: Stylelint（明示設定 → discovery → `package.json#stylelint` を優先し、無ければ Mamori 同梱の最小設定を使用）
 - HTML 内 inline style: Stylelint（対象は CSS と判定されたものに限る。設定解決は明示設定 → discovery → `package.json#stylelint` → Mamori 同梱の最小設定。HTML 本体は引き続き htmlhint）
@@ -79,6 +88,7 @@ HTML inline style の扱い（確定）:
 チェック（デフォルト有効）:
 - Java: Checkstyle / PMD / Semgrep / CPD / SpotBugs
 - JavaScript: ESLint（デフォルト有効・設定でOFF可。設定解決は明示設定 → discovery → `package.json#eslintConfig` → Mamori 同梱の最小設定）
+- TypeScript: ESLint（設定解決は明示設定 → discovery → `package.json#eslintConfig`。TypeScript では Mamori 同梱の JavaScript 向け最小設定は使用しない）
 - HTML 内 inline script: ESLint（デフォルト有効・設定でOFF可。対象は `src` なしで JavaScript と判定されたものに限る。設定解決は明示設定 → discovery → `package.json#eslintConfig` → Mamori 同梱の最小設定。HTML 本体は引き続き htmlhint）
 - CSS: Stylelint（デフォルト有効・設定でOFF可。設定解決は明示設定 → discovery → `package.json#stylelint` → Mamori 同梱の最小設定）
 - HTML 内 inline style: Stylelint（デフォルト有効・設定でOFF可。対象は CSS と判定されたものに限る。設定解決は明示設定 → discovery → `package.json#stylelint` → Mamori 同梱の最小設定。HTML 本体は引き続き htmlhint）
@@ -88,6 +98,14 @@ SpotBugsの例外仕様（確定）:
 - class files（例: `target/classes` や `build/classes/java/main`）が見つからない場合は警告ログを出してスキップし、pushは継続する
 
 ### 3.4 手動（manual、将来対応あり）
+現行実装:
+- Java: Checkstyle / PMD / Semgrep の軽量チェックを実行する
+- JavaScript / TypeScript: ESLint を実行する
+- CSS: Stylelint を実行する
+- HTML: htmlhint を実行し、inline script は ESLint、inline style は Stylelint で追加検査する
+- Web 系ツールの設定解決と inline HTML の扱いは pre-push と同じとする
+- 拡張の manual 実行が成功した場合、同一ワークスペースに対して反映済みの保存時 Diagnostics は、manual の最新結果で置き換える
+
 優先実装:
 - OWASP Dependency-Check
 - Trivy
@@ -108,7 +126,9 @@ SpotBugsの例外仕様（確定）:
 リポジトリ内に `.mamori/` を置き、VS Code拡張とgit hooksが同じランナーを呼ぶ。
 
 - 目的: VS Code外（git hooks）でも確実に同じ処理を実行する
-- 前提: Node必須（git hooksでも必須）
+- 前提: 通常の git hooks 検証には Node が必要だが、管理対象 hook は解決した `node` コマンドが利用できない場合に warning を出して成功終了する
+- `setup` と `run --execute` では、ワークスペースが Git リポジトリであれば、ローカルの `.git/info/exclude` へワークスペースルートの `/.mamori/` と、リポジトリ配下で見つかった repo-relative な nested `.mamori` を best-effort で追加する
+- `.git/info/exclude` の更新失敗は warning として扱い、Mamori の処理自体は継続する
 
 終了コード（確定）:
 - 0: 成功（fail対象の指摘なし、または「スキップ許容」のみ）
@@ -190,9 +210,17 @@ Java 17互換のpin例:
 SpotBugsのclass探索は別系統（除外に巻き込まない）:
 - 探索候補: `**/target/classes`、`**/build/classes/java/main`
 
+Git のローカル除外（確定）:
+- `setup` と `run --execute` は、ワークスペースが Git リポジトリであれば、ローカルの `.git/info/exclude` へワークスペースルートの `/.mamori/` と、リポジトリ配下で見つかった repo-relative な nested `.mamori` を best-effort で追加する
+- これはリポジトリ共有の `.gitignore` を変更しない
+- 既に Git で追跡されているファイルには影響しない
+
 ## 9. Git hooks（確定）
 - pre-commit / pre-push のhookを生成して、Nodeランナーを呼ぶ
 - 失敗時はブロック（ただし `--no-verify` で回避可能）
+- 管理対象 hook は、`$REPO_ROOT/.mamori/mamori.js` が見つからない場合に stderr へ warning を出して成功終了する
+- 管理対象 hook は、解決した `node` コマンドが利用できない場合も stderr へ warning を出して成功終了する
+- runner が存在する通常ケースでは、managed hook は runner の終了コードをそのまま返し、ルール違反や実行エラー時は block する
 
 Git hooks の競合時仕様（確定）:
 - `pre-commit` または `pre-push` が既に存在し、Mamori が生成した管理対象hookでない場合は上書きしない
@@ -207,6 +235,7 @@ warning の例:
 - `pre-push is not managed by Mamori Inspector and was left unchanged`
 
 ## 10. コマンド（拡張が提供）
+- ワークスペース単位の保存時検証 有効化 / 無効化
 - セットアップ（Java系ツールDL、`.mamori/node` のnpm導入を明示実行）
 - Git hooks インストール / アンインストール
 - 手動全体チェック（manual）
@@ -219,5 +248,5 @@ Git hooks コマンドの通知仕様（確定）:
 
 ## 11. 今後の拡張
 - 手動ツールの追加（Dependency-Check/Trivyの取り込み強化、結果の詳細ビュー）
-- TypeScript/Python等への拡張
+- Python等への拡張
 - Gradle Kotlin DSLの設定抽出精度向上（必要になった時点で対応）

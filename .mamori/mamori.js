@@ -18,6 +18,12 @@ const { installGitHooks, uninstallGitHooks } = require('./hooks/install');
 const { runResolvedConfiguration } = require('./core/runner');
 // SARIF 出力器を表す
 const { buildCombinedSarif, writeSarifFile } = require('./core/sarif');
+// ツール自動導入器を表す
+const {
+  clearManagedToolCaches,
+  ensureMamoriGitExclude,
+  ensureWorkspaceTooling,
+} = require('./tools/provision');
 
 // コマンドライン引数を取得する
 const args = process.argv.slice(2);
@@ -66,15 +72,31 @@ function printHelp() {
       '    [--sarif-output <path>]',
       '    [--semgrep-config <path>] [--semgrep-rule <rule>[,<rule>...]]',
       '    [--eslint-config <path>] [--stylelint-config <path>] [--htmlhint-config <path>]',
+      '  mamori.js setup',
+      '  mamori.js cache-clear',
       '  mamori.js hooks <install|uninstall>',
       '  mamori.js help',
       '',
       'Notes:',
-      '  This is a minimal bootstrap for configuration resolution.',
-      '  Build definition extraction and tool execution are intentionally not implemented yet.',
+      '  setup downloads managed tools into .mamori/tools and .mamori/node.',
+      '  run automatically provisions missing managed tools before execution.',
       '',
     ].join('\n'),
   );
+}
+
+/**
+ * コマンド実行時の警告一覧を標準出力へ書き出す。
+ * @param {string} commandName 対象コマンド名を表す。
+ * @param {string[]} warnings 警告一覧を表す。
+ * @returns {void} 返り値はない。
+ */
+function printCommandWarnings(commandName, warnings) {
+  if (!Array.isArray(warnings) || warnings.length === 0) {
+    return;
+  }
+
+  process.stdout.write(`mamori: ${commandName} warnings=${warnings.join(' | ')}\n`);
 }
 
 /**
@@ -711,6 +733,11 @@ async function runMinimal() {
     return 0;
   }
 
+  if (parsedArguments.execute) {
+    const gitExcludeResult = ensureMamoriGitExclude(process.cwd());
+    printCommandWarnings('run', gitExcludeResult.warnings);
+  }
+
   // CLI 向けの解決結果を表す
   const resolution = resolveRunConfiguration({
     cwd: process.cwd(),
@@ -736,6 +763,34 @@ async function runMinimal() {
     return executionResult.exitCode;
   }
 
+  return 0;
+}
+
+/**
+ * setup サブコマンドを実行する。
+ * @returns {Promise<number>} 終了コードを返す。
+ */
+async function runSetupCommand() {
+  const gitExcludeResult = ensureMamoriGitExclude(process.cwd());
+  const results = await ensureWorkspaceTooling(process.cwd());
+  process.stdout.write('mamori: setup completed\n');
+  printCommandWarnings('setup', gitExcludeResult.warnings);
+  process.stdout.write(
+    `mamori: setup tools=${results.map((entry) => `${entry.tool}:${entry.location}`).join(' | ')}\n`,
+  );
+  return 0;
+}
+
+/**
+ * cache-clear サブコマンドを実行する。
+ * @returns {number} 終了コードを返す。
+ */
+function runCacheClearCommand() {
+  const removedDirectories = clearManagedToolCaches(process.cwd());
+  process.stdout.write('mamori: cache-clear completed\n');
+  process.stdout.write(
+    `mamori: cache-clear removed=${removedDirectories.length > 0 ? removedDirectories.join(', ') : '(none)'}\n`,
+  );
   return 0;
 }
 
@@ -783,6 +838,19 @@ switch (command) {
         process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
         exit(2);
       });
+    break;
+  case 'setup':
+    runSetupCommand()
+      .then((code) => {
+        exit(code);
+      })
+      .catch((error) => {
+        process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+        exit(2);
+      });
+    break;
+  case 'cache-clear':
+    exit(runCacheClearCommand());
     break;
   case 'hooks':
     exit(runHooksCommand());

@@ -3,6 +3,8 @@ import { spawn } from 'node:child_process';
 
 // ローカルで隔離実行を有効化する環境変数名を表す
 const ISOLATED_TEST_ENVIRONMENT_VARIABLE = 'MAMORI_VSCODE_TEST_ISOLATED';
+// vscode-test へ透過的に渡す追加引数一覧を表す
+const forwardedArguments = process.argv.slice(2);
 
 /**
  * シェルコマンドを実行して標準出力を取得する。
@@ -55,11 +57,17 @@ async function run() {
   }
 
   // vscode-test を子プロセスで起動する
-  const child = spawn('npx', ['vscode-test'], {
-    stdio: 'inherit',
-    shell: true,
-    env: childEnvironment,
-  });
+  const child = process.platform === 'win32'
+    ? spawn('cmd.exe', ['/d', '/s', '/c', 'npx', 'vscode-test', ...forwardedArguments], {
+        stdio: 'inherit',
+        shell: false,
+        env: childEnvironment,
+      })
+    : spawn('npx', ['vscode-test', ...forwardedArguments], {
+        stdio: 'inherit',
+        shell: false,
+        env: childEnvironment,
+      });
 
   return await new Promise((resolve) => {
     child.on('close', (code) => {
