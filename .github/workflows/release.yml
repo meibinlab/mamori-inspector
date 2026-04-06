@@ -1,0 +1,150 @@
+name: Release
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: read
+
+jobs:
+  verify_release:
+    runs-on: ubuntu-latest
+    outputs:
+      package_version: ${{ steps.verify.outputs.package_version }}
+      normalized_tag: ${{ steps.verify.outputs.normalized_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Verify release tag and package metadata
+        id: verify
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          raw_tag='${{ github.event.release.tag_name }}'
+          normalized_tag="${raw_tag#v}"
+          package_version="$(node -p \"require('./package.json').version\")"
+          publisher="$(node -p \"require('./package.json').publisher\")"
+
+          if [[ "$publisher" != "meibinlab" ]]; then
+            echo "Expected publisher 'meibinlab', but found '$publisher'." >&2
+            exit 1
+          fi
+
+          if [[ "$normalized_tag" != "$package_version" ]]; then
+            echo "Release tag '$raw_tag' does not match package.json version '$package_version'." >&2
+            exit 1
+          fi
+
+          echo "package_version=$package_version" >> "$GITHUB_OUTPUT"
+          echo "normalized_tag=$normalized_tag" >> "$GITHUB_OUTPUT"
+
+  quality:
+    needs: verify_release
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile
+        run: npm run compile
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+  integration:
+    runs-on: ubuntu-latest
+    needs:
+      - verify_release
+      - quality
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Integration Test
+        run: xvfb-run -a npm run test:integration
+
+  publish_marketplace:
+    if: ${{ !github.event.release.prerelease }}
+    runs-on: ubuntu-latest
+    needs:
+      - verify_release
+      - quality
+      - integration
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify publish token
+        shell: bash
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${VSCE_PAT:-}" ]]; then
+            echo "VSCE_PAT secret is not configured." >&2
+            exit 1
+          fi
+
+      - name: Publish to Visual Studio Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: npm run publish:vsce -- -p "$VSCE_PAT"

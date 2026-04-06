@@ -15,6 +15,7 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 - GitHub Actions runs on `push`, `pull_request`, and `workflow_dispatch`.
 - The quality job runs `npm ci`, `npm run compile`, `npm run lint`, and `npm test` on Ubuntu and Windows.
 - The integration job runs `xvfb-run -a npm run test:integration` on Ubuntu after the quality job succeeds.
+- When a non-prerelease GitHub Release is published, a dedicated release workflow verifies that the release tag matches `package.json` version, accepting both `vX.Y.Z` and `X.Y.Z`, and then publishes to the VS Code Marketplace by using the `VSCE_PAT` secret. Prerelease publishes run the same checks but skip Marketplace publication.
 
 ## Initial Setup Notes
 - Save-time validation is disabled by default and starts only after you run `Mamori Inspector: Enable In Workspace` for the target workspace folder.
