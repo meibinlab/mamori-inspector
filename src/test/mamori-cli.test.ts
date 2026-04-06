@@ -311,7 +311,12 @@ function createManagedToolSourceDirectory(
     wrapperPath,
     [
       '#!/bin/sh',
-      'SCRIPT_DIR=$(CDPATH= cd -- "$(dirname "$0")" && pwd)',
+      'SCRIPT_PATH=$0',
+      'case "$SCRIPT_PATH" in',
+      '  */*) SCRIPT_DIR=${SCRIPT_PATH%/*} ;;',
+      '  *) SCRIPT_DIR=. ;;',
+      'esac',
+      'SCRIPT_DIR=$(CDPATH= cd -- "$SCRIPT_DIR" && pwd)',
       `printf '%s\n' "$*" >> "$SCRIPT_DIR/${outputFileName}"`,
       'exit 0',
       '',
