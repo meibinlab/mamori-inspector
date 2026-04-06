@@ -2,10 +2,10 @@
 Mamori Inspector is a unified code inspection platform for VS Code that orchestrates multiple analysis tools and presents results in a single, developer-friendly interface.
 
 - Japanese: [README.ja.md](README.ja.md)
-- Marketplace display name: Mamori Suite Inspector
+- Marketplace display name: Mamori Inspector: Code Quality Guard
 
 ## Installation
-1. Install the Mamori Inspector extension in VS Code. In the Marketplace listing, it is displayed as Mamori Suite Inspector.
+1. Install the Mamori Inspector extension in VS Code. In the Marketplace listing, it is displayed as Mamori Inspector: Code Quality Guard.
 2. Open the target repository as a VS Code workspace.
 3. Run the command `Mamori Inspector: Enable In Workspace` for the workspace folder where you want automatic save-time validation.
 4. Save a supported file to trigger automatic save-time validation.
