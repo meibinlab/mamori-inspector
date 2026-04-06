@@ -98,6 +98,14 @@ SpotBugsの例外仕様（確定）:
 - class files（例: `target/classes` や `build/classes/java/main`）が見つからない場合は警告ログを出してスキップし、pushは継続する
 
 ### 3.4 手動（manual、将来対応あり）
+現行実装:
+- Java: Checkstyle / PMD / Semgrep の軽量チェックを実行する
+- JavaScript / TypeScript: ESLint を実行する
+- CSS: Stylelint を実行する
+- HTML: htmlhint を実行し、inline script は ESLint、inline style は Stylelint で追加検査する
+- Web 系ツールの設定解決と inline HTML の扱いは pre-push と同じとする
+- 拡張の manual 実行が成功した場合、同一ワークスペースに対して反映済みの保存時 Diagnostics は、manual の最新結果で置き換える
+
 優先実装:
 - OWASP Dependency-Check
 - Trivy

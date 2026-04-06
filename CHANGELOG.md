@@ -4,6 +4,21 @@
 
 形式は Keep a Changelog を参考にしつつ、このリポジトリの実装状況に合わせて整理します。
 
+## [0.2.22] - 2026-04-06
+
+### Changed
+- `manual/workspace` が、軽量な Java チェックに加えてワークスペース全体の ESLint、Stylelint、htmlhint も実行するようにしました。
+- 手動全体チェック成功時に、同一ワークスペースへ反映済みの保存時 Diagnostics を最新の手動結果で置き換えるようにしました。
+
+### Added
+- manual/workspace の Web checker 実行と、JavaScript の stale save Diagnostics 置換を確認する CLI / 拡張回帰テストを追加しました。
+
+## [0.2.21] - 2026-04-06
+
+### Fixed
+- 手動全体チェック成功時に、同一ワークスペースへ残っていた古い Java 保存時 Diagnostics を最新の手動結果で置き換えるようにしました。
+- 空結果の手動全体チェック後に stale な save Diagnostics が Problems へ残らないことを確認する拡張回帰テストを追加しました。
+
 ## [0.2.20] - 2026-04-06
 
 ### Fixed

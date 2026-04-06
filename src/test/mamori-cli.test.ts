@@ -2253,6 +2253,101 @@ suite('Mamori CLI Test Suite', () => {
   });
 
   /**
+   * manual/workspace の Web checker 失敗時に issue を SARIF 化して反映できること。
+   * @returns 返り値はない。
+   */
+  test('Fails manual workspace when web checkers report findings and writes SARIF issues', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const scriptDirectory = path.join(temporaryDirectory, 'src');
+    const styleDirectory = path.join(temporaryDirectory, 'styles');
+    const htmlDirectory = path.join(temporaryDirectory, 'public');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-web-manual.sarif');
+    const javascriptFilePath = path.join(scriptDirectory, 'main.js');
+    const cssFilePath = path.join(styleDirectory, 'site.css');
+    const htmlFilePath = path.join(htmlDirectory, 'index.html');
+    const eslintOutput = JSON.stringify([
+      {
+        filePath: javascriptFilePath,
+        messages: [
+          {
+            ruleId: 'no-console',
+            severity: 2,
+            message: 'Unexpected console statement.',
+            line: 1,
+            column: 1,
+          },
+        ],
+      },
+    ]);
+    const stylelintOutput = JSON.stringify([
+      {
+        source: cssFilePath,
+        warnings: [
+          {
+            line: 1,
+            column: 8,
+            rule: 'color-no-invalid-hex',
+            severity: 'error',
+            text: 'Unexpected invalid hex color "#12" (color-no-invalid-hex)',
+          },
+        ],
+      },
+    ]);
+    const htmlhintOutput = JSON.stringify([
+      {
+        file: htmlFilePath,
+        messages: [
+          {
+            type: 'warning',
+            message: 'Tag must be paired.',
+            line: 2,
+            col: 3,
+            rule: { id: 'tag-pair' },
+          },
+        ],
+      },
+    ]);
+
+    fs.mkdirSync(scriptDirectory, { recursive: true });
+    fs.mkdirSync(styleDirectory, { recursive: true });
+    fs.mkdirSync(htmlDirectory, { recursive: true });
+    fs.writeFileSync(javascriptFilePath, 'console.log("sample");\n', 'utf8');
+    fs.writeFileSync(cssFilePath, 'body { color: #12; }\n', 'utf8');
+    fs.writeFileSync(htmlFilePath, '<!doctype html>\n<div>\n', 'utf8');
+    fs.writeFileSync(path.join(temporaryDirectory, 'eslint.config.mjs'), 'export default [];\n', 'utf8');
+    fs.writeFileSync(path.join(temporaryDirectory, 'stylelint.config.mjs'), 'export default {};\n', 'utf8');
+    fs.writeFileSync(path.join(temporaryDirectory, '.htmlhintrc'), '{"tag-pair": true}\n', 'utf8');
+    writeWebCommandWrapper(nodeBinDirectory, 'eslint', 'eslint.log', { stdout: eslintOutput, exitCode: 1 });
+    writeWebCommandWrapper(nodeBinDirectory, 'stylelint', 'stylelint.log', { stdout: stylelintOutput, exitCode: 2 });
+    writeWebCommandWrapper(nodeBinDirectory, 'htmlhint', 'htmlhint.log', { stdout: htmlhintOutput, exitCode: 1 });
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'manual',
+      '--scope',
+      'workspace',
+      '--execute',
+      '--sarif-output',
+      path.relative(temporaryDirectory, sarifOutputPath),
+    ]);
+
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /issues=3/u);
+    assert.match(result.stdout, /Unexpected console statement\./u);
+    assert.match(result.stdout, /Unexpected invalid hex color/u);
+    assert.match(result.stdout, /Tag must be paired\./u);
+    assert.match(result.stdout, /eslint:failed exitCode=1/u);
+    assert.match(result.stdout, /stylelint:failed exitCode=2/u);
+    assert.match(result.stdout, /htmlhint:failed exitCode=1/u);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /no-console/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /color-no-invalid-hex/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /tag-pair/u);
+  });
+
+  /**
    * pre-push で HTML inline style の Stylelint 診断を元 HTML に逆写像し、一時ファイルを削除すること。
    * @returns 返り値はない。
    */

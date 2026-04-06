@@ -367,7 +367,8 @@ function buildWebChecks(options, webResolution, excludedDirectories = []) {
   const modeScopeKey = buildModeScopeKey(options.mode, options.scope);
   const supportsWebChecks = modeScopeKey === 'save:file'
     || modeScopeKey === 'precommit:staged'
-    || modeScopeKey === 'prepush:workspace';
+    || modeScopeKey === 'prepush:workspace'
+    || modeScopeKey === 'manual:workspace';
 
   if (!supportsWebChecks) {
     return [];
@@ -488,7 +489,7 @@ function buildModuleExecutionPlan(options) {
     checks = buildLightweightJavaChecks();
     if (modeScopeKey === 'manual:workspace') {
       moduleWarnings.push(
-        'manual mode currently reuses the lightweight Java check plan until heavy tools are implemented',
+        'manual mode currently reuses the lightweight Java check plan and workspace web checks until heavy tools are implemented',
       );
     }
   }
