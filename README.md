@@ -13,6 +13,7 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 ## Initial Setup Notes
 - Save-time validation is disabled by default and starts only after you run `Mamori Inspector: Enable In Workspace` for the target workspace folder.
 - Git hook validation does not start automatically on extension installation. You must install the managed hooks explicitly.
+- Managed pre-commit and pre-push hooks print a warning to stderr and exit successfully when `$REPO_ROOT/.mamori/mamori.js` is missing or the resolved `node` command is unavailable, so stale hooks do not block commit or push.
 - If you want to pre-download the managed toolchain before the first validation run, execute `Mamori Inspector: Setup Managed Tools` once.
 - `precommit/staged` requires the Git CLI on `PATH` because staged files are resolved with `git diff --cached --name-only --diff-filter=ACMR`.
 - For web checkers, Mamori resolves configuration in this order: explicit setting, discovered config file, `package.json` setting, bundled minimal config.
@@ -90,6 +91,7 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 - Save validation does not start until the target workspace folder is enabled with `Mamori Inspector: Enable In Workspace`, and then runs only for the file being saved.
 - Save validation is intended for fast editor feedback and updates VS Code Problems from the generated SARIF.
 - Git hook validation does not run until the managed hooks are installed.
+- Managed hooks also skip with a warning instead of blocking when the local runner file has been removed or the resolved `node` command is unavailable.
 - Pre-commit validation runs on staged files only and re-stages formatter changes automatically.
 - Pre-push validation runs on the workspace scope and acts as a broader gate before pushing changes.
 

@@ -43,7 +43,16 @@ function buildHookScript(hookDefinition) {
     'set -eu',
     'REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"',
     'NODE_BIN="${NODE:-node}"',
-    '"$NODE_BIN" "$REPO_ROOT/.mamori/mamori.js" run --mode ' + hookDefinition.mode + ' --scope ' + hookDefinition.scope + ' --execute',
+    'RUNNER_PATH="$REPO_ROOT/.mamori/mamori.js"',
+    'if [ ! -f "$RUNNER_PATH" ]; then',
+    `  printf '%s\\n' "mamori: warning: ${hookDefinition.filename} skipped because runner was not found at $RUNNER_PATH" >&2`,
+    '  exit 0',
+    'fi',
+    'if ! command -v "$NODE_BIN" >/dev/null 2>&1; then',
+    `  printf '%s\\n' "mamori: warning: ${hookDefinition.filename} skipped because node command was not found: $NODE_BIN" >&2`,
+    '  exit 0',
+    'fi',
+    '"$NODE_BIN" "$RUNNER_PATH" run --mode ' + hookDefinition.mode + ' --scope ' + hookDefinition.scope + ' --execute',
   ].join('\n');
 }
 

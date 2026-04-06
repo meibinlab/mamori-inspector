@@ -118,7 +118,7 @@ SpotBugsの例外仕様（確定）:
 リポジトリ内に `.mamori/` を置き、VS Code拡張とgit hooksが同じランナーを呼ぶ。
 
 - 目的: VS Code外（git hooks）でも確実に同じ処理を実行する
-- 前提: Node必須（git hooksでも必須）
+- 前提: 通常の git hooks 検証には Node が必要だが、管理対象 hook は解決した `node` コマンドが利用できない場合に warning を出して成功終了する
 - `setup` と `run --execute` では、ワークスペースが Git リポジトリであれば、ローカルの `.git/info/exclude` へワークスペースルートの `/.mamori/` と、リポジトリ配下で見つかった repo-relative な nested `.mamori` を best-effort で追加する
 - `.git/info/exclude` の更新失敗は warning として扱い、Mamori の処理自体は継続する
 
@@ -210,6 +210,9 @@ Git のローカル除外（確定）:
 ## 9. Git hooks（確定）
 - pre-commit / pre-push のhookを生成して、Nodeランナーを呼ぶ
 - 失敗時はブロック（ただし `--no-verify` で回避可能）
+- 管理対象 hook は、`$REPO_ROOT/.mamori/mamori.js` が見つからない場合に stderr へ warning を出して成功終了する
+- 管理対象 hook は、解決した `node` コマンドが利用できない場合も stderr へ warning を出して成功終了する
+- runner が存在する通常ケースでは、managed hook は runner の終了コードをそのまま返し、ルール違反や実行エラー時は block する
 
 Git hooks の競合時仕様（確定）:
 - `pre-commit` または `pre-push` が既に存在し、Mamori が生成した管理対象hookでない場合は上書きしない
