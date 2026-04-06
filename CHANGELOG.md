@@ -4,6 +4,11 @@
 
 形式は Keep a Changelog を参考にしつつ、このリポジトリの実装状況に合わせて整理します。
 
+## [0.2.33] - 2026-04-07
+
+### Changed
+- VS Marketplace 上の表示名を `Mamori Inspector: Code Quality Guard` に変更しました。
+
 ## [0.2.32] - 2026-04-07
 
 ### Changed
