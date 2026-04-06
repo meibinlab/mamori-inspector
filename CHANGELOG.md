@@ -4,6 +4,11 @@
 
 形式は Keep a Changelog を参考にしつつ、このリポジトリの実装状況に合わせて整理します。
 
+## [0.2.28] - 2026-04-06
+
+### Changed
+- subtree として公開する standalone リポジトリ側でも VSIX を Git 管理対象に含めないよう、subtree 配下の `.gitignore` に `*.vsix` を追加しました。
+
 ## [0.2.27] - 2026-04-06
 
 ### Added

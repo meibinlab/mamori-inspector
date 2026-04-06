@@ -3,7 +3,7 @@
   "displayName": "Mamori Inspector",
   "description": "Unified code inspection platform for VS Code",
   "publisher": "meibinlab",
-  "version": "0.2.27",
+  "version": "0.2.28",
   "icon": "images/icon.png",
   "license": "MIT",
   "engines": {
