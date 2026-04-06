@@ -60,8 +60,9 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 - `prepush/workspace` は、ワークスペース内のファイルに対して ESLint、Stylelint、htmlhint も実行し、明示設定または検出したプロジェクト設定を優先し、見つからない場合は Mamori の bundled minimal config を使用します。
 - `prepush/workspace` は、一時的な CSS ファイルを使って HTML の inline style ブロックも Stylelint の対象に含め、結果は元の HTML 上の位置に報告します。
 - `prepush/workspace` は、一時的な JavaScript ファイルを使って HTML の inline script ブロックも ESLint の対象に含め、結果は元の HTML 上の位置に報告します。
-- `manual/workspace` は、重い手動ツールを追加するまで、現時点では軽量な Java チェック計画を再利用します。
+- `manual/workspace` は、重い手動ツールを追加するまで、現時点では軽量な Java チェック計画を再利用しつつ、ワークスペース内の Web ファイルに対しては `prepush/workspace` と同じ解決ルールで ESLint、Stylelint、htmlhint も実行します。
 - コマンド `Mamori Inspector: Run Workspace Check` は、ワークスペース全体の手動チェックを実行し、生成された SARIF から Diagnostics を公開します。
+- 手動全体チェックが成功した場合、拡張は同じワークスペースに対して以前反映していた保存時 Diagnostics を、最新の手動結果で置き換えます。
 - コマンド `Mamori Inspector: Enable In Workspace` と `Mamori Inspector: Disable In Workspace` は、ワークスペースフォルダー単位で保存時検証の有効・無効を切り替えます。既定値は無効です。
 - コマンド `Mamori Inspector: Setup Managed Tools` は、管理対象の Maven、Gradle、Semgrep、Prettier、ESLint、Stylelint、htmlhint をワークスペースキャッシュへ導入します。
 - コマンド `Mamori Inspector: Clear Managed Tool Cache` は、`.mamori/tools` と `.mamori/node` の管理キャッシュを削除します。

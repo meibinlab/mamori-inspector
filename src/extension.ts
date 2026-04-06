@@ -1529,6 +1529,12 @@ function createRunWorkspaceCheckCommand(
         );
       }
 
+      for (const sarifOutput of sarifOutputs) {
+        clearWorkspaceDiagnosticsByUri(
+          diagnosticsState.saveDiagnosticsByUri,
+          sarifOutput.workspaceFolder,
+        );
+      }
       diagnosticsState.manualDiagnosticsByUri.clear();
       mergeDiagnosticsByUri(diagnosticsState.manualDiagnosticsByUri, diagnosticsByUri);
       const diagnosticsCount = publishTrackedDiagnostics(diagnosticCollection, diagnosticsState);

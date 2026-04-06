@@ -60,8 +60,9 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 - `prepush/workspace` also runs ESLint, Stylelint, and htmlhint for workspace files, preferring explicit or discovered project configuration and otherwise using Mamori's bundled minimal configs.
 - `prepush/workspace` includes HTML inline style blocks in Stylelint by using temporary CSS files and reporting findings on the original HTML locations.
 - `prepush/workspace` includes HTML inline script blocks in ESLint by using temporary JavaScript files and reporting findings on the original HTML locations.
-- `manual/workspace` currently reuses the lightweight Java check plan until the heavy manual tools are added.
+- `manual/workspace` currently reuses the lightweight Java check plan, and also runs ESLint, Stylelint, and htmlhint for workspace files by using the same resolution rules as `prepush/workspace`.
 - The command `Mamori Inspector: Run Workspace Check` executes a workspace-wide manual check and publishes diagnostics from the generated SARIF.
+- When a manual workspace check succeeds, the extension replaces previously published save diagnostics for the same workspace with the latest manual results.
 - The commands `Mamori Inspector: Enable In Workspace` and `Mamori Inspector: Disable In Workspace` toggle automatic save-time validation per workspace folder. The default is disabled.
 - The command `Mamori Inspector: Setup Managed Tools` downloads the managed Maven, Gradle, Semgrep, Prettier, ESLint, Stylelint, and htmlhint toolchain into the workspace cache.
 - The command `Mamori Inspector: Clear Managed Tool Cache` removes the managed cache directories under `.mamori/tools` and `.mamori/node`.
