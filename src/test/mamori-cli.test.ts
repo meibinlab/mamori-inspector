@@ -108,6 +108,79 @@ function runMamoriCli(
 }
 
 /**
+ * テスト実行に利用できる POSIX shell コマンドを返す。
+ * @returns 利用可能な shell コマンド名を返す。見つからない場合は undefined を返す。
+ */
+function resolvePosixShellCommand(): string | undefined {
+  const shellCandidates = process.platform === 'win32'
+    ? [
+      'sh.exe',
+      'sh',
+      ...[
+        process.env.ProgramFiles,
+        process.env.ProgramW6432,
+        process.env['ProgramFiles(x86)'],
+      ]
+        .filter((value): value is string => Boolean(value))
+        .flatMap((rootDirectory) => [
+          path.join(rootDirectory, 'Git', 'bin', 'sh.exe'),
+          path.join(rootDirectory, 'Git', 'usr', 'bin', 'sh.exe'),
+        ]),
+    ]
+    : ['sh'];
+
+  for (const shellCommand of shellCandidates) {
+    const result = spawnSync(shellCommand, ['-c', 'exit 0'], {
+      encoding: 'utf8',
+    });
+    if (!result.error && result.status === 0) {
+      return shellCommand;
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * shell 実行向けに hook スクリプトの引数を整形する。
+ * @param filePath 対象ファイルパスを表す。
+ * @returns shell 実行に利用する引数文字列を返す。
+ */
+function toShellScriptArgument(filePath: string): string {
+  return process.platform === 'win32' ? filePath.replace(/\\/gu, '/') : filePath;
+}
+
+/**
+ * 管理対象 hook スクリプトを実行する。
+ * @param hookPath hook スクリプトの絶対パスを表す。
+ * @param workingDirectory 実行時の作業ディレクトリを表す。
+ * @param options 実行オプションを表す。
+ * @returns 実行結果を返す。
+ */
+function runManagedHookScript(
+  hookPath: string,
+  workingDirectory: string,
+  options: MamoriCliOptions = {},
+): MamoriCliResult {
+  const shellCommand = resolvePosixShellCommand();
+  if (!shellCommand) {
+    throw new Error('POSIX shell was not found');
+  }
+
+  const result = spawnSync(shellCommand, [toShellScriptArgument(hookPath)], {
+    cwd: workingDirectory,
+    encoding: 'utf8',
+    env: options.env,
+  });
+
+  return {
+    status: result.status,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  };
+}
+
+/**
  * テスト用のコマンドラッパーディレクトリを作成する。
  * @param workingDirectory 作業ディレクトリを表す。
  * @returns ラッパーディレクトリの絶対パスを返す。
@@ -3075,8 +3148,105 @@ suite('Mamori CLI Test Suite', () => {
     assert.match(result.stdout, /pre-commit/u);
     assert.match(result.stdout, /pre-push/u);
     assert.match(fs.readFileSync(preCommitHookPath, 'utf8'), /mamori-inspector-managed-hook/u);
+    assert.match(fs.readFileSync(preCommitHookPath, 'utf8'), /runner was not found/u);
+    assert.match(fs.readFileSync(preCommitHookPath, 'utf8'), /node command was not found/u);
     assert.match(fs.readFileSync(preCommitHookPath, 'utf8'), /--mode precommit --scope staged --execute/u);
     assert.match(fs.readFileSync(prePushHookPath, 'utf8'), /--mode prepush --scope workspace --execute/u);
+  });
+
+  /**
+   * 管理対象 hook が runner 欠落時に warning を出して安全終了すること。
+   * @returns 返り値はない。
+   */
+  test('Skips managed hook with warning when runner is missing', function() {
+    if (!resolvePosixShellCommand()) {
+      this.skip();
+      return;
+    }
+
+    const temporaryDirectory = createTemporaryDirectory();
+    const hooksDirectory = path.join(temporaryDirectory, '.git', 'hooks');
+    const preCommitHookPath = path.join(hooksDirectory, 'pre-commit');
+
+    fs.mkdirSync(hooksDirectory, { recursive: true });
+    runMamoriCli(temporaryDirectory, ['hooks', 'install']);
+
+    const result = runManagedHookScript(preCommitHookPath, temporaryDirectory);
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stderr, /pre-commit skipped because runner was not found/u);
+    assert.doesNotMatch(result.stderr, /node command was not found/u);
+  });
+
+  /**
+   * 管理対象 hook が通常時は runner の終了コードを返すこと。
+   * @returns 返り値はない。
+   */
+  test('Returns the runner exit code from the managed hook', function() {
+    if (!resolvePosixShellCommand()) {
+      this.skip();
+      return;
+    }
+
+    const temporaryDirectory = createTemporaryDirectory();
+    const hooksDirectory = path.join(temporaryDirectory, '.git', 'hooks');
+    const prePushHookPath = path.join(hooksDirectory, 'pre-push');
+    const runnerPath = path.join(temporaryDirectory, '.mamori', 'mamori.js');
+    const invocationLogPath = path.join(temporaryDirectory, 'hook-runner-args.json');
+
+    fs.mkdirSync(hooksDirectory, { recursive: true });
+    fs.mkdirSync(path.dirname(runnerPath), { recursive: true });
+    fs.writeFileSync(
+      runnerPath,
+      [
+        "'use strict';",
+        'const fs = require("fs");',
+        `fs.writeFileSync(${JSON.stringify(invocationLogPath)}, JSON.stringify(process.argv.slice(2)), 'utf8');`,
+        'process.exit(1);',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    runMamoriCli(temporaryDirectory, ['hooks', 'install']);
+
+    const result = runManagedHookScript(prePushHookPath, temporaryDirectory);
+
+    assert.strictEqual(result.status, 1);
+    assert.deepStrictEqual(
+      JSON.parse(fs.readFileSync(invocationLogPath, 'utf8')),
+      ['run', '--mode', 'prepush', '--scope', 'workspace', '--execute'],
+    );
+  });
+
+  /**
+   * 管理対象 hook が node 未解決時に warning を出して安全終了すること。
+   * @returns 返り値はない。
+   */
+  test('Skips managed hook with warning when node command is missing', function() {
+    if (!resolvePosixShellCommand()) {
+      this.skip();
+      return;
+    }
+
+    const temporaryDirectory = createTemporaryDirectory();
+    const hooksDirectory = path.join(temporaryDirectory, '.git', 'hooks');
+    const preCommitHookPath = path.join(hooksDirectory, 'pre-commit');
+    const runnerPath = path.join(temporaryDirectory, '.mamori', 'mamori.js');
+
+    fs.mkdirSync(hooksDirectory, { recursive: true });
+    fs.mkdirSync(path.dirname(runnerPath), { recursive: true });
+    fs.writeFileSync(runnerPath, "'use strict';\nprocess.exit(1);\n", 'utf8');
+    runMamoriCli(temporaryDirectory, ['hooks', 'install']);
+
+    const result = runManagedHookScript(preCommitHookPath, temporaryDirectory, {
+      env: {
+        ...process.env,
+        NODE: 'missing-node-command-for-mamori-test',
+      },
+    });
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stderr, /node command was not found: missing-node-command-for-mamori-test/u);
   });
 
   /**

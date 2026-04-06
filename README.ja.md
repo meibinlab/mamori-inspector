@@ -13,6 +13,7 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 ## 初期セットアップ時の注意
 - 保存時検証は既定で無効です。対象ワークスペースフォルダーごとに `Mamori Inspector: Enable In Workspace` を実行したあとで開始します。
 - Git hook 検証は、拡張をインストールしただけでは開始しません。管理対象の hook を明示的にインストールする必要があります。
+- 管理対象の pre-commit / pre-push hook は、`$REPO_ROOT/.mamori/mamori.js` が無い場合や、解決した `node` コマンドが利用できない場合に stderr へ warning を出して成功終了するため、古い hook が残っていても commit / push を妨げません。
 - 初回の検証実行前に管理ツール一式を先に取得したい場合は、`Mamori Inspector: Setup Managed Tools` を一度実行します。
 - `precommit/staged` は、ステージ済みファイルを `git diff --cached --name-only --diff-filter=ACMR` で解決するため、`PATH` 上の Git CLI が必要です。
 - Web checker の設定は、明示設定、検出した設定ファイル、`package.json` の設定、bundled minimal config の順で解決します。
@@ -90,6 +91,7 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 - 保存時検証は、対象ワークスペースフォルダーで `Mamori Inspector: Enable In Workspace` を実行したあとに始まり、保存したファイルだけを対象にします。
 - 保存時検証は、エディタ上で素早くフィードバックを返す用途で、生成した SARIF から VS Code Problems を更新します。
 - Git hook 検証は、管理対象 hook をインストールするまで実行されません。
+- 管理対象 hook は、ローカル runner が削除済みの場合や、解決した `node` コマンドが利用できない場合は warning を出してスキップします。
 - pre-commit 検証はステージ済みファイルのみを対象にし、整形による変更を自動で再ステージします。
 - pre-push 検証はワークスペース全体を対象にし、push 前のより広い品質ゲートとして動作します。
 
