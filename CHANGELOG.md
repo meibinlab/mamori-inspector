@@ -4,6 +4,11 @@
 
 形式は Keep a Changelog を参考にしつつ、このリポジトリの実装状況に合わせて整理します。
 
+## [0.2.37] - 2026-04-08
+
+### Fixed
+- `save/file` で direct JavaScript と非 JavaScript inline script を含む HTML が混在するケースの CLI 回帰テストが、`eslint --fix` 優先仕様へ追従していなかったため、現行仕様に合わせて修正しました。
+
 ## [0.2.36] - 2026-04-07
 
 ### Fixed

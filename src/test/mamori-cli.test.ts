@@ -3464,8 +3464,9 @@ suite('Mamori CLI Test Suite', () => {
     assert.strictEqual(result.status, 1);
     assert.match(result.stdout, /eslint:failed exitCode=1/u);
     assert.match(result.stdout, /Missing semicolon\./u);
-    assert.match(fs.readFileSync(prettierLogPath, 'utf8'), /main\.js/u);
-    assert.match(fs.readFileSync(prettierLogPath, 'utf8'), /index\.html/u);
+    const prettierLog = fs.readFileSync(prettierLogPath, 'utf8');
+    assert.doesNotMatch(prettierLog, /main\.js/u);
+    assert.match(prettierLog, /index\.html/u);
 
     const eslintLog = fs.readFileSync(eslintLogPath, 'utf8');
     assert.match(eslintLog, /main\.js/u);
