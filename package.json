@@ -3,9 +3,9 @@
   "displayName": "Mamori Inspector: Code Quality Guard",
   "description": "Unified code inspection platform for VS Code",
   "publisher": "meibinlab",
-  "version": "0.2.37",
+  "version": "0.2.38",
   "icon": "images/icon.png",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "engines": {
     "vscode": "^1.109.0"
   },

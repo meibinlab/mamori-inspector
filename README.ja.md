@@ -1,4 +1,7 @@
 # Mamori Inspector
+
+[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/meibinlab.mamori-inspector?label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=meibinlab.mamori-inspector) [![License: Apache%202.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://github.com/meibinlab/mamori-inspector/blob/main/LICENSE)
+
 Mamori Inspector は、複数の解析ツールを統合し、開発者が扱いやすい形で VS Code 上に結果を集約するコード検査プラットフォームです。
 
 - English: [README.md](README.md)

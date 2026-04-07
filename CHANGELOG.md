@@ -4,6 +4,14 @@
 
 形式は Keep a Changelog を参考にしつつ、このリポジトリの実装状況に合わせて整理します。
 
+## [0.2.38] - 2026-04-08
+
+### Changed
+- README 冒頭のバッジを Marketplace version と Apache 2.0 license の 2 つに整理しました。
+
+### Fixed
+- `LICENSE` と `package.json` の不整合を解消し、拡張メタデータ上の license 表記を `Apache-2.0` へ修正しました。
+
 ## [0.2.37] - 2026-04-08
 
 ### Fixed
