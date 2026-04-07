@@ -512,6 +512,7 @@ function writeWebCommandWrapper(
   options: {
     formattedFilePath?: string;
     loggedEnvironmentKeys?: string[];
+    successWhenArgumentsPresent?: string[];
     stdout?: string;
     exitCode?: number;
   } = {},
@@ -524,6 +525,9 @@ function writeWebCommandWrapper(
   const exitCode = typeof options.exitCode === 'number' ? options.exitCode : 0;
   const loggedEnvironmentKeys = Array.isArray(options.loggedEnvironmentKeys)
     ? options.loggedEnvironmentKeys
+    : [];
+  const successWhenArgumentsPresent = Array.isArray(options.successWhenArgumentsPresent)
+    ? options.successWhenArgumentsPresent
     : [];
   const encodedStdout = Buffer.from(stdout, 'utf8').toString('base64');
 
@@ -539,6 +543,11 @@ function writeWebCommandWrapper(
 
     if (options.formattedFilePath) {
       lines.push(`>>"${options.formattedFilePath}" echo // formatted by ${commandName}`);
+    }
+
+    for (const argument of successWhenArgumentsPresent) {
+      lines.push(`echo %* | findstr /C:"${argument}" >nul`);
+      lines.push('if not errorlevel 1 exit /b 0');
     }
 
     if (stdout) {
@@ -561,6 +570,10 @@ function writeWebCommandWrapper(
 
   if (options.formattedFilePath) {
     lines.push(`printf '%s\n' '// formatted by ${commandName}' >> '${options.formattedFilePath}'`);
+  }
+
+  for (const argument of successWhenArgumentsPresent) {
+    lines.push(`case "$*" in *"${argument}"*) exit 0 ;; esac`);
   }
 
   if (stdout) {
@@ -1630,23 +1643,24 @@ suite('Mamori CLI Test Suite', () => {
     ]);
 
     assert.strictEqual(result.status, 0);
-    assert.match(result.stdout, /formatters=prettier:enabled/u);
+    assert.match(result.stdout, /formatters=eslint:enabled, prettier:enabled/u);
     assert.match(result.stdout, /checks=eslint:enabled, stylelint:enabled, htmlhint:enabled/u);
 
-    const prettierLine = result.stdout.match(/prettier:prettier[^\n]*/u);
-    const eslintLine = result.stdout.match(/eslint:eslint[^,\n]*/u);
+    const eslintFormatterLine = result.stdout.match(/eslint:eslint --config .* --fix[^,\n]*/u);
+    const prettierLine = result.stdout.match(/prettier:prettier[^,\n]*/u);
+    const eslintLine = result.stdout.match(/eslint:eslint --config .* --format json[^,\n]*/u);
     const stylelintLine = result.stdout.match(/stylelint:stylelint[^,\n]*/u);
     const htmlhintLine = result.stdout.match(/htmlhint:htmlhint[^\n]*/u);
 
+    assert.ok(eslintFormatterLine);
     assert.ok(prettierLine);
     assert.ok(eslintLine);
     assert.ok(stylelintLine);
     assert.ok(htmlhintLine);
-    assert.match(prettierLine ? prettierLine[0] : '', /main\.js/u);
+    assert.match(eslintFormatterLine ? eslintFormatterLine[0] : '', /main\.js/u);
     assert.match(prettierLine ? prettierLine[0] : '', /site\.css/u);
     assert.match(prettierLine ? prettierLine[0] : '', /index\.html/u);
     assert.match(eslintLine ? eslintLine[0] : '', /main\.js/u);
-    assert.doesNotMatch(eslintLine ? eslintLine[0] : '', /site\.css|index\.html/u);
     assert.match(stylelintLine ? stylelintLine[0] : '', /site\.css/u);
     assert.doesNotMatch(stylelintLine ? stylelintLine[0] : '', /main\.js|index\.html/u);
     assert.match(htmlhintLine ? htmlhintLine[0] : '', /index\.html/u);
@@ -1677,10 +1691,74 @@ suite('Mamori CLI Test Suite', () => {
     ]);
 
     assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /formatters=eslint:enabled, prettier:disabled status=no-target-files/u);
     assert.match(result.stdout, /checks=eslint:enabled/u);
+    assert.match(result.stdout, /eslint:eslint --config .*eslint\.config\.mjs --fix/u);
     assert.match(result.stdout, /eslint:eslint --config .*eslint\.config\.mjs/u);
     assert.match(result.stdout, /main\.ts/u);
     assert.doesNotMatch(result.stdout, /formatters=prettier:enabled/u);
+  });
+
+  /**
+   * save/file の JavaScript fallback では Prettier と組み込み ESLint 設定を併用すること。
+   * @returns 返り値はない。
+   */
+  test('Uses Prettier formatting for JavaScript save checks when ESLint falls back to the bundled config', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src');
+    const targetFilePath = path.join(sourceDirectory, 'main.js');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const prettierLogPath = path.join(nodeBinDirectory, 'prettier.log');
+    const eslintLogPath = path.join(nodeBinDirectory, 'eslint.log');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-js-fallback-save.sarif');
+    const eslintOutput = JSON.stringify([
+      {
+        filePath: targetFilePath,
+        messages: [
+          {
+            ruleId: 'no-console',
+            severity: 2,
+            message: 'Unexpected console statement.',
+            line: 2,
+            column: 1,
+          },
+        ],
+      },
+    ]);
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.writeFileSync(targetFilePath, 'const sample = 1;\nconsole.log(sample);\n', 'utf8');
+    writeWebCommandWrapper(nodeBinDirectory, 'prettier', 'prettier.log', {
+      formattedFilePath: targetFilePath,
+    });
+    writeWebCommandWrapper(nodeBinDirectory, 'eslint', 'eslint.log', {
+      stdout: eslintOutput,
+      exitCode: 1,
+      loggedEnvironmentKeys: ['ESLINT_USE_FLAT_CONFIG'],
+    });
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'save',
+      '--scope',
+      'file',
+      '--files',
+      path.relative(temporaryDirectory, targetFilePath),
+      '--execute',
+      '--sarif-output',
+      path.relative(temporaryDirectory, sarifOutputPath),
+    ]);
+
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /prettier:ok/u);
+    assert.match(result.stdout, /eslint:failed exitCode=1/u);
+    assert.match(fs.readFileSync(prettierLogPath, 'utf8'), /main\.js/u);
+    assert.match(fs.readFileSync(eslintLogPath, 'utf8'), /main\.js/u);
+    assert.match(fs.readFileSync(eslintLogPath, 'utf8'), /ESLINT_USE_FLAT_CONFIG=false/u);
+    assert.match(fs.readFileSync(eslintLogPath, 'utf8'), /eslint\.default\.json/u);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Unexpected console statement\./u);
   });
 
   /**
@@ -2927,6 +3005,132 @@ suite('Mamori CLI Test Suite', () => {
   });
 
   /**
+   * save/file で ESLint ignore 対象の HTML からは inline script を抽出しないこと。
+   * @returns 返り値はない。
+   */
+  test('Skips ignored inline HTML scripts based on the source HTML path', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const htmlDirectory = path.join(temporaryDirectory, 'demo', 'click');
+    const htmlFilePath = path.join(htmlDirectory, 'data-click-bind-params-demo.html');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const eslintModuleDirectory = path.join(temporaryDirectory, 'node_modules', 'eslint');
+    const eslintLogPath = path.join(nodeBinDirectory, 'eslint.log');
+    const prettierLogPath = path.join(nodeBinDirectory, 'prettier.log');
+    const htmlhintLogPath = path.join(nodeBinDirectory, 'htmlhint.log');
+    const repositoryRoot = path.resolve(__dirname, '..', '..');
+
+    fs.mkdirSync(htmlDirectory, { recursive: true });
+    fs.mkdirSync(eslintModuleDirectory, { recursive: true });
+    fs.writeFileSync(
+      htmlFilePath,
+      '<!doctype html>\n<html><body><script>console.log("sample")</script></body></html>\n',
+      'utf8',
+    );
+    fs.writeFileSync(
+      path.join(eslintModuleDirectory, 'index.js'),
+      `module.exports = require(${JSON.stringify(path.join(repositoryRoot, 'node_modules', 'eslint'))});\n`,
+      'utf8',
+    );
+    fs.writeFileSync(
+      path.join(eslintModuleDirectory, 'package.json'),
+      JSON.stringify({ name: 'eslint', main: 'index.js' }, null, 2),
+      'utf8',
+    );
+    fs.writeFileSync(
+      path.join(temporaryDirectory, 'eslint.config.mjs'),
+      'export default [{ ignores: ["demo/**"] }];\n',
+      'utf8',
+    );
+    writeWebCommandWrapper(nodeBinDirectory, 'prettier', 'prettier.log');
+    writeWebCommandWrapper(nodeBinDirectory, 'htmlhint', 'htmlhint.log', {
+      stdout: '[]',
+      exitCode: 0,
+    });
+    writeInlineHtmlEslintWrapper(nodeBinDirectory, 'eslint.log');
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'save',
+      '--scope',
+      'file',
+      '--files',
+      path.relative(temporaryDirectory, htmlFilePath),
+      '--execute',
+    ]);
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /eslint:skipped reason=no-target-files/u);
+    assert.ok(!fs.existsSync(eslintLogPath));
+    assert.match(fs.readFileSync(prettierLogPath, 'utf8'), /data-click-bind-params-demo\.html/u);
+    assert.match(fs.readFileSync(htmlhintLogPath, 'utf8'), /data-click-bind-params-demo\.html/u);
+  });
+
+  /**
+   * workspace で ignore 対象の direct file を ESLint 実行引数から除外すること。
+   * @returns 返り値はない。
+   */
+  test('Skips ignored direct ESLint target files during workspace checks', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src');
+    const ignoredDirectory = path.join(temporaryDirectory, 'demo');
+    const sourceFilePath = path.join(sourceDirectory, 'main.ts');
+    const ignoredFilePath = path.join(ignoredDirectory, 'vite.config.ts');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const eslintModuleDirectory = path.join(temporaryDirectory, 'node_modules', 'eslint');
+    const eslintLogPath = path.join(nodeBinDirectory, 'eslint.log');
+    const repositoryRoot = path.resolve(__dirname, '..', '..');
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.mkdirSync(ignoredDirectory, { recursive: true });
+    fs.mkdirSync(eslintModuleDirectory, { recursive: true });
+    fs.writeFileSync(sourceFilePath, 'export const sample = 1;\n', 'utf8');
+    fs.writeFileSync(ignoredFilePath, 'export default {};\n', 'utf8');
+    fs.writeFileSync(
+      path.join(eslintModuleDirectory, 'index.js'),
+      `module.exports = require(${JSON.stringify(path.join(repositoryRoot, 'node_modules', 'eslint'))});\n`,
+      'utf8',
+    );
+    fs.writeFileSync(
+      path.join(eslintModuleDirectory, 'package.json'),
+      JSON.stringify({ name: 'eslint', main: 'index.js' }, null, 2),
+      'utf8',
+    );
+    fs.writeFileSync(
+      path.join(temporaryDirectory, 'eslint.config.mjs'),
+      [
+        'export default [',
+        '  { ignores: ["demo/**"] },',
+        '  { files: ["**/*.ts"], rules: { semi: "error" } },',
+        '];',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    writeWebCommandWrapper(nodeBinDirectory, 'eslint', 'eslint.log', {
+      stdout: '[]',
+      exitCode: 0,
+    });
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'manual',
+      '--scope',
+      'workspace',
+      '--execute',
+    ]);
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /eslint:ok exitCode=0/u);
+    assert.doesNotMatch(result.stdout, /File ignored because of a matching ignore pattern/u);
+    const eslintLog = fs.readFileSync(eslintLogPath, 'utf8');
+    assert.match(eslintLog, /main\.ts/u);
+    assert.doesNotMatch(eslintLog, /demo[\\/]vite\.config\.ts/u);
+    assert.match(eslintLog, /--no-warn-ignored/u);
+  });
+
+  /**
    * save/file で type=module の inline script を .mjs として ESLint へ渡すこと。
    * @returns 返り値はない。
    */
@@ -3884,7 +4088,9 @@ suite('Mamori CLI Test Suite', () => {
       indexSnapshotPath,
     );
     writeWebCommandWrapper(nodeBinDirectory, 'prettier', 'prettier.log', { formattedFilePath: javascriptFilePath });
-    writeWebCommandWrapper(nodeBinDirectory, 'eslint', 'eslint.log');
+    writeWebCommandWrapper(nodeBinDirectory, 'eslint', 'eslint.log', {
+      formattedFilePath: javascriptFilePath,
+    });
 
     const result = runMamoriCli(
       temporaryDirectory,
@@ -3905,13 +4111,13 @@ suite('Mamori CLI Test Suite', () => {
     );
 
     assert.strictEqual(result.status, 0);
-    assert.match(result.stdout, /prettier:ok/u);
     assert.match(result.stdout, /eslint:ok/u);
     assert.match(fs.readFileSync(gitLogPath, 'utf8'), /diff --cached --name-only --diff-filter=ACMR/u);
     assert.match(fs.readFileSync(gitLogPath, 'utf8'), /add --/u);
-    assert.match(fs.readFileSync(prettierLogPath, 'utf8'), /main\.js/u);
+    assert.ok(!fs.existsSync(prettierLogPath));
+    assert.match(fs.readFileSync(eslintLogPath, 'utf8'), /--fix/u);
     assert.match(fs.readFileSync(eslintLogPath, 'utf8'), /main\.js/u);
-    assert.match(fs.readFileSync(indexSnapshotPath, 'utf8'), /formatted by prettier/u);
+    assert.match(fs.readFileSync(indexSnapshotPath, 'utf8'), /formatted by eslint/u);
   });
 
   /**
@@ -3925,6 +4131,7 @@ suite('Mamori CLI Test Suite', () => {
     const gitBinDirectory = createCommandBinDirectory(temporaryDirectory);
     const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
     const gitLogPath = path.join(gitBinDirectory, 'git.log');
+    const eslintLogPath = path.join(nodeBinDirectory, 'eslint.log');
     const indexSnapshotPath = path.join(temporaryDirectory, '.tmp-index', 'main.js');
     const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-web-precommit.sarif');
     const eslintOutput = JSON.stringify([
@@ -3953,7 +4160,12 @@ suite('Mamori CLI Test Suite', () => {
       indexSnapshotPath,
     );
     writeWebCommandWrapper(nodeBinDirectory, 'prettier', 'prettier.log', { formattedFilePath: javascriptFilePath });
-    writeWebCommandWrapper(nodeBinDirectory, 'eslint', 'eslint.log', { stdout: eslintOutput, exitCode: 1 });
+    writeWebCommandWrapper(nodeBinDirectory, 'eslint', 'eslint.log', {
+      formattedFilePath: javascriptFilePath,
+      stdout: eslintOutput,
+      exitCode: 1,
+      successWhenArgumentsPresent: ['--fix'],
+    });
 
     const result = runMamoriCli(
       temporaryDirectory,
@@ -3976,11 +4188,11 @@ suite('Mamori CLI Test Suite', () => {
     );
 
     assert.strictEqual(result.status, 1);
-    assert.match(result.stdout, /prettier:ok/u);
     assert.match(result.stdout, /eslint:failed exitCode=1/u);
     assert.match(result.stdout, /Missing semicolon\./u);
     assert.match(fs.readFileSync(gitLogPath, 'utf8'), /add --/u);
-    assert.match(fs.readFileSync(indexSnapshotPath, 'utf8'), /formatted by prettier/u);
+    assert.match(fs.readFileSync(eslintLogPath, 'utf8'), /--fix/u);
+    assert.match(fs.readFileSync(indexSnapshotPath, 'utf8'), /formatted by eslint/u);
     assert.ok(fs.existsSync(sarifOutputPath));
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Missing semicolon\./u);
   });

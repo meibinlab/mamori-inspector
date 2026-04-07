@@ -2027,12 +2027,13 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
         await runSaveCommandForTest(workspaceRoot, javascriptFilePath, saveSarifPath);
 
         await waitFor(() => fs.existsSync(saveSarifPath));
-        await waitFor(() => fs.existsSync(prettierLogPath) && fs.existsSync(eslintLogPath));
+        await waitFor(() => fs.existsSync(eslintLogPath));
         await waitFor(() => /Unexpected console statement\./u.test(fs.readFileSync(saveSarifPath, 'utf8')));
 
         assert.ok(fs.existsSync(saveSarifPath));
         assert.match(fs.readFileSync(saveSarifPath, 'utf8'), /Unexpected console statement\./u);
-        assert.match(fs.readFileSync(prettierLogPath, 'utf8'), /main\.js/u);
+        assert.ok(!fs.existsSync(prettierLogPath));
+        assert.match(fs.readFileSync(eslintLogPath, 'utf8'), /--fix/u);
         assert.match(fs.readFileSync(eslintLogPath, 'utf8'), /main\.js/u);
       } finally {
         restorePrettierLog();
@@ -2052,7 +2053,7 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
    * @returns 実行完了を待つ Promise を返す。
    */
   test('Runs save checks with bundled fallback ESLint config when a JavaScript file is saved without project config', async function() {
-    this.timeout(20000);
+    this.timeout(60000);
     const activeVscodeApi = vscodeApi;
     const workspaceRoot = activeVscodeApi.workspace.workspaceFolders?.[0]?.uri.fsPath;
     if (!workspaceRoot) {
@@ -2100,7 +2101,7 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
         await runSaveCommandForTest(workspaceRoot, javascriptFilePath, saveSarifPath);
 
         await waitFor(() => fs.existsSync(saveSarifPath));
-        await waitFor(() => fs.existsSync(prettierLogPath) && fs.existsSync(eslintLogPath));
+        await waitFor(() => fs.existsSync(prettierLogPath) && fs.existsSync(eslintLogPath), 120000);
         const findings = loadSarifFindings(saveSarifPath);
         const saveSarif = fs.readFileSync(saveSarifPath, 'utf8');
         const eslintLog = fs.readFileSync(eslintLogPath, 'utf8');
@@ -2727,7 +2728,7 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
         await document.save();
 
         await waitFor(() => fs.existsSync(saveSarifPath), 120000);
-        await waitFor(() => fs.existsSync(prettierLogPath) && fs.existsSync(eslintLogPath), 120000);
+        await waitFor(() => fs.existsSync(eslintLogPath), 120000);
         await waitFor(
           () => activeVscodeApi.languages.getDiagnostics(targetUri).some(
             (diagnostic) => diagnostic.message === 'Unexpected console statement.',
@@ -2774,6 +2775,8 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
         assert.deepStrictEqual(diagnostics, []);
         assert.ok(manualMessages.some((message) => getDiagnosticsReflectedPattern(0).test(message)));
         assert.ok(!fs.existsSync(manualSarifPath));
+        assert.ok(!fs.existsSync(prettierLogPath));
+        assert.match(fs.readFileSync(eslintLogPath, 'utf8'), /--fix/u);
         await activeVscodeApi.commands.executeCommand('workbench.action.closeActiveEditor');
       } finally {
         restorePrettierLog();

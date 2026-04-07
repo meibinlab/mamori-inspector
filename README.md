@@ -52,14 +52,14 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 - Save-time validation formats supported files first, then publishes diagnostics from the generated SARIF.
 - If a save-time run ends with an execution error after writing partial SARIF output, Mamori still reflects the diagnostics that were already generated and keeps the failure detail in the output log.
 - Save-time validation also shows a toast each time a formatter or checker actually starts, using the saved file name plus the single running tool name.
-- JavaScript save-time validation uses Prettier and ESLint, preferring explicit or discovered project configuration and otherwise using Mamori's bundled minimal ESLint config.
+- JavaScript save-time validation uses `eslint --fix` before checking when explicit or discovered project ESLint configuration is available, and otherwise keeps using Prettier plus Mamori's bundled minimal ESLint config.
 - TypeScript save-time validation uses ESLint when project configuration is available through explicit settings, workspace discovery, or `package.json#eslintConfig`.
 - CSS and SCSS and Sass save-time validation use Prettier and Stylelint, preferring explicit or discovered project configuration and otherwise using Mamori's bundled minimal Stylelint config.
 - HTML save-time validation also extracts inline style blocks whose type is compatible with CSS into temporary CSS files for Stylelint, maps diagnostics back to the original HTML locations, and removes the temporary files after execution while preferring project Stylelint configuration and otherwise using Mamori's bundled minimal Stylelint config.
 - HTML save-time validation uses Prettier and htmlhint, preferring explicit or discovered project configuration and otherwise using Mamori's bundled minimal htmlhint config.
 - HTML save-time validation also extracts inline script blocks without `src` into temporary JavaScript files for ESLint, maps diagnostics back to the original HTML locations, and removes the temporary files after execution while preferring project ESLint configuration and otherwise using Mamori's bundled minimal ESLint config.
 - `precommit/staged` resolves staged files via `git diff --cached --name-only --diff-filter=ACMR`, runs Spotless first when available, and re-stages formatted files with `git add -- <files>`.
-- `precommit/staged` also runs Prettier for staged JavaScript, CSS, SCSS, Sass, and HTML files before running the configured checkers.
+- `precommit/staged` runs `eslint --fix` for staged direct JavaScript and TypeScript files when project ESLint configuration is available, and otherwise runs Prettier for JavaScript plus CSS, SCSS, Sass, and HTML files before the configured checkers.
 - `precommit/staged` includes HTML inline style blocks in the Stylelint target set while keeping HTML files themselves on htmlhint.
 - `precommit/staged` includes HTML inline script blocks in the ESLint target set while keeping HTML files themselves on htmlhint.
 - `precommit/staged` returns success without running checks when no staged files are detected, and requires the Git CLI on `PATH` for staged-file resolution.

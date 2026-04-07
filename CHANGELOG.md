@@ -4,6 +4,15 @@
 
 形式は Keep a Changelog を参考にしつつ、このリポジトリの実装状況に合わせて整理します。
 
+## [0.2.34] - 2026-04-07
+
+### Changed
+- 保存時と pre-commit の direct JavaScript / TypeScript 整形で、プロジェクト ESLint 設定を解決できる場合は `eslint --fix` を優先するようにしました。
+
+### Fixed
+- HTML inline script の ignore 判定が元の HTML パス基準で効くようにし、ignore 対象から不要な ESLint 診断が出る問題を修正しました。
+- ignore 対象の direct ESLint ファイルに起因する warning を抑制し、workspace check の Problems に不要なノイズが出ないようにしました。
+
 ## [0.2.33] - 2026-04-07
 
 ### Changed

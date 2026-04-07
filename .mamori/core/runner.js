@@ -28,6 +28,107 @@ const { resolveCommandEntryRuntime } = require('../tools/provision');
 // HTML ファイル拡張子一覧を表す
 const HTML_FILE_EXTENSIONS = new Set(['.html', '.htm']);
 
+/**
+ * ESLint 実行引数から設定ファイルパスを返す。
+ * @param {string[]|undefined} args ESLint 実行引数一覧を表す。
+ * @returns {string|undefined} 設定ファイルパスを返す。
+ */
+function resolveEslintOverrideConfigPath(args) {
+  if (!Array.isArray(args)) {
+    return undefined;
+  }
+
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] === '--config' && typeof args[index + 1] === 'string') {
+      return args[index + 1];
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * 実行環境から ESLint API を読み込む。
+ * @param {string|undefined} currentWorkingDirectory 実行時の作業ディレクトリを表す。
+ * @returns {object|undefined} ESLint API を返す。
+ */
+function loadEslintApi(currentWorkingDirectory) {
+  const resolutionPaths = [
+    path.resolve(currentWorkingDirectory || process.cwd()),
+    path.resolve(process.cwd()),
+    path.join(path.resolve(process.cwd()), '.mamori', 'node', 'node_modules'),
+  ];
+
+  try {
+    const eslintModulePath = require.resolve('eslint', { paths: resolutionPaths });
+    return require(eslintModulePath);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * ESLint の ignore 判定器を構築する。
+ * @param {object} commandEntry ESLint のコマンド計画を表す。
+ * @returns {Promise<object|undefined>} ignore 判定器を返す。
+ */
+async function createEslintIgnoreChecker(commandEntry) {
+  const eslintApi = loadEslintApi(commandEntry.cwd);
+  if (!eslintApi || typeof eslintApi.loadESLint !== 'function') {
+    return undefined;
+  }
+
+  const useFlatConfig = !(
+    commandEntry.env
+    && commandEntry.env.ESLINT_USE_FLAT_CONFIG === 'false'
+  );
+  const overrideConfigFile = resolveEslintOverrideConfigPath(commandEntry.args);
+  const eslintWorkingDirectory = overrideConfigFile
+    ? path.dirname(path.resolve(overrideConfigFile))
+    : (commandEntry.cwd || process.cwd());
+
+  try {
+    const ActiveEslint = await eslintApi.loadESLint({ useFlatConfig });
+    return new ActiveEslint({
+      cwd: eslintWorkingDirectory,
+      ...(overrideConfigFile ? { overrideConfigFile } : {}),
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * ESLint の ignore 対象ファイルを除外する。
+ * @param {string[]|undefined} filePaths 判定対象ファイル一覧を表す。
+ * @param {object} commandEntry ESLint のコマンド計画を表す。
+ * @returns {Promise<string[]>} 除外後のファイル一覧を返す。
+ */
+async function filterIgnoredEslintFiles(filePaths, commandEntry) {
+  const candidateFilePaths = Array.isArray(filePaths) ? filePaths : [];
+  if (commandEntry.tool !== 'eslint' || candidateFilePaths.length === 0) {
+    return candidateFilePaths;
+  }
+
+  const eslintIgnoreChecker = await createEslintIgnoreChecker(commandEntry);
+  if (!eslintIgnoreChecker || typeof eslintIgnoreChecker.isPathIgnored !== 'function') {
+    return candidateFilePaths;
+  }
+
+  const filteredFilePaths = [];
+  for (const filePath of candidateFilePaths) {
+    try {
+      if (!await eslintIgnoreChecker.isPathIgnored(filePath)) {
+        filteredFilePaths.push(filePath);
+      }
+    } catch {
+      filteredFilePaths.push(filePath);
+    }
+  }
+
+  return filteredFilePaths;
+}
+
 // ツール別の既定レポート相対パス一覧を表す
 const TOOL_REPORT_RELATIVE_PATHS = {
   checkstyle: [
@@ -628,7 +729,7 @@ function materializeInlineStyleFiles(inlineHtmlFiles, currentWorkingDirectory) {
  * @param {object} commandEntry コマンド計画を表す。
  * @returns {{args: string[], filePathMappings?: Record<string, string>, tempDirectory?: string, skipReason?: string}} 実行準備結果を返す。
  */
-function prepareCommandExecution(commandEntry) {
+async function prepareCommandExecution(commandEntry) {
   if (commandEntry.tool !== 'eslint' && commandEntry.tool !== 'stylelint') {
     return {
       args: Array.isArray(commandEntry.args) ? commandEntry.args : [],
@@ -636,19 +737,34 @@ function prepareCommandExecution(commandEntry) {
   }
 
   const directFiles = Array.isArray(commandEntry.directFiles) ? commandEntry.directFiles : [];
+  const filteredDirectFiles = commandEntry.tool === 'eslint'
+    ? await filterIgnoredEslintFiles(directFiles, commandEntry)
+    : directFiles;
+  const inlineHtmlFiles = commandEntry.tool === 'eslint'
+    ? await filterIgnoredEslintFiles(commandEntry.inlineHtmlFiles, commandEntry)
+    : commandEntry.inlineHtmlFiles;
+  const baseArguments = commandEntry.tool === 'eslint'
+    ? (Array.isArray(commandEntry.args)
+      ? commandEntry.args.slice(0, Math.max(commandEntry.args.length - directFiles.length, 0))
+      : [])
+    : (Array.isArray(commandEntry.args) ? commandEntry.args : []);
   const inlineArtifacts = commandEntry.tool === 'eslint'
-    ? materializeInlineScriptFiles(commandEntry.inlineHtmlFiles, commandEntry.cwd)
-    : materializeInlineStyleFiles(commandEntry.inlineHtmlFiles, commandEntry.cwd);
-  if (directFiles.length === 0 && inlineArtifacts.tempFilePaths.length === 0) {
+    ? materializeInlineScriptFiles(inlineHtmlFiles, commandEntry.cwd)
+    : materializeInlineStyleFiles(inlineHtmlFiles, commandEntry.cwd);
+  if (filteredDirectFiles.length === 0 && inlineArtifacts.tempFilePaths.length === 0) {
     return {
-      args: Array.isArray(commandEntry.args) ? commandEntry.args : [],
+      args: baseArguments,
       tempDirectory: inlineArtifacts.tempDirectory,
       skipReason: 'no-target-files',
     };
   }
 
   return {
-    args: [...(Array.isArray(commandEntry.args) ? commandEntry.args : []), ...inlineArtifacts.tempFilePaths],
+    args: [
+      ...baseArguments,
+      ...filteredDirectFiles,
+      ...inlineArtifacts.tempFilePaths,
+    ],
     filePathMappings: inlineArtifacts.filePathMappings,
     tempDirectory: inlineArtifacts.tempDirectory,
   };
@@ -951,7 +1067,7 @@ async function executeCommandEntry(workspaceRoot, moduleRoot, commandEntry, exec
   }
 
   try {
-    preparedCommand = prepareCommandExecution(commandEntry);
+    preparedCommand = await prepareCommandExecution(commandEntry);
 
     if (preparedCommand.skipReason) {
       commandResult = {

@@ -30,6 +30,15 @@ const TOOL_FILE_EXTENSIONS = {
 // ESLint で TypeScript を扱うときの追加拡張子一覧を表す
 const TYPESCRIPT_ESLINT_EXTENSIONS = ['.ts', '.cts', '.mts', '.tsx'];
 
+// ESLint formatter へ委譲する direct file 拡張子一覧を表す
+const ESLINT_FORMATTER_FILE_EXTENSIONS = new Set([
+  '.js',
+  '.cjs',
+  '.mjs',
+  '.jsx',
+  ...TYPESCRIPT_ESLINT_EXTENSIONS,
+]);
+
 // ワークスペース探索時に除外するディレクトリ一覧を表す
 const DEFAULT_IGNORED_DIRECTORIES = new Set([
   '.git',
@@ -103,6 +112,29 @@ function shouldIncludeTypeScriptForEslint(eslintResolution) {
       && eslintResolution.source
       && eslintResolution.source !== 'default',
   );
+}
+
+/**
+ * プロジェクト ESLint 設定を利用できるか判定する。
+ * @param {{enabled?: boolean, source?: string}|undefined} eslintResolution ESLint 設定解決結果を表す。
+ * @returns {boolean} プロジェクト設定を利用できる場合は true を返す。
+ */
+function hasProjectEslintConfiguration(eslintResolution) {
+  return shouldIncludeTypeScriptForEslint(eslintResolution);
+}
+
+/**
+ * ESLint formatter へ委譲する direct file 一覧を返す。
+ * @param {string[]|undefined} files 対象ファイル一覧を表す。
+ * @param {{enabled?: boolean, source?: string}|undefined} eslintResolution ESLint 設定解決結果を表す。
+ * @returns {string[]} ESLint formatter 対象一覧を返す。
+ */
+function filterEslintFormatterFiles(files, eslintResolution) {
+  if (!hasProjectEslintConfiguration(eslintResolution) || !Array.isArray(files)) {
+    return [];
+  }
+
+  return files.filter((filePath) => hasMatchingExtension(filePath, ESLINT_FORMATTER_FILE_EXTENSIONS));
 }
 
 /**
@@ -268,6 +300,26 @@ function buildWebCommandEntry(toolName, moduleDefinition, toolFiles, options) {
 
   const configArguments = buildWebConfigArguments(toolName, toolResolution);
 
+  if (toolName === 'eslint' && options.phase === 'formatter') {
+    return {
+      tool: 'eslint',
+      enabled: true,
+      phase: 'formatter',
+      command: 'eslint',
+      args: [
+        ...configArguments,
+        '--fix',
+        '--no-error-on-unmatched-pattern',
+        '--no-warn-ignored',
+        ...filteredToolFiles,
+      ],
+      cwd: moduleDefinition.moduleRoot,
+      env: commandEnvironment,
+      directFiles: filteredToolFiles,
+      inlineHtmlFiles: [],
+    };
+  }
+
   if (toolName === 'eslint') {
     const directFiles = filteredToolFiles.filter((filePath) => !isHtmlFile(filePath));
     const inlineHtmlFiles = filteredToolFiles.filter((filePath) => isHtmlFile(filePath));
@@ -277,7 +329,14 @@ function buildWebCommandEntry(toolName, moduleDefinition, toolFiles, options) {
       enabled: true,
       phase: 'check',
       command: 'eslint',
-      args: [...configArguments, '--format', 'json', '--no-error-on-unmatched-pattern', ...directFiles],
+      args: [
+        ...configArguments,
+        '--format',
+        'json',
+        '--no-error-on-unmatched-pattern',
+        '--no-warn-ignored',
+        ...directFiles,
+      ],
       cwd: moduleDefinition.moduleRoot,
       env: commandEnvironment,
       directFiles,
@@ -479,7 +538,25 @@ function buildCommandEntry(toolEntry, moduleDefinition, semgrepResolution, modul
     || toolEntry.tool === 'eslint'
     || toolEntry.tool === 'stylelint'
     || toolEntry.tool === 'htmlhint') {
-    return buildWebCommandEntry(toolEntry.tool, moduleDefinition, moduleFiles, options);
+    let toolFiles = moduleFiles;
+    if (toolEntry.tool === 'eslint' && toolEntry.phase === 'formatter') {
+      toolFiles = filterEslintFormatterFiles(
+        moduleFiles,
+        options.web && options.web.eslint,
+      );
+    }
+    if (toolEntry.tool === 'prettier') {
+      const eslintFormatterFileSet = new Set(filterEslintFormatterFiles(
+        moduleFiles,
+        options.web && options.web.eslint,
+      ));
+      toolFiles = moduleFiles.filter((filePath) => !eslintFormatterFileSet.has(filePath));
+    }
+
+    return buildWebCommandEntry(toolEntry.tool, moduleDefinition, toolFiles, {
+      ...options,
+      phase: toolEntry.phase,
+    });
   }
 
   if (toolEntry.tool === 'semgrep') {

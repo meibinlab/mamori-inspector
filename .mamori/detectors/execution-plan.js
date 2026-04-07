@@ -17,6 +17,12 @@ const JAVASCRIPT_FILE_EXTENSIONS = ['.js', '.cjs', '.mjs', '.jsx'];
 // TypeScript 系の対象拡張子一覧を表す
 const TYPESCRIPT_FILE_EXTENSIONS = ['.ts', '.cts', '.mts', '.tsx'];
 
+// ESLint formatter へ委譲する direct file 拡張子一覧を表す
+const ESLINT_FORMATTER_FILE_EXTENSIONS = new Set([
+  ...JAVASCRIPT_FILE_EXTENSIONS,
+  ...TYPESCRIPT_FILE_EXTENSIONS,
+]);
+
 // HTML ファイル拡張子一覧を表す
 const HTML_FILE_EXTENSIONS = ['.html', '.htm'];
 
@@ -118,6 +124,29 @@ function shouldIncludeTypeScriptForEslint(eslintResolution) {
       && eslintResolution.source
       && eslintResolution.source !== 'default',
   );
+}
+
+/**
+ * プロジェクト ESLint 設定を利用できるか判定する。
+ * @param {{enabled?: boolean, source?: string}|undefined} eslintResolution ESLint 設定解決結果を表す。
+ * @returns {boolean} プロジェクト設定を利用できる場合は true を返す。
+ */
+function hasProjectEslintConfiguration(eslintResolution) {
+  return shouldIncludeTypeScriptForEslint(eslintResolution);
+}
+
+/**
+ * ESLint formatter へ委譲する direct file 一覧を返す。
+ * @param {string[]|undefined} files 対象ファイル一覧を表す。
+ * @param {{enabled?: boolean, source?: string}|undefined} eslintResolution ESLint 設定解決結果を表す。
+ * @returns {string[]} ESLint formatter 対象一覧を返す。
+ */
+function filterEslintFormatterFiles(files, eslintResolution) {
+  if (!hasProjectEslintConfiguration(eslintResolution) || !Array.isArray(files)) {
+    return [];
+  }
+
+  return files.filter((filePath) => hasMatchingExtension(filePath, ESLINT_FORMATTER_FILE_EXTENSIONS));
 }
 
 /**
@@ -351,8 +380,18 @@ function buildWebFormatterPlan(options) {
     return [];
   }
 
-  const prettierFiles = filterWebFiles(options.files, 'prettier');
+  const eslintFormatterFiles = filterEslintFormatterFiles(
+    options.files,
+    options.web && options.web.eslint,
+  );
+  const eslintFormatterFileSet = new Set(eslintFormatterFiles);
+  const prettierFiles = filterWebFiles(options.files, 'prettier')
+    .filter((filePath) => !eslintFormatterFileSet.has(filePath));
   return [
+    buildToolEntry('eslint', eslintFormatterFiles.length > 0, {
+      phase: 'formatter',
+      status: eslintFormatterFiles.length > 0 ? undefined : 'no-target-files',
+    }),
     buildToolEntry('prettier', prettierFiles.length > 0, {
       phase: 'formatter',
       status: prettierFiles.length > 0 ? undefined : 'no-target-files',

@@ -33,7 +33,8 @@
 
 整形:
 - Java: Spotless（ビルド定義検出できる場合のみ）
-- JavaScript/CSS/HTML: Prettier
+- JavaScript / TypeScript direct file: `eslint --fix`（明示設定 → discovery → `package.json#eslintConfig` を利用できる場合のみ。HTML 内 inline script は対象外）
+- JavaScript fallback / CSS / HTML: Prettier
 
 チェック:
 - Java: Checkstyle / PMD / Semgrep
@@ -73,7 +74,8 @@ HTML inline style の扱い（確定）:
 
 整形:
 - Java: Spotless（可能なら）
-- JavaScript/CSS/HTML: Prettier
+- JavaScript / TypeScript direct file: `eslint --fix`（明示設定 → discovery → `package.json#eslintConfig` を利用できる場合のみ。HTML 内 inline script は対象外）
+- JavaScript fallback / CSS / HTML: Prettier
 
 チェック:
 - Java: Checkstyle / PMD / Semgrep
