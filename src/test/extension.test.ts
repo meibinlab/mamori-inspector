@@ -2432,6 +2432,70 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
   });
 
   /**
+   * 拡張コマンドの hook install が空ワークスペースへ runner も同期すること。
+   * @returns 実行完了を待つ Promise を返す。
+   */
+  test('Synchronizes the managed runner when installing Git hooks for an added workspace folder', async function() {
+    this.timeout(30000);
+
+    const activeVscodeApi = vscodeApi;
+    const secondaryWorkspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mamori-hooks-workspace-'));
+    const workspaceFilePath = path.join(secondaryWorkspaceRoot, 'README.md');
+    const preCommitHookPath = path.join(secondaryWorkspaceRoot, '.git', 'hooks', 'pre-commit');
+    const prePushHookPath = path.join(secondaryWorkspaceRoot, '.git', 'hooks', 'pre-push');
+    const runnerPath = path.join(secondaryWorkspaceRoot, '.mamori', 'mamori.js');
+    const alreadyOpened = (activeVscodeApi.workspace.workspaceFolders || []).some(
+      (workspaceFolder) => workspaceFolder.uri.fsPath === secondaryWorkspaceRoot,
+    );
+
+    fs.mkdirSync(path.dirname(preCommitHookPath), { recursive: true });
+    fs.writeFileSync(workspaceFilePath, '# secondary workspace\n', 'utf8');
+
+    const updateSucceeded = activeVscodeApi.workspace.updateWorkspaceFolders(
+      activeVscodeApi.workspace.workspaceFolders?.length || 0,
+      0,
+      {
+        uri: activeVscodeApi.Uri.file(secondaryWorkspaceRoot),
+        name: 'mamori-hooks-secondary',
+      },
+    );
+
+    if (!updateSucceeded && !alreadyOpened) {
+      fs.rmSync(secondaryWorkspaceRoot, { recursive: true, force: true });
+      throw new Error('Failed to add workspace folder');
+    }
+
+    try {
+      await waitFor(() => (activeVscodeApi.workspace.workspaceFolders?.length || 0) >= 2);
+      await getMamoriExtension(activeVscodeApi).activate();
+
+      const document = await activeVscodeApi.workspace.openTextDocument(activeVscodeApi.Uri.file(workspaceFilePath));
+      await activeVscodeApi.window.showTextDocument(document);
+      await activeVscodeApi.commands.executeCommand('mamori-inspector.installGitHooks');
+
+      await waitFor(() => fs.existsSync(runnerPath));
+      await waitFor(() => fs.existsSync(preCommitHookPath) && fs.existsSync(prePushHookPath));
+
+      assert.match(fs.readFileSync(preCommitHookPath, 'utf8'), /mamori-inspector-managed-hook/u);
+      assert.match(fs.readFileSync(preCommitHookPath, 'utf8'), /--mode precommit --scope staged --execute/u);
+      assert.match(fs.readFileSync(prePushHookPath, 'utf8'), /--mode prepush --scope workspace --execute/u);
+      assert.match(fs.readFileSync(runnerPath, 'utf8'), /hooks <install\|uninstall>/u);
+    } finally {
+      const workspaceFolders = activeVscodeApi.workspace.workspaceFolders || [];
+      const secondaryWorkspaceIndex = workspaceFolders.findIndex(
+        (workspaceFolder) => workspaceFolder.uri.fsPath === secondaryWorkspaceRoot,
+      );
+      if (secondaryWorkspaceIndex >= 0) {
+        activeVscodeApi.workspace.updateWorkspaceFolders(secondaryWorkspaceIndex, 1);
+        await waitFor(() => !(activeVscodeApi.workspace.workspaceFolders || []).some(
+          (workspaceFolder) => workspaceFolder.uri.fsPath === secondaryWorkspaceRoot,
+        ));
+      }
+      fs.rmSync(secondaryWorkspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  /**
    * 未管理の既存 hook がある場合は保持したまま install を継続できること。
    * @returns 実行完了を待つ Promise を返す。
    */

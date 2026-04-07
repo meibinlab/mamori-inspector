@@ -4,6 +4,12 @@
 
 形式は Keep a Changelog を参考にしつつ、このリポジトリの実装状況に合わせて整理します。
 
+## [0.2.36] - 2026-04-07
+
+### Fixed
+- `Install Git Hooks` と `Setup Managed Tools` 実行時に、同梱 runner の静的 runtime をワークスペース直下の `.mamori/` へ同期するようにし、初回運用時に `.mamori/mamori.js` が見つからず管理対象 hook が warning で停止する問題を修正しました。
+- 追加ワークスペースへ `Install Git Hooks` を実行したとき、hook とあわせて runner も同期されることを確認する拡張回帰テストを追加しました。
+
 ## [0.2.35] - 2026-04-07
 
 ### Changed

@@ -38,6 +38,18 @@ const ENABLED_CONFIGURATION_KEY = 'enabled';
 const MANUAL_SARIF_OUTPUT = path.join('.mamori', 'out', 'combined.sarif');
 // 保存時実行向けの SARIF 出力先を表す
 const SAVE_SARIF_OUTPUT = path.join('.mamori', 'out', 'combined-save.sarif');
+// ワークスペースへ同期する Mamori runtime の静的エントリ一覧を表す
+const WORKSPACE_MAMORI_RUNTIME_ENTRIES = [
+  'mamori.js',
+  'adapters',
+  'config',
+  'core',
+  'detectors',
+  'hooks',
+  path.join('tools', 'catalog.js'),
+  path.join('tools', 'exec.js'),
+  path.join('tools', 'provision.js'),
+];
 // 保存時自動チェック対象の言語一覧を表す
 const AUTO_SAVE_LANGUAGE_IDS = new Set([
   'java',
@@ -79,6 +91,11 @@ const TRANSIENT_NON_ERROR_NOTIFICATION_MILLISECONDS = 5000;
 
 /** ローカライズ埋め込み引数を表す。 */
 type LocalizationArguments = Array<string | number | boolean> | Record<string, string | number | boolean>;
+/** 非エラー通知向け表示先を表す。 */
+type TransientMessagePresenter = {
+  showInformationMessage: (message: string) => Thenable<unknown>;
+  showWarningMessage: (message: string) => Thenable<unknown>;
+};
 
 /**
  * 既定英語文言をローカライズする。
@@ -293,10 +310,7 @@ function showTransientNonErrorMessage(message: string): void {
  * hooks / maintenance 成功通知向けの表示先を返す。
  * @returns 通知表示先を返す。
  */
-function getTransientMessagePresenter(): {
-  showInformationMessage: (message: string) => Thenable<unknown>;
-  showWarningMessage: (message: string) => Thenable<unknown>;
-} {
+function getTransientMessagePresenter(): TransientMessagePresenter {
   return {
     showInformationMessage: async(message: string) => {
       showTransientNonErrorMessage(message);
@@ -479,12 +493,30 @@ interface DiagnosticsState {
 }
 
 /**
+ * ワークスペース直下の Mamori ルートパスを返す。
+ * @param workspaceFolder ワークスペースフォルダーを表す。
+ * @returns Mamori ルートパスを返す。
+ */
+function getWorkspaceMamoriRootPath(workspaceFolder: vscode.WorkspaceFolder): string {
+  return path.join(workspaceFolder.uri.fsPath, '.mamori');
+}
+
+/**
  * ワークスペース直下の Mamori CLI パスを返す。
  * @param workspaceFolder ワークスペースフォルダーを表す。
  * @returns CLI スクリプトパスを返す。
  */
 function getWorkspaceMamoriCliPath(workspaceFolder: vscode.WorkspaceFolder): string {
-  return path.join(workspaceFolder.uri.fsPath, '.mamori', 'mamori.js');
+  return path.join(getWorkspaceMamoriRootPath(workspaceFolder), 'mamori.js');
+}
+
+/**
+ * 拡張同梱の Mamori ルートパスを返す。
+ * @param extensionRootPath 拡張ルートパスを表す。
+ * @returns Mamori ルートパスを返す。
+ */
+function getBundledMamoriRootPath(extensionRootPath: string): string {
+  return path.join(extensionRootPath, '.mamori');
 }
 
 /**
@@ -493,7 +525,40 @@ function getWorkspaceMamoriCliPath(workspaceFolder: vscode.WorkspaceFolder): str
  * @returns CLI スクリプトパスを返す。
  */
 function getBundledMamoriCliPath(extensionRootPath: string): string {
-  return path.join(extensionRootPath, '.mamori', 'mamori.js');
+  return path.join(getBundledMamoriRootPath(extensionRootPath), 'mamori.js');
+}
+
+/**
+ * 拡張同梱の Mamori runtime をワークスペースへ同期する。
+ * @param workspaceFolder 同期先ワークスペースフォルダーを表す。
+ * @param extensionRootPath 拡張ルートパスを表す。
+ * @returns 返り値はない。
+ */
+function synchronizeMamoriRuntimeToWorkspace(
+  workspaceFolder: vscode.WorkspaceFolder,
+  extensionRootPath: string,
+): void {
+  const bundledMamoriRootPath = getBundledMamoriRootPath(extensionRootPath);
+  const workspaceMamoriRootPath = getWorkspaceMamoriRootPath(workspaceFolder);
+
+  for (const runtimeEntry of WORKSPACE_MAMORI_RUNTIME_ENTRIES) {
+    const sourcePath = path.join(bundledMamoriRootPath, runtimeEntry);
+    if (!fs.existsSync(sourcePath)) {
+      throw new Error(`Bundled Mamori runtime entry was not found: ${sourcePath}`);
+    }
+
+    const targetPath = path.join(workspaceMamoriRootPath, runtimeEntry);
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+
+    const sourceStats = fs.statSync(sourcePath);
+    if (sourceStats.isDirectory()) {
+      fs.mkdirSync(targetPath, { recursive: true });
+      fs.cpSync(sourcePath, targetPath, { recursive: true, force: true });
+      continue;
+    }
+
+    fs.copyFileSync(sourcePath, targetPath);
+  }
 }
 
 /**
@@ -862,6 +927,9 @@ function createManageHooksCommand(
           cancellable: false,
         },
         async() => {
+          if (action === 'install') {
+            synchronizeMamoriRuntimeToWorkspace(workspaceFolder, extensionRootPath);
+          }
           commandResult = await runMamoriCliCommand(
             workspaceFolder,
             buildMamoriHooksArguments(action),
@@ -917,6 +985,9 @@ function createManageMaintenanceCommand(
           cancellable: false,
         },
         async() => {
+          if (action === 'setup') {
+            synchronizeMamoriRuntimeToWorkspace(workspaceFolder, extensionRootPath);
+          }
           commandResult = await runMamoriCliCommand(
             workspaceFolder,
             buildMamoriMaintenanceArguments(action),

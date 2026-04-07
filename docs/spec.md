@@ -129,6 +129,7 @@ SpotBugsの例外仕様（確定）:
 
 - 目的: VS Code外（git hooks）でも確実に同じ処理を実行する
 - 前提: 通常の git hooks 検証には Node が必要だが、管理対象 hook は解決した `node` コマンドが利用できない場合に warning を出して成功終了する
+- 拡張の `hooks install` と `setup` は、同梱 runner の静的 runtime をワークスペース直下の `.mamori/` へ同期してから実行する
 - `setup` と `run --execute` では、ワークスペースが Git リポジトリであれば、ローカルの `.git/info/exclude` へワークスペースルートの `/.mamori/` と、リポジトリ配下で見つかった repo-relative な nested `.mamori` を best-effort で追加する
 - `.git/info/exclude` の更新失敗は warning として扱い、Mamori の処理自体は継続する
 
