@@ -1080,13 +1080,16 @@ function createHooksMessageRecorder(): {
 function captureWindowMessages(vscodeApi: VscodeModule): {
   informationMessages: string[];
   errorMessages: string[];
+  statusBarMessages: string[];
   restore: () => void;
 } {
   const informationMessages: string[] = [];
   const errorMessages: string[] = [];
+  const statusBarMessages: string[] = [];
   const windowApi = vscodeApi.window as unknown as Record<string, unknown>;
   const originalShowInformationMessage = windowApi.showInformationMessage;
   const originalShowErrorMessage = windowApi.showErrorMessage;
+  const originalSetStatusBarMessage = windowApi.setStatusBarMessage;
 
   Object.defineProperty(windowApi, 'showInformationMessage', {
     configurable: true,
@@ -1104,10 +1107,22 @@ function captureWindowMessages(vscodeApi: VscodeModule): {
       return undefined;
     },
   });
+  Object.defineProperty(windowApi, 'setStatusBarMessage', {
+    configurable: true,
+    writable: true,
+    value: (message: string) => {
+      statusBarMessages.push(message);
+      if (!/^Mamori Inspector: Reflected \d+ save-check diagnostics\./u.test(message)) {
+        informationMessages.push(message);
+      }
+      return { dispose: () => {} };
+    },
+  });
 
   return {
     informationMessages,
     errorMessages,
+    statusBarMessages,
     restore: () => {
       Object.defineProperty(windowApi, 'showInformationMessage', {
         configurable: true,
@@ -1118,6 +1133,11 @@ function captureWindowMessages(vscodeApi: VscodeModule): {
         configurable: true,
         writable: true,
         value: originalShowErrorMessage,
+      });
+      Object.defineProperty(windowApi, 'setStatusBarMessage', {
+        configurable: true,
+        writable: true,
+        value: originalSetStatusBarMessage,
       });
     },
   };

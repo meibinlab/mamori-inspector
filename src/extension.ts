@@ -74,6 +74,8 @@ const SAVE_SUPPRESSION_MILLISECONDS = 1500;
 const CONFIGURATION_UPDATE_TIMEOUT_MILLISECONDS = 5000;
 // 設定反映待機のポーリング間隔を表す
 const CONFIGURATION_UPDATE_POLLING_MILLISECONDS = 100;
+// 非エラー通知を自動非表示にする時間を表す
+const TRANSIENT_NON_ERROR_NOTIFICATION_MILLISECONDS = 5000;
 
 /** ローカライズ埋め込み引数を表す。 */
 type LocalizationArguments = Array<string | number | boolean> | Record<string, string | number | boolean>;
@@ -273,6 +275,38 @@ function getSaveCheckStatusMessage(diagnosticsCount: number): string {
     'Status bar message shown after save-check diagnostics are published.',
     [diagnosticsCount],
   );
+}
+
+/**
+ * 非エラー通知を自動非表示の status bar へ表示する。
+ * @param message 表示するメッセージを表す。
+ * @returns 返り値はない。
+ */
+function showTransientNonErrorMessage(message: string): void {
+  void vscode.window.setStatusBarMessage(
+    message,
+    TRANSIENT_NON_ERROR_NOTIFICATION_MILLISECONDS,
+  );
+}
+
+/**
+ * hooks / maintenance 成功通知向けの表示先を返す。
+ * @returns 通知表示先を返す。
+ */
+function getTransientMessagePresenter(): {
+  showInformationMessage: (message: string) => Thenable<unknown>;
+  showWarningMessage: (message: string) => Thenable<unknown>;
+} {
+  return {
+    showInformationMessage: async(message: string) => {
+      showTransientNonErrorMessage(message);
+      return undefined;
+    },
+    showWarningMessage: async(message: string) => {
+      showTransientNonErrorMessage(message);
+      return undefined;
+    },
+  };
 }
 
 /**
@@ -815,7 +849,7 @@ function createManageHooksCommand(
   return async() => {
     const workspaceFolder = await resolveWorkspaceFolderForSingleTargetCommand();
     if (!workspaceFolder) {
-      void vscode.window.showWarningMessage(getOpenWorkspaceMessage());
+      showTransientNonErrorMessage(getOpenWorkspaceMessage());
       return;
     }
 
@@ -840,7 +874,7 @@ function createManageHooksCommand(
         action,
         commandResult ? commandResult.stdout : '',
         outputChannel,
-        vscode.window,
+        getTransientMessagePresenter(),
         getHooksCommandMessages(),
       );
     } catch (error) {
@@ -868,7 +902,7 @@ function createManageMaintenanceCommand(
   return async() => {
     const workspaceFolder = await resolveWorkspaceFolderForSingleTargetCommand();
     if (!workspaceFolder) {
-      void vscode.window.showWarningMessage(getOpenWorkspaceMessage());
+      showTransientNonErrorMessage(getOpenWorkspaceMessage());
       return;
     }
 
@@ -897,7 +931,7 @@ function createManageMaintenanceCommand(
       reportMaintenanceCommandSuccess(
         action,
         commandResult ? commandResult.stdout : '',
-        vscode.window,
+        getTransientMessagePresenter(),
         getMaintenanceCommandMessages(),
       );
     } catch (error) {
@@ -1415,9 +1449,7 @@ async function runSaveCheck(
         const toolLabel = getSaveCheckToolLabel(toolId);
         outputChannel.appendLine(`Mamori Inspector save check running for ${filePath}: ${toolLabel}`);
         setTimeout(() => {
-          void vscode.window.showInformationMessage(
-            getSaveCheckStartToastMessage(fileName, toolLabel),
-          );
+          showTransientNonErrorMessage(getSaveCheckStartToastMessage(fileName, toolLabel));
         }, 0);
       },
     });
@@ -1483,7 +1515,7 @@ function createRunWorkspaceCheckCommand(
   return async() => {
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders || workspaceFolders.length === 0) {
-      void vscode.window.showWarningMessage(getOpenWorkspaceMessage());
+      showTransientNonErrorMessage(getOpenWorkspaceMessage());
       return;
     }
 
@@ -1491,7 +1523,7 @@ function createRunWorkspaceCheckCommand(
     if (existingWorkspaceFolders.length === 0) {
       diagnosticsState.manualDiagnosticsByUri.clear();
       publishTrackedDiagnostics(diagnosticCollection, diagnosticsState);
-      void vscode.window.showWarningMessage(getNoAvailableWorkspaceMessage());
+      showTransientNonErrorMessage(getNoAvailableWorkspaceMessage());
       return;
     }
 
@@ -1540,7 +1572,7 @@ function createRunWorkspaceCheckCommand(
       mergeDiagnosticsByUri(diagnosticsState.manualDiagnosticsByUri, diagnosticsByUri);
       publishTrackedDiagnostics(diagnosticCollection, diagnosticsState);
       const diagnosticsCount = countDiagnosticsByUri(diagnosticsByUri);
-      void vscode.window.showInformationMessage(getWorkspaceCheckSuccessMessage(diagnosticsCount));
+      showTransientNonErrorMessage(getWorkspaceCheckSuccessMessage(diagnosticsCount));
     } catch (error) {
       const details = error instanceof Error ? error.message : String(error);
       diagnosticsState.manualDiagnosticsByUri.clear();
@@ -1567,7 +1599,7 @@ function createSetWorkspaceEnablementCommand(
   return async() => {
     const workspaceFolder = await resolveWorkspaceFolderForSingleTargetCommand();
     if (!workspaceFolder) {
-      void vscode.window.showWarningMessage(getOpenWorkspaceMessage());
+      showTransientNonErrorMessage(getOpenWorkspaceMessage());
       return;
     }
 
@@ -1576,9 +1608,7 @@ function createSetWorkspaceEnablementCommand(
       if (!enabled) {
         clearDiagnosticsForWorkspaceFolder(diagnosticsState, diagnosticCollection, workspaceFolder);
       }
-      void vscode.window.showInformationMessage(
-        getWorkspaceEnablementSuccessMessage(enabled, workspaceFolder.name),
-      );
+      showTransientNonErrorMessage(getWorkspaceEnablementSuccessMessage(enabled, workspaceFolder.name));
     } catch (error) {
       const details = error instanceof Error ? error.message : String(error);
       void vscode.window.showErrorMessage(getWorkspaceEnablementFailureMessage(details));

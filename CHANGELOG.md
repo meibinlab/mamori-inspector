@@ -4,6 +4,11 @@
 
 形式は Keep a Changelog を参考にしつつ、このリポジトリの実装状況に合わせて整理します。
 
+## [0.2.35] - 2026-04-07
+
+### Changed
+- 保存時開始通知、workspace check 成功通知、hooks/setup/cache-clear の成功・警告通知、ワークスペース有効化通知など、非エラー通知を自動非表示の status bar 表示へ変更しました。
+
 ## [0.2.34] - 2026-04-07
 
 ### Changed
