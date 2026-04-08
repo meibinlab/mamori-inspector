@@ -59,15 +59,15 @@ async function run() {
   // vscode-test を子プロセスで起動する
   const child = process.platform === 'win32'
     ? spawn('cmd.exe', ['/d', '/s', '/c', 'npx', 'vscode-test', ...forwardedArguments], {
-        stdio: 'inherit',
-        shell: false,
-        env: childEnvironment,
-      })
+      stdio: 'inherit',
+      shell: false,
+      env: childEnvironment,
+    })
     : spawn('npx', ['vscode-test', ...forwardedArguments], {
-        stdio: 'inherit',
-        shell: false,
-        env: childEnvironment,
-      });
+      stdio: 'inherit',
+      shell: false,
+      env: childEnvironment,
+    });
 
   return await new Promise((resolve) => {
     child.on('close', (code) => {
