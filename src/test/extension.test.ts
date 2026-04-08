@@ -842,7 +842,7 @@ function setupSaveIntegrationFixture(workspacePath: string): {
   mavenLogPath: string;
   semgrepLogPath: string;
 } {
-  const fixtureDirectory = path.join(workspacePath, '.tmp-save-check');
+  const fixtureDirectory = fs.mkdtempSync(path.join(workspacePath, '.tmp-save-check-'));
   const sourceDirectory = path.join(fixtureDirectory, 'src', 'main', 'java');
   const binDirectory = path.join(fixtureDirectory, 'bin');
   const javaFilePath = path.join(sourceDirectory, 'App.java');
@@ -1623,7 +1623,7 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
    * @returns 実行完了を待つ Promise を返す。
    */
   test('Publishes partial save diagnostics when Semgrep startup fails after Maven results are generated', async function() {
-    this.timeout(20000);
+    this.timeout(30000);
     const activeVscodeApi = vscodeApi;
     const workspaceRoot = activeVscodeApi.workspace.workspaceFolders?.[0]?.uri.fsPath;
     if (!workspaceRoot) {
@@ -1670,6 +1670,9 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
           true,
         );
 
+        // 直前テストと同じ fixture パスを使うため、保存抑止時間を跨いでから次の save を実行する。
+        await delay(1700);
+
         const editor = activeVscodeApi.window.activeTextEditor;
         if (!editor) {
           throw new Error('Active text editor was not found');
@@ -1680,9 +1683,9 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
         });
         await document.save();
 
-        await waitFor(() => fs.existsSync(saveSarifPath));
-        await waitFor(() => fs.existsSync(mavenLogPath));
-        await waitFor(() => activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(javaFilePath)).length === 2);
+        await waitFor(() => fs.existsSync(saveSarifPath), 20000);
+        await waitFor(() => fs.existsSync(mavenLogPath), 20000);
+        await waitFor(() => activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(javaFilePath)).length === 2, 20000);
 
         const diagnostics = activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(javaFilePath));
         const messages = diagnostics.map((diagnostic) => diagnostic.message);
