@@ -30,7 +30,7 @@
 3) 結果を統合し、VS Code Problems（Diagnostics）に反映
 
 - 保存時実行が一部ツール失敗で終了コード 2 となっても、生成済みの SARIF がある場合は、その時点までの Diagnostics を Problems に反映し、失敗詳細はログへ残す
-- 保存時検証では、対象ファイルに対して実際に開始した formatter / checker ごとに、ファイル名と単一ツール名だけを情報トーストで表示する
+- 保存時検証では、対象ファイルに対して実際に開始した formatter / checker ごとに、ファイル名と単一ツール名だけをステータスバーへ表示する
 
 整形:
 - Java: Spotless（ビルド定義検出できる場合のみ）
@@ -107,6 +107,8 @@ SpotBugsの例外仕様（確定）:
 - CSS: Stylelint を実行する
 - HTML: htmlhint を実行し、inline script は ESLint、inline style は Stylelint で追加検査する
 - Web 系ツールの設定解決と inline HTML の扱いは pre-push と同じとする
+- manual 実行開始時は、開始を知らせる短時間のトースト通知を表示する
+- 保存時と manual 実行の静的解析進捗表示はステータスバーへ統一する
 - 拡張の manual 実行が成功した場合、同一ワークスペースに対して反映済みの保存時 Diagnostics は、manual の最新結果で置き換える
 
 優先実装:
@@ -131,6 +133,7 @@ SpotBugsの例外仕様（確定）:
 - 目的: VS Code外（git hooks）でも確実に同じ処理を実行する
 - 前提: 通常の git hooks 検証には Node が必要だが、管理対象 hook は解決した `node` コマンドが利用できない場合に warning を出して成功終了する
 - 拡張の `hooks install` と `setup` は、同梱 runner の静的 runtime をワークスペース直下の `.mamori/` へ同期してから実行する
+- 拡張の activate 時と workspace 追加時は、既に `.mamori/` が存在するワークスペースに対して同梱 runner の静的 runtime を best-effort で再同期する
 - 同期する `.mamori/` には `type: commonjs` を持つ `package.json` を含め、導入先ワークスペースの `package.json#type` に依存せず runner を CommonJS として起動できるようにする
 - `setup` と `run --execute` では、ワークスペースが Git リポジトリであれば、ローカルの `.git/info/exclude` へワークスペースルートの `/.mamori/` と、リポジトリ配下で見つかった repo-relative な nested `.mamori` を best-effort で追加する
 - `.git/info/exclude` の更新失敗は warning として扱い、Mamori の処理自体は継続する

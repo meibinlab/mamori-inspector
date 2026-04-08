@@ -30,6 +30,7 @@
     "url": "https://github.com/meibinlab/mamori-inspector/issues"
   },
   "activationEvents": [
+    "onStartupFinished",
     "onLanguage:java",
     "onLanguage:javascript",
     "onLanguage:javascriptreact",

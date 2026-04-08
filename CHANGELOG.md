@@ -9,9 +9,13 @@
 ### Changed
 - 保存時整形が VS Code の formatter や save 系 editor 設定を自動変更しないことを README と仕様書に明記しました。
 - direct JavaScript / TypeScript でプロジェクト ESLint 設定を解決できる場合は Prettier ではなく `eslint --fix` を使い、Prettier は実行しないことを README と仕様書で明確化しました。
+- 既存の `.mamori/` を持つワークスペースでは、拡張の activate 時と workspace 追加時に管理 runtime を自動再同期するようにしました。拡張更新後は、通常、一度 VS Code で対象 workspace を開けば hook 用 runner も更新されます。
+- 保存時と手動実行の静的解析進捗表示を、通知エリアではなくステータスバーへ統一しました。
+- 手動の workspace check を開始した時点で、進捗通知とは別に短時間で自動的に消える開始トーストを表示するようにしました。
 
 ### Fixed
 - `Install Git Hooks` でワークスペースへ同期する `.mamori/` に `type: commonjs` を固定する `package.json` を含め、導入先プロジェクトが `"type": "module"` でも pre-commit / pre-push の runner 読み込みが失敗しないようにしました。
+- Git hook を使う既存利用者が古い `.mamori/` を保持したままでも、拡張更新後に workspace を開いた時点で runner を追随更新できるようにしました。
 
 ## [0.2.38] - 2026-04-08
 

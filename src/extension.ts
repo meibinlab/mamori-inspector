@@ -90,6 +90,9 @@ const CONFIGURATION_UPDATE_POLLING_MILLISECONDS = 100;
 // 非エラー通知を自動非表示にする時間を表す
 const TRANSIENT_NON_ERROR_NOTIFICATION_MILLISECONDS = 5000;
 
+/** 一時トーストの自動非表示時間を表す。 */
+const TRANSIENT_NOTIFICATION_TOAST_MILLISECONDS = 3000;
+
 /** ローカライズ埋め込み引数を表す。 */
 type LocalizationArguments = Array<string | number | boolean> | Record<string, string | number | boolean>;
 /** 非エラー通知向け表示先を表す。 */
@@ -308,6 +311,26 @@ function showTransientNonErrorMessage(message: string): void {
 }
 
 /**
+ * 通知エリアへ自動非表示の一時トーストを表示する。
+ * @param message 表示するメッセージを表す。
+ * @returns 返り値はない。
+ */
+function showTransientNotificationToast(message: string): void {
+  void vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: message,
+      cancellable: false,
+    },
+    async() => {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, TRANSIENT_NOTIFICATION_TOAST_MILLISECONDS);
+      });
+    },
+  );
+}
+
+/**
  * hooks / maintenance 成功通知向けの表示先を返す。
  * @returns 通知表示先を返す。
  */
@@ -374,6 +397,17 @@ function getWorkspaceCheckProgressTitle(): string {
   return localize(
     'Running Mamori Inspector',
     'Progress notification title while a manual workspace check is running.',
+  );
+}
+
+/**
+ * 手動実行開始の一時トースト文言を返す。
+ * @returns 開始通知文言を返す。
+ */
+function getWorkspaceCheckStartedMessage(): string {
+  return localize(
+    'Mamori Inspector: Started workspace check.',
+    'Transient notification shown when a manual workspace check starts.',
   );
 }
 
@@ -559,6 +593,49 @@ function synchronizeMamoriRuntimeToWorkspace(
     }
 
     fs.copyFileSync(sourcePath, targetPath);
+  }
+}
+
+/**
+ * 既存の `.mamori` を持つワークスペースに対して runtime を best-effort で同期する。
+ * @param workspaceFolder 対象ワークスペースフォルダーを表す。
+ * @param extensionRootPath 拡張ルートパスを表す。
+ * @param outputChannel 出力チャネルを表す。
+ * @returns 返り値はない。
+ */
+export function synchronizeExistingMamoriRuntimeIfPresent(
+  workspaceFolder: vscode.WorkspaceFolder,
+  extensionRootPath: string,
+  outputChannel: vscode.OutputChannel,
+): void {
+  const workspaceMamoriRootPath = getWorkspaceMamoriRootPath(workspaceFolder);
+  if (!fs.existsSync(workspaceMamoriRootPath)) {
+    return;
+  }
+
+  try {
+    synchronizeMamoriRuntimeToWorkspace(workspaceFolder, extensionRootPath);
+  } catch (error) {
+    outputChannel.appendLine(
+      `Mamori Inspector could not synchronize existing workspace runtime: ${workspaceFolder.uri.fsPath}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+/**
+ * 既存 `.mamori` を持つワークスペース群へ runtime を best-effort で同期する。
+ * @param workspaceFolders 対象ワークスペース一覧を表す。
+ * @param extensionRootPath 拡張ルートパスを表す。
+ * @param outputChannel 出力チャネルを表す。
+ * @returns 返り値はない。
+ */
+function synchronizeExistingMamoriRuntimeForWorkspaceFolders(
+  workspaceFolders: readonly vscode.WorkspaceFolder[],
+  extensionRootPath: string,
+  outputChannel: vscode.OutputChannel,
+): void {
+  for (const workspaceFolder of workspaceFolders) {
+    synchronizeExistingMamoriRuntimeIfPresent(workspaceFolder, extensionRootPath, outputChannel);
   }
 }
 
@@ -1604,27 +1681,25 @@ function createRunWorkspaceCheckCommand(
         workspaceFolder,
         sarifPath: getSarifOutputPath(workspaceFolder, MANUAL_SARIF_OUTPUT),
       }));
-      await vscode.window.withProgress(
-        {
-          location: vscode.ProgressLocation.Notification,
-          title: getWorkspaceCheckProgressTitle(),
-          cancellable: false,
-        },
-        async(progress) => {
-          for (const [index, sarifOutput] of sarifOutputs.entries()) {
-            fs.rmSync(sarifOutput.sarifPath, { force: true });
-            progress.report({
-              increment: 100 / sarifOutputs.length,
-              message: `${sarifOutput.workspaceFolder.name} (${String(index + 1)}/${String(sarifOutputs.length)})`,
-            });
-            await runMamoriCli(sarifOutput.workspaceFolder, {
-              mode: 'manual',
-              scope: 'workspace',
-              sarifOutputPath: sarifOutput.sarifPath,
-            }, extensionRootPath);
-          }
-        },
+      showTransientNotificationToast(getWorkspaceCheckStartedMessage());
+      const manualRunPromise = (async() => {
+        for (const [index, sarifOutput] of sarifOutputs.entries()) {
+          fs.rmSync(sarifOutput.sarifPath, { force: true });
+          outputChannel.appendLine(
+            `Mamori Inspector workspace check running for ${sarifOutput.workspaceFolder.name} (${String(index + 1)}/${String(sarifOutputs.length)}).`,
+          );
+          await runMamoriCli(sarifOutput.workspaceFolder, {
+            mode: 'manual',
+            scope: 'workspace',
+            sarifOutputPath: sarifOutput.sarifPath,
+          }, extensionRootPath);
+        }
+      })();
+      void vscode.window.setStatusBarMessage(
+        getWorkspaceCheckProgressTitle(),
+        manualRunPromise,
       );
+      await manualRunPromise;
 
       const diagnosticsByUri = new Map<string, DiagnosticsByUriEntry>();
       for (const sarifOutput of sarifOutputs) {
@@ -1727,6 +1802,11 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push({
     dispose: () => saveCheckScheduler.dispose(),
   });
+  synchronizeExistingMamoriRuntimeForWorkspaceFolders(
+    vscode.workspace.workspaceFolders || [],
+    extensionRootPath,
+    outputChannel,
+  );
   context.subscriptions.push(
     vscode.commands.registerCommand(
       'mamori-inspector.enableInWorkspace',
@@ -1773,6 +1853,15 @@ export function activate(context: vscode.ExtensionContext): void {
       'mamori-inspector.clearToolCache',
       createManageMaintenanceCommand('cache-clear', outputChannel, extensionRootPath),
     ),
+  );
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeWorkspaceFolders((event) => {
+      synchronizeExistingMamoriRuntimeForWorkspaceFolders(
+        event.added,
+        extensionRootPath,
+        outputChannel,
+      );
+    }),
   );
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {

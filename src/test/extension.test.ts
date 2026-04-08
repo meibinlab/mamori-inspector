@@ -14,6 +14,8 @@ import { reportHooksCommandSuccess } from '../hooks-command-report';
 import { reportMaintenanceCommandSuccess } from '../maintenance-command-report';
 // SARIF 読み込み関数を表す
 import { loadSarifFindings } from '../sarif-diagnostics';
+// 既存 runtime の自動同期処理を表す
+import { synchronizeExistingMamoriRuntimeIfPresent } from '../extension';
 
 /** VS Code API 型を表す。 */
 type VscodeModule = typeof import('vscode');
@@ -1081,15 +1083,18 @@ function captureWindowMessages(vscodeApi: VscodeModule): {
   informationMessages: string[];
   errorMessages: string[];
   statusBarMessages: string[];
+  notificationProgressTitles: string[];
   restore: () => void;
 } {
   const informationMessages: string[] = [];
   const errorMessages: string[] = [];
   const statusBarMessages: string[] = [];
+  const notificationProgressTitles: string[] = [];
   const windowApi = vscodeApi.window as unknown as Record<string, unknown>;
   const originalShowInformationMessage = windowApi.showInformationMessage;
   const originalShowErrorMessage = windowApi.showErrorMessage;
   const originalSetStatusBarMessage = windowApi.setStatusBarMessage;
+  const originalWithProgress = windowApi.withProgress;
 
   Object.defineProperty(windowApi, 'showInformationMessage', {
     configurable: true,
@@ -1118,11 +1123,37 @@ function captureWindowMessages(vscodeApi: VscodeModule): {
       return { dispose: () => {} };
     },
   });
+  Object.defineProperty(windowApi, 'withProgress', {
+    configurable: true,
+    writable: true,
+    value: async(
+      options: { location?: unknown; title?: string },
+      task: (
+        progress: { report: (_value: unknown) => void },
+        token: unknown,
+      ) => Promise<unknown> | Thenable<unknown>,
+    ) => {
+      if (
+        options.location === vscodeApi.ProgressLocation.Notification
+        && typeof options.title === 'string'
+      ) {
+        notificationProgressTitles.push(options.title);
+      }
+
+      return await task(
+        {
+          report: () => {},
+        },
+        {},
+      );
+    },
+  });
 
   return {
     informationMessages,
     errorMessages,
     statusBarMessages,
+    notificationProgressTitles,
     restore: () => {
       Object.defineProperty(windowApi, 'showInformationMessage', {
         configurable: true,
@@ -1138,6 +1169,11 @@ function captureWindowMessages(vscodeApi: VscodeModule): {
         configurable: true,
         writable: true,
         value: originalSetStatusBarMessage,
+      });
+      Object.defineProperty(windowApi, 'withProgress', {
+        configurable: true,
+        writable: true,
+        value: originalWithProgress,
       });
     },
   };
@@ -1306,17 +1342,17 @@ suite('Extension Utility Test Suite', () => {
    * 保存時ツール開始行から個別ツール通知を組み立てられること。
    * @returns 返り値はない。
    */
-  test('Parses a save-check tool start line and builds a single-tool toast message', () => {
+  test('Parses a save-check tool start line and builds a single-tool status message', () => {
     const toolId = extensionHelpers.parseSaveCheckToolStartLine(
       'mamori: tool-start tool=checkstyle phase=check moduleRoot=C:\\workspace\\sample',
     );
     const toolLabel = extensionHelpers.getSaveCheckToolLabel(toolId || '');
-    const toastMessage = extensionHelpers.getSaveCheckStartToastMessage('App.java', toolLabel);
+    const statusMessage = extensionHelpers.getSaveCheckStartToastMessage('App.java', toolLabel);
 
     assert.strictEqual(toolId, 'checkstyle');
     assert.strictEqual(toolLabel, 'Checkstyle');
     assert.strictEqual(
-      toastMessage,
+      statusMessage,
       'Mamori Inspector: App.java - Checkstyle',
     );
   });
@@ -2520,6 +2556,61 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
   });
 
   /**
+   * 既存 `.mamori` を持つ追加ワークスペースが activate 後に自動同期されること。
+   * @returns 実行完了を待つ Promise を返す。
+   */
+  test('Automatically synchronizes an existing managed runtime for an added workspace folder', async function() {
+    const activeVscodeApi = vscodeApi;
+    const extensionRootPath = getMamoriExtension(activeVscodeApi).extensionUri.fsPath;
+    const secondaryWorkspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mamori-runtime-workspace-'));
+    const workspacePackageJsonPath = path.join(secondaryWorkspaceRoot, 'package.json');
+    const runnerPath = path.join(secondaryWorkspaceRoot, '.mamori', 'mamori.js');
+    const runtimePackageJsonPath = path.join(secondaryWorkspaceRoot, '.mamori', 'package.json');
+
+    fs.mkdirSync(path.dirname(runnerPath), { recursive: true });
+    fs.writeFileSync(
+      workspacePackageJsonPath,
+      `${JSON.stringify({ type: 'module' }, null, 2)}\n`,
+      'utf8',
+    );
+    fs.writeFileSync(runnerPath, 'stale runtime\n', 'utf8');
+
+    try {
+      synchronizeExistingMamoriRuntimeIfPresent(
+        {
+          uri: activeVscodeApi.Uri.file(secondaryWorkspaceRoot),
+          name: 'mamori-runtime-secondary',
+          index: 0,
+        } as VscodeWorkspaceFolder,
+        extensionRootPath,
+        {
+          appendLine: () => {},
+        } as unknown as import('vscode').OutputChannel,
+      );
+
+      assert.deepStrictEqual(
+        JSON.parse(fs.readFileSync(runtimePackageJsonPath, 'utf8')),
+        {
+          private: true,
+          type: 'commonjs',
+        },
+      );
+      assert.match(fs.readFileSync(runnerPath, 'utf8'), /hooks <install\|uninstall>/u);
+
+      const runnerExecutionResult = spawnSync(process.execPath, [runnerPath, 'help'], {
+        cwd: secondaryWorkspaceRoot,
+        encoding: 'utf8',
+      });
+
+      assert.strictEqual(runnerExecutionResult.status, 0);
+      assert.match(runnerExecutionResult.stdout, /Mamori Inspector CLI/u);
+      assert.strictEqual(runnerExecutionResult.stderr, '');
+    } finally {
+      fs.rmSync(secondaryWorkspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  /**
    * 未管理の既存 hook がある場合は保持したまま install を継続できること。
    * @returns 実行完了を待つ Promise を返す。
    */
@@ -2604,6 +2695,8 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
         await waitFor(() => fs.existsSync(manualSarifPath));
         await waitFor(() => fs.existsSync(mavenLogPath) && fs.existsSync(semgrepLogPath));
         await waitFor(() => activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(javaFilePath)).length === 3);
+        await waitFor(() => messageCapture.notificationProgressTitles.includes('Mamori Inspector: Started workspace check.'));
+        await waitFor(() => messageCapture.statusBarMessages.includes('Running Mamori Inspector'));
         await waitFor(() => messageCapture.informationMessages.length > 0 || messageCapture.errorMessages.length > 0);
 
         const diagnostics = activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(javaFilePath));
@@ -3109,6 +3202,8 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
         const messages = diagnostics.map((diagnostic) => diagnostic.message);
 
         assert.deepStrictEqual(messageCapture.errorMessages, []);
+        assert.ok(messageCapture.notificationProgressTitles.includes('Mamori Inspector: Started workspace check.'));
+        assert.ok(messageCapture.statusBarMessages.includes('Running Mamori Inspector'));
         assert.ok(messageCapture.informationMessages.length >= 1);
         assert.strictEqual(diagnostics.length, 3);
         assert.ok(messages.includes('Missing Javadoc'));
@@ -3197,6 +3292,11 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
       await activeVscodeApi.commands.executeCommand('mamori-inspector.runWorkspaceCheck');
 
       await waitFor(() => fs.existsSync(manualSarifPath), 120000);
+      await waitFor(
+        () => messageCapture.notificationProgressTitles.includes('Mamori Inspector: Started workspace check.'),
+        120000,
+      );
+      await waitFor(() => messageCapture.statusBarMessages.includes('Running Mamori Inspector'), 120000);
       await waitFor(() => messageCapture.informationMessages.length > 0 || messageCapture.errorMessages.length > 0, 120000);
       await waitFor(
         () => activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(firstViolation.filePath)).some(
@@ -3225,13 +3325,15 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
         activeVscodeApi.workspace.updateWorkspaceFolders(secondaryWorkspaceIndex, 1);
       }
     }
+    assert.ok(messageCapture.notificationProgressTitles.includes('Mamori Inspector: Started workspace check.'));
+    assert.ok(messageCapture.statusBarMessages.includes('Running Mamori Inspector'));
   });
 
   /**
-   * 外部実プロジェクトの Java 保存時に、実際に開始した各ツール名だけを個別トーストで表示すること。
+  * 外部実プロジェクトの Java 保存時に、実際に開始した各ツール名だけをステータスバーへ表示すること。
    * @returns 実行完了を待つ Promise を返す。
    */
-  test('Shows single-tool save toasts for an external Java project file', async function() {
+  test('Shows single-tool save status messages for an external Java project file', async function() {
     this.timeout(180000);
 
     const activeVscodeApi = vscodeApi;
