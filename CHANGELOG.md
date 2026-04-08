@@ -4,6 +4,13 @@
 
 形式は Keep a Changelog を参考にしつつ、このリポジトリの実装状況に合わせて整理します。
 
+## [0.2.40] - 2026-04-08
+
+### Changed
+- HTML の inline script / inline style 抽出用一時ファイルを、ワークスペース直下の `.mamori-inline-tmp` へ分離しました。
+- Mamori 自身の探索対象と Git のローカル除外に `.mamori-inline-tmp` を反映し、一時ファイルが検査対象や差分ノイズに混ざりにくいよう整理しました。
+- `Clear Managed Tool Cache` と CLI の `cache-clear` で `.mamori-inline-tmp` も削除するようにし、README と仕様書の説明を実装に合わせて整合しました。
+
 ## [0.2.39] - 2026-04-08
 
 ### Changed
