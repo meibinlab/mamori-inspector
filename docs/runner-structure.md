@@ -5,6 +5,7 @@
 ```
 .mamori/
   mamori.js                # CLI 入口（run/hooks/help のサブコマンド）
+  package.json             # type=commonjs で workspace 側の module type 影響を遮断
   config/
     defaults.json          # 既定設定
   core/
@@ -37,5 +38,6 @@
 
 ## 補足
 - `.mamori/` 配下のランナー実装は CommonJS の `.js` を正とする。
+- `.mamori/package.json` で `type: commonjs` を固定し、導入先ワークスペースの `package.json#type` に関係なく CommonJS として読み込ませる。
 - `.mamori/out/` は空でも問題なく、SARIF 書き出し時に必要に応じて再作成される。
 - 新しいツールを追加する場合は `adapters/` と `detectors/` の責務分割を維持する。

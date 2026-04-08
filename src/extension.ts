@@ -41,6 +41,7 @@ const SAVE_SARIF_OUTPUT = path.join('.mamori', 'out', 'combined-save.sarif');
 // ワークスペースへ同期する Mamori runtime の静的エントリ一覧を表す
 const WORKSPACE_MAMORI_RUNTIME_ENTRIES = [
   'mamori.js',
+  'package.json',
   'adapters',
   'config',
   'core',

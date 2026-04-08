@@ -4,6 +4,15 @@
 
 形式は Keep a Changelog を参考にしつつ、このリポジトリの実装状況に合わせて整理します。
 
+## [0.2.39] - 2026-04-08
+
+### Changed
+- 保存時整形が VS Code の formatter や save 系 editor 設定を自動変更しないことを README と仕様書に明記しました。
+- direct JavaScript / TypeScript でプロジェクト ESLint 設定を解決できる場合は Prettier ではなく `eslint --fix` を使い、Prettier は実行しないことを README と仕様書で明確化しました。
+
+### Fixed
+- `Install Git Hooks` でワークスペースへ同期する `.mamori/` に `type: commonjs` を固定する `package.json` を含め、導入先プロジェクトが `"type": "module"` でも pre-commit / pre-push の runner 読み込みが失敗しないようにしました。
+
 ## [0.2.38] - 2026-04-08
 
 ### Changed

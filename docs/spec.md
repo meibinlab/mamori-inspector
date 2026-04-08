@@ -22,6 +22,7 @@
 保存時検証の有効条件（確定）:
 - ワークスペース単位の設定 `mamori-inspector.enabled` が `true` の場合のみ実行する
 - 既定値は `false` とし、拡張コマンドで切り替える
+- 保存時検証の有効化や整形のために、VS Code の `editor.defaultFormatter`、`editor.formatOnSave`、`editor.codeActionsOnSave` は自動変更しない
 
 実行順序（確定）:
 1) 整形（自動適用、非同期）
@@ -33,7 +34,7 @@
 
 整形:
 - Java: Spotless（ビルド定義検出できる場合のみ）
-- JavaScript / TypeScript direct file: `eslint --fix`（明示設定 → discovery → `package.json#eslintConfig` を利用できる場合のみ。HTML 内 inline script は対象外）
+- JavaScript / TypeScript direct file: `eslint --fix` を Prettier の代わりに実行する（明示設定 → discovery → `package.json#eslintConfig` を利用できる場合のみ。HTML 内 inline script は対象外）
 - JavaScript fallback / CSS / HTML: Prettier
 
 チェック:
@@ -74,7 +75,7 @@ HTML inline style の扱い（確定）:
 
 整形:
 - Java: Spotless（可能なら）
-- JavaScript / TypeScript direct file: `eslint --fix`（明示設定 → discovery → `package.json#eslintConfig` を利用できる場合のみ。HTML 内 inline script は対象外）
+- JavaScript / TypeScript direct file: `eslint --fix` を Prettier の代わりに実行する（明示設定 → discovery → `package.json#eslintConfig` を利用できる場合のみ。HTML 内 inline script は対象外）
 - JavaScript fallback / CSS / HTML: Prettier
 
 チェック:
@@ -130,6 +131,7 @@ SpotBugsの例外仕様（確定）:
 - 目的: VS Code外（git hooks）でも確実に同じ処理を実行する
 - 前提: 通常の git hooks 検証には Node が必要だが、管理対象 hook は解決した `node` コマンドが利用できない場合に warning を出して成功終了する
 - 拡張の `hooks install` と `setup` は、同梱 runner の静的 runtime をワークスペース直下の `.mamori/` へ同期してから実行する
+- 同期する `.mamori/` には `type: commonjs` を持つ `package.json` を含め、導入先ワークスペースの `package.json#type` に依存せず runner を CommonJS として起動できるようにする
 - `setup` と `run --execute` では、ワークスペースが Git リポジトリであれば、ローカルの `.git/info/exclude` へワークスペースルートの `/.mamori/` と、リポジトリ配下で見つかった repo-relative な nested `.mamori` を best-effort で追加する
 - `.git/info/exclude` の更新失敗は warning として扱い、Mamori の処理自体は継続する
 
@@ -243,6 +245,10 @@ warning の例:
 - Git hooks インストール / アンインストール
 - 手動全体チェック（manual）
 - キャッシュ削除（`.mamori/tools` / `.mamori/node`）
+
+コマンドの設定変更範囲（確定）:
+- `Enable In Workspace` / `Disable In Workspace` が変更するのは `mamori-inspector.enabled` のみとする
+- VS Code の `editor.defaultFormatter`、`editor.formatOnSave`、`editor.codeActionsOnSave` は Mamori Inspector のコマンドから自動変更しない
 
 Git hooks コマンドの通知仕様（確定）:
 - install / uninstall が成功した場合は情報通知を表示する

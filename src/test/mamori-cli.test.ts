@@ -45,6 +45,20 @@ interface NpmInstallWrapperOptions {
   exitCode?: number;
 }
 
+// ワークスペースへ同期する Mamori runtime の静的エントリ一覧を表す
+const WORKSPACE_MAMORI_RUNTIME_ENTRIES = [
+  'mamori.js',
+  'package.json',
+  'adapters',
+  'config',
+  'core',
+  'detectors',
+  'hooks',
+  path.join('tools', 'catalog.js'),
+  path.join('tools', 'exec.js'),
+  path.join('tools', 'provision.js'),
+];
+
 /**
  * テスト用一時ディレクトリを作成する。
  * @returns 作成した一時ディレクトリの絶対パスを返す。
@@ -105,6 +119,36 @@ function runMamoriCli(
     stdout: result.stdout,
     stderr: result.stderr,
   };
+}
+
+/**
+ * 同梱された Mamori runtime をテスト用ワークスペースへ複製する。
+ * @param workingDirectory 複製先ワークスペースを表す。
+ * @returns 複製した CLI スクリプトパスを返す。
+ */
+function copyBundledMamoriRuntimeToWorkspace(workingDirectory: string): string {
+  const repositoryRoot = path.resolve(__dirname, '..', '..');
+  const bundledMamoriRoot = path.join(repositoryRoot, '.mamori');
+  const workspaceMamoriRoot = path.join(workingDirectory, '.mamori');
+
+  for (const runtimeEntry of WORKSPACE_MAMORI_RUNTIME_ENTRIES) {
+    const sourcePath = path.join(bundledMamoriRoot, runtimeEntry);
+    const targetPath = path.join(workspaceMamoriRoot, runtimeEntry);
+
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+
+    if (fs.statSync(sourcePath).isDirectory()) {
+      fs.cpSync(sourcePath, targetPath, {
+        recursive: true,
+        force: true,
+      });
+      continue;
+    }
+
+    fs.copyFileSync(sourcePath, targetPath);
+  }
+
+  return path.join(workspaceMamoriRoot, 'mamori.js');
 }
 
 /**
@@ -3504,6 +3548,30 @@ suite('Mamori CLI Test Suite', () => {
   });
 
   /**
+   * type=module ワークスペースでも同期済み runner が起動できること。
+   * @returns 返り値はない。
+   */
+  test('Loads the synchronized runner inside a type module workspace', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const runnerPath = copyBundledMamoriRuntimeToWorkspace(temporaryDirectory);
+
+    fs.writeFileSync(
+      path.join(temporaryDirectory, 'package.json'),
+      `${JSON.stringify({ type: 'module' }, null, 2)}\n`,
+      'utf8',
+    );
+
+    const result = spawnSync(process.execPath, [runnerPath, 'help'], {
+      cwd: temporaryDirectory,
+      encoding: 'utf8',
+    });
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /Mamori Inspector CLI/u);
+    assert.strictEqual(result.stderr, '');
+  });
+
+  /**
    * 管理対象 hook が runner 欠落時に warning を出して安全終了すること。
    * @returns 返り値はない。
    */
@@ -4119,6 +4187,119 @@ suite('Mamori CLI Test Suite', () => {
     assert.match(fs.readFileSync(eslintLogPath, 'utf8'), /--fix/u);
     assert.match(fs.readFileSync(eslintLogPath, 'utf8'), /main\.js/u);
     assert.match(fs.readFileSync(indexSnapshotPath, 'utf8'), /formatted by eslint/u);
+  });
+
+  /**
+   * pre-commit で direct TypeScript は Prettier を使わず ESLint formatter を優先すること。
+   * @returns 返り値はない。
+   */
+  test('Restages direct TypeScript files after successful precommit ESLint formatting', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src');
+    const typescriptFilePath = path.join(sourceDirectory, 'main.ts');
+    const gitBinDirectory = createCommandBinDirectory(temporaryDirectory);
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const gitLogPath = path.join(gitBinDirectory, 'git.log');
+    const prettierLogPath = path.join(nodeBinDirectory, 'prettier.log');
+    const eslintLogPath = path.join(nodeBinDirectory, 'eslint.log');
+    const indexSnapshotPath = path.join(temporaryDirectory, '.tmp-index', 'main.ts');
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.writeFileSync(typescriptFilePath, 'const sample: number = 1;\n', 'utf8');
+    fs.writeFileSync(path.join(temporaryDirectory, 'eslint.config.mjs'), 'export default [];\n', 'utf8');
+    writeGitPrecommitWrapper(
+      gitBinDirectory,
+      'git.log',
+      path.relative(temporaryDirectory, typescriptFilePath),
+      typescriptFilePath,
+      indexSnapshotPath,
+    );
+    writeWebCommandWrapper(nodeBinDirectory, 'prettier', 'prettier.log', { formattedFilePath: typescriptFilePath });
+    writeWebCommandWrapper(nodeBinDirectory, 'eslint', 'eslint.log', {
+      formattedFilePath: typescriptFilePath,
+    });
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      [
+        'run',
+        '--mode',
+        'precommit',
+        '--scope',
+        'staged',
+        '--execute',
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(gitBinDirectory),
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /eslint:ok/u);
+    assert.match(fs.readFileSync(gitLogPath, 'utf8'), /diff --cached --name-only --diff-filter=ACMR/u);
+    assert.match(fs.readFileSync(gitLogPath, 'utf8'), /add --/u);
+    assert.ok(!fs.existsSync(prettierLogPath));
+    assert.match(fs.readFileSync(eslintLogPath, 'utf8'), /--fix/u);
+    assert.match(fs.readFileSync(eslintLogPath, 'utf8'), /main\.ts/u);
+    assert.match(fs.readFileSync(indexSnapshotPath, 'utf8'), /formatted by eslint/u);
+  });
+
+  /**
+   * pre-commit の direct TypeScript では設定未検出時に JS 向け fallback を適用しないこと。
+   * @returns 返り値はない。
+   */
+  test('Skips direct TypeScript precommit formatting when project configuration is not detected', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src');
+    const typescriptFilePath = path.join(sourceDirectory, 'main.ts');
+    const gitBinDirectory = createCommandBinDirectory(temporaryDirectory);
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const gitLogPath = path.join(gitBinDirectory, 'git.log');
+    const prettierLogPath = path.join(nodeBinDirectory, 'prettier.log');
+    const eslintLogPath = path.join(nodeBinDirectory, 'eslint.log');
+    const indexSnapshotPath = path.join(temporaryDirectory, '.tmp-index', 'main.ts');
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.writeFileSync(typescriptFilePath, 'const sample: number = 1;\n', 'utf8');
+    writeGitPrecommitWrapper(
+      gitBinDirectory,
+      'git.log',
+      path.relative(temporaryDirectory, typescriptFilePath),
+      typescriptFilePath,
+      indexSnapshotPath,
+    );
+    writeWebCommandWrapper(nodeBinDirectory, 'prettier', 'prettier.log', { formattedFilePath: typescriptFilePath });
+    writeWebCommandWrapper(nodeBinDirectory, 'eslint', 'eslint.log', {
+      formattedFilePath: typescriptFilePath,
+    });
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      [
+        'run',
+        '--mode',
+        'precommit',
+        '--scope',
+        'staged',
+        '--execute',
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(gitBinDirectory),
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 0);
+    assert.match(fs.readFileSync(gitLogPath, 'utf8'), /diff --cached --name-only --diff-filter=ACMR/u);
+    assert.doesNotMatch(fs.readFileSync(gitLogPath, 'utf8'), /add --/u);
+    assert.ok(!fs.existsSync(prettierLogPath));
+    assert.ok(!fs.existsSync(eslintLogPath));
+    assert.ok(!fs.existsSync(indexSnapshotPath));
   });
 
   /**

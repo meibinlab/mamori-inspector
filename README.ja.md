@@ -23,7 +23,7 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 ## 初期セットアップ時の注意
 - 保存時検証は既定で無効です。対象ワークスペースフォルダーごとに `Mamori Inspector: Enable In Workspace` を実行したあとで開始します。
 - Git hook 検証は、拡張をインストールしただけでは開始しません。管理対象の hook を明示的にインストールする必要があります。
-- `Mamori Inspector: Install Git Hooks` は、管理対象 hook を生成する前に、同梱 runner の静的 runtime をワークスペースの `.mamori/` へ同期します。そのため、生成直後の hook から repo-local runner をすぐ実行できます。
+- `Mamori Inspector: Install Git Hooks` は、管理対象 hook を生成する前に、同梱 runner の静的 runtime をワークスペースの `.mamori/` へ同期します。同期される runtime には `type: commonjs` を持つ `.mamori/package.json` も含まれるため、導入先プロジェクトが `"type": "module"` の場合でも repo-local runner を正しく起動できます。
 - 管理対象の pre-commit / pre-push hook は、`$REPO_ROOT/.mamori/mamori.js` が無い場合や、解決した `node` コマンドが利用できない場合に stderr へ warning を出して成功終了するため、古い hook が残っていても commit / push を妨げません。
 - 初回の検証実行前に管理ツール一式を先に取得したい場合は、`Mamori Inspector: Setup Managed Tools` を一度実行します。
 - `precommit/staged` は、ステージ済みファイルを `git diff --cached --name-only --diff-filter=ACMR` で解決するため、`PATH` 上の Git CLI が必要です。
@@ -54,16 +54,17 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 ## 現在の挙動
 - Java、JavaScript、JavaScript React、TypeScript、TypeScript React、CSS、SCSS、Sass、HTML ファイルは、対象ワークスペースフォルダーで `Mamori Inspector: Enable In Workspace` を実行した場合に限り、保存時にデバウンスと再帰抑止付きのバックグラウンドチェックを自動実行します。
 - 保存時検証では、対応ファイルを先に整形し、その後に生成された SARIF から Diagnostics を公開します。
+- 保存時整形は Mamori Inspector の内部処理として実行し、VS Code の `editor.defaultFormatter`、`editor.formatOnSave`、`editor.codeActionsOnSave` は自動変更しません。
 - 保存時実行が一部ツール失敗で終了しても、その時点までに部分的な SARIF が生成されていれば、その Diagnostics は Problems に反映し、失敗詳細は出力ログへ残します。
 - 保存時検証では、整形や静的解析の各ツールが実際に開始したタイミングで、保存したファイル名とそのツール名だけをトースト表示します。
-- JavaScript の保存時検証は、Prettier と ESLint を使用し、明示設定または検出したプロジェクト設定を優先し、見つからない場合は Mamori の bundled minimal ESLint config を使用します。
-- TypeScript の保存時検証では、明示設定、ワークスペース探索、または `package.json#eslintConfig` で解決できる ESLint 設定がある場合にのみ ESLint を使用します。
+- JavaScript の保存時検証では、明示設定または検出したプロジェクト ESLint 設定を解決できる direct file に対しては Prettier を実行せず `eslint --fix` を使い、設定が見つからない場合のみ Prettier と Mamori の bundled minimal ESLint config を使用します。ここでいう direct file には HTML から抽出した inline script は含みません。
+- TypeScript の保存時検証では、明示設定、ワークスペース探索、または `package.json#eslintConfig` で解決できる ESLint 設定がある direct file に対して Prettier を実行せず `eslint --fix` と ESLint を使用します。TypeScript に対して Mamori の JavaScript 向け bundled fallback は使いません。
 - CSS、SCSS、Sass の保存時検証は、Prettier と Stylelint を使用し、明示設定または検出したプロジェクト設定を優先し、見つからない場合は Mamori の bundled minimal Stylelint config を使用します。
 - HTML の保存時検証では、CSS と互換性のある type を持つ inline style ブロックも一時的な CSS ファイルへ抽出して Stylelint で検査し、診断を元の HTML 上の位置へ逆写像したうえで、実行後に一時ファイルを削除します。このとき Stylelint はプロジェクト設定を優先し、見つからない場合は Mamori の bundled minimal Stylelint config を使用します。
 - HTML の保存時検証は、Prettier と htmlhint を使用し、明示設定または検出したプロジェクト設定を優先し、見つからない場合は Mamori の bundled minimal htmlhint config を使用します。
 - HTML の保存時検証では、`src` を持たない inline script ブロックも一時的な JavaScript ファイルへ抽出して ESLint で検査し、診断を元の HTML 上の位置へ逆写像したうえで、実行後に一時ファイルを削除します。このとき ESLint はプロジェクト設定を優先し、見つからない場合は Mamori の bundled minimal ESLint config を使用します。
 - `precommit/staged` は、`git diff --cached --name-only --diff-filter=ACMR` でステージ済みファイルを解決し、利用可能な場合は Spotless を先に実行し、整形後のファイルを `git add -- <files>` で再ステージします。
-- `precommit/staged` は、ステージ済みの JavaScript、CSS、SCSS、Sass、HTML ファイルに対しても、対応する checker の前に Prettier を実行します。
+- `precommit/staged` は、ステージ済みの direct JavaScript と TypeScript ではプロジェクト ESLint 設定を解決できる場合に Prettier を実行せず `eslint --fix` を使い、それ以外の JavaScript、CSS、SCSS、Sass、HTML ファイルでは対応する checker の前に Prettier を実行します。ここでいう direct file には HTML から抽出した inline script は含みません。
 - `precommit/staged` は、HTML ファイル自体は htmlhint で扱いながら、HTML の inline style ブロックを Stylelint の対象にも含めます。
 - `precommit/staged` は、HTML ファイル自体は htmlhint で扱いながら、HTML の inline script ブロックを ESLint の対象にも含めます。
 - `precommit/staged` は、ステージ済みファイルが 0 件の場合はチェックを実行せず成功を返します。また、ステージ済みファイル解決のために `PATH` 上の Git CLI が必要です。
@@ -75,6 +76,7 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 - コマンド `Mamori Inspector: Run Workspace Check` は、ワークスペース全体の手動チェックを実行し、生成された SARIF から Diagnostics を公開します。
 - 手動全体チェックが成功した場合、拡張は同じワークスペースに対して以前反映していた保存時 Diagnostics を、最新の手動結果で置き換えます。
 - コマンド `Mamori Inspector: Enable In Workspace` と `Mamori Inspector: Disable In Workspace` は、ワークスペースフォルダー単位で保存時検証の有効・無効を切り替えます。既定値は無効です。
+- `Enable In Workspace` / `Disable In Workspace` が変更するのは `mamori-inspector.enabled` のみで、VS Code の formatter や save 系 editor 設定は変更しません。
 - コマンド `Mamori Inspector: Setup Managed Tools` は、管理対象の Maven、Gradle、Semgrep、Prettier、ESLint、Stylelint、htmlhint をワークスペースキャッシュへ導入します。
 - コマンド `Mamori Inspector: Clear Managed Tool Cache` は、`.mamori/tools` と `.mamori/node` の管理キャッシュを削除します。
 - コマンド `Mamori Inspector: Install Git Hooks` と `Mamori Inspector: Uninstall Git Hooks` は、CLI と同じランナーを呼び出し、`.git/hooks/pre-commit` と `.git/hooks/pre-push` を管理します。

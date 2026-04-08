@@ -23,7 +23,7 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 ## Initial Setup Notes
 - Save-time validation is disabled by default and starts only after you run `Mamori Inspector: Enable In Workspace` for the target workspace folder.
 - Git hook validation does not start automatically on extension installation. You must install the managed hooks explicitly.
-- `Mamori Inspector: Install Git Hooks` synchronizes the bundled runner runtime into the workspace `.mamori/` directory before writing managed hooks, so the generated hooks can execute against the repository-local runner immediately.
+- `Mamori Inspector: Install Git Hooks` synchronizes the bundled runner runtime into the workspace `.mamori/` directory before writing managed hooks, and the synchronized runtime includes `.mamori/package.json` with `type: commonjs` so the repository-local runner keeps loading correctly even when the target project uses `"type": "module"`.
 - Managed pre-commit and pre-push hooks print a warning to stderr and exit successfully when `$REPO_ROOT/.mamori/mamori.js` is missing or the resolved `node` command is unavailable, so stale hooks do not block commit or push.
 - If you want to pre-download the managed toolchain before the first validation run, execute `Mamori Inspector: Setup Managed Tools` once.
 - `precommit/staged` requires the Git CLI on `PATH` because staged files are resolved with `git diff --cached --name-only --diff-filter=ACMR`.
@@ -54,10 +54,11 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 ## Current Behavior
 - Java, JavaScript, JavaScript React, TypeScript, TypeScript React, CSS, SCSS, Sass, and HTML files trigger an automatic background check on save with debounce and recursion suppression only when `Mamori Inspector: Enable In Workspace` has been run for that workspace folder.
 - Save-time validation formats supported files first, then publishes diagnostics from the generated SARIF.
+- Save-time formatting runs as Mamori Inspector's own internal workflow and does not modify VS Code's `editor.defaultFormatter`, `editor.formatOnSave`, or `editor.codeActionsOnSave` automatically.
 - If a save-time run ends with an execution error after writing partial SARIF output, Mamori still reflects the diagnostics that were already generated and keeps the failure detail in the output log.
 - Save-time validation also shows a toast each time a formatter or checker actually starts, using the saved file name plus the single running tool name.
-- JavaScript save-time validation uses `eslint --fix` before checking when explicit or discovered project ESLint configuration is available, and otherwise keeps using Prettier plus Mamori's bundled minimal ESLint config.
-- TypeScript save-time validation uses ESLint when project configuration is available through explicit settings, workspace discovery, or `package.json#eslintConfig`.
+- JavaScript save-time validation skips Prettier and uses `eslint --fix` for direct files when explicit or discovered project ESLint configuration is available, and otherwise uses Prettier plus Mamori's bundled minimal ESLint config. Here, direct files do not include inline script extracted from HTML.
+- TypeScript save-time validation skips Prettier and uses `eslint --fix` plus ESLint for direct files when project configuration is available through explicit settings, workspace discovery, or `package.json#eslintConfig`, and does not use Mamori's bundled JavaScript fallback for TypeScript.
 - CSS and SCSS and Sass save-time validation use Prettier and Stylelint, preferring explicit or discovered project configuration and otherwise using Mamori's bundled minimal Stylelint config.
 - HTML save-time validation also extracts inline style blocks whose type is compatible with CSS into temporary CSS files for Stylelint, maps diagnostics back to the original HTML locations, and removes the temporary files after execution while preferring project Stylelint configuration and otherwise using Mamori's bundled minimal Stylelint config.
 - HTML save-time validation uses Prettier and htmlhint, preferring explicit or discovered project configuration and otherwise using Mamori's bundled minimal htmlhint config.
@@ -75,6 +76,7 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 - The command `Mamori Inspector: Run Workspace Check` executes a workspace-wide manual check and publishes diagnostics from the generated SARIF.
 - When a manual workspace check succeeds, the extension replaces previously published save diagnostics for the same workspace with the latest manual results.
 - The commands `Mamori Inspector: Enable In Workspace` and `Mamori Inspector: Disable In Workspace` toggle automatic save-time validation per workspace folder. The default is disabled.
+- `Enable In Workspace` and `Disable In Workspace` only change `mamori-inspector.enabled`; they do not rewrite VS Code formatter or save-related editor settings.
 - The command `Mamori Inspector: Setup Managed Tools` downloads the managed Maven, Gradle, Semgrep, Prettier, ESLint, Stylelint, and htmlhint toolchain into the workspace cache.
 - The command `Mamori Inspector: Clear Managed Tool Cache` removes the managed cache directories under `.mamori/tools` and `.mamori/node`.
 - The commands `Mamori Inspector: Install Git Hooks` and `Mamori Inspector: Uninstall Git Hooks` call the same runner as the CLI and manage `.git/hooks/pre-commit` and `.git/hooks/pre-push`.

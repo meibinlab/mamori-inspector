@@ -2441,15 +2441,22 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
     const activeVscodeApi = vscodeApi;
     const secondaryWorkspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mamori-hooks-workspace-'));
     const workspaceFilePath = path.join(secondaryWorkspaceRoot, 'README.md');
+    const workspacePackageJsonPath = path.join(secondaryWorkspaceRoot, 'package.json');
     const preCommitHookPath = path.join(secondaryWorkspaceRoot, '.git', 'hooks', 'pre-commit');
     const prePushHookPath = path.join(secondaryWorkspaceRoot, '.git', 'hooks', 'pre-push');
     const runnerPath = path.join(secondaryWorkspaceRoot, '.mamori', 'mamori.js');
+    const runtimePackageJsonPath = path.join(secondaryWorkspaceRoot, '.mamori', 'package.json');
     const alreadyOpened = (activeVscodeApi.workspace.workspaceFolders || []).some(
       (workspaceFolder) => workspaceFolder.uri.fsPath === secondaryWorkspaceRoot,
     );
 
     fs.mkdirSync(path.dirname(preCommitHookPath), { recursive: true });
     fs.writeFileSync(workspaceFilePath, '# secondary workspace\n', 'utf8');
+    fs.writeFileSync(
+      workspacePackageJsonPath,
+      `${JSON.stringify({ type: 'module' }, null, 2)}\n`,
+      'utf8',
+    );
 
     const updateSucceeded = activeVscodeApi.workspace.updateWorkspaceFolders(
       activeVscodeApi.workspace.workspaceFolders?.length || 0,
@@ -2474,12 +2481,29 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
       await activeVscodeApi.commands.executeCommand('mamori-inspector.installGitHooks');
 
       await waitFor(() => fs.existsSync(runnerPath));
+      await waitFor(() => fs.existsSync(runtimePackageJsonPath));
       await waitFor(() => fs.existsSync(preCommitHookPath) && fs.existsSync(prePushHookPath));
 
       assert.match(fs.readFileSync(preCommitHookPath, 'utf8'), /mamori-inspector-managed-hook/u);
       assert.match(fs.readFileSync(preCommitHookPath, 'utf8'), /--mode precommit --scope staged --execute/u);
       assert.match(fs.readFileSync(prePushHookPath, 'utf8'), /--mode prepush --scope workspace --execute/u);
       assert.match(fs.readFileSync(runnerPath, 'utf8'), /hooks <install\|uninstall>/u);
+      assert.deepStrictEqual(
+        JSON.parse(fs.readFileSync(runtimePackageJsonPath, 'utf8')),
+        {
+          private: true,
+          type: 'commonjs',
+        },
+      );
+
+      const runnerExecutionResult = spawnSync(process.execPath, [runnerPath, 'help'], {
+        cwd: secondaryWorkspaceRoot,
+        encoding: 'utf8',
+      });
+
+      assert.strictEqual(runnerExecutionResult.status, 0);
+      assert.match(runnerExecutionResult.stdout, /Mamori Inspector CLI/u);
+      assert.strictEqual(runnerExecutionResult.stderr, '');
     } finally {
       const workspaceFolders = activeVscodeApi.workspace.workspaceFolders || [];
       const secondaryWorkspaceIndex = workspaceFolders.findIndex(
