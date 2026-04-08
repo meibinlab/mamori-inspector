@@ -37,9 +37,9 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 ## 管理ツールの自動導入
 - Mamori は `run` 実行時に不足している管理ツールを自動導入し、ワークスペース配下の `.mamori/tools` と `.mamori/node` に保存します。
 - 初回実行前にまとめて取得したい場合は `Mamori Inspector: Setup Managed Tools` を使います。
-- `.mamori/tools` と `.mamori/node` を削除して次回実行時に再取得したい場合は `Mamori Inspector: Clear Managed Tool Cache` を使います。
+- `.mamori/tools`、`.mamori/node`、`.mamori-inline-tmp` を削除して次回実行時に再取得したい場合は `Mamori Inspector: Clear Managed Tool Cache` を使います。
 - CLI では `mamori.js setup` と `mamori.js cache-clear` が同じ役割を持ちます。
-- Mamori は `setup` と `run --execute` の実行時に、ワークスペースが Git リポジトリであれば、ローカルの `.git/info/exclude` へワークスペースルートの `/.mamori/` と、リポジトリ配下で見つかった repo-relative な nested `.mamori` エントリを best-effort で追記します。これは `.gitignore` を変更せず、Git で既に追跡されているファイルにも影響しません。
+- Mamori は `setup` と `run --execute` の実行時に、ワークスペースが Git リポジトリであれば、ローカルの `.git/info/exclude` へワークスペースルートの `/.mamori/` と `/.mamori-inline-tmp/`、およびリポジトリ配下で見つかった repo-relative な nested `.mamori` エントリを best-effort で追記します。これは `.gitignore` を変更せず、Git で既に追跡されているファイルにも影響しません。
 
 | ツール群 | 管理バージョン | 導入先 | 補足 |
 | ---- | ---- | ---- | ---- |
@@ -81,10 +81,10 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 - コマンド `Mamori Inspector: Enable In Workspace` と `Mamori Inspector: Disable In Workspace` は、ワークスペースフォルダー単位で保存時検証の有効・無効を切り替えます。既定値は無効です。
 - `Enable In Workspace` / `Disable In Workspace` が変更するのは `mamori-inspector.enabled` のみで、VS Code の formatter や save 系 editor 設定は変更しません。
 - コマンド `Mamori Inspector: Setup Managed Tools` は、管理対象の Maven、Gradle、Semgrep、Prettier、ESLint、Stylelint、htmlhint をワークスペースキャッシュへ導入します。
-- コマンド `Mamori Inspector: Clear Managed Tool Cache` は、`.mamori/tools` と `.mamori/node` の管理キャッシュを削除します。
+- コマンド `Mamori Inspector: Clear Managed Tool Cache` は、`.mamori/tools` と `.mamori/node` の管理キャッシュを削除し、`.mamori-inline-tmp` も削除します。
 - コマンド `Mamori Inspector: Install Git Hooks` と `Mamori Inspector: Uninstall Git Hooks` は、CLI と同じランナーを呼び出し、`.git/hooks/pre-commit` と `.git/hooks/pre-push` を管理します。
 - Maven と Gradle の build 定義を解析して、Checkstyle、PMD、Spotless、CPD、SpotBugs などの Java ツール設定を解決します。
-- `mamori.js setup` は VS Code の setup コマンドと同じ管理ツール一式を準備し、best-effort でローカルの `.git/info/exclude` へワークスペースルートの `/.mamori/` と、リポジトリ配下で見つかった repo-relative な nested `.mamori` エントリを追記します。`mamori.js cache-clear` は VS Code の cache-clear コマンドと同じキャッシュ削除を行います。
+- `mamori.js setup` は VS Code の setup コマンドと同じ管理ツール一式を準備し、best-effort でローカルの `.git/info/exclude` へワークスペースルートの `/.mamori/` と `/.mamori-inline-tmp/`、およびリポジトリ配下で見つかった repo-relative な nested `.mamori` エントリを追記します。`mamori.js cache-clear` は VS Code の cache-clear コマンドと同じキャッシュ削除と `.mamori-inline-tmp` の削除を行います。
 - `mamori.js hooks install` と `mamori.js hooks uninstall` は、`.git/hooks` 配下の管理対象 `pre-commit` と `pre-push` を作成または削除します。
 
 ## HTML 内の JS / CSS チェック
@@ -94,7 +94,7 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 - `text/plain` など JavaScript 以外の `type` を持つ inline script は ESLint の対象外です。
 - inline style のチェック対象は、`type` が未指定、空文字、`text/css`、または `text/css; charset=utf-8` のような parameter 付き `text/css` である `style` タグだけです。
 - CSS 以外の `type` を持つ inline style は Stylelint の対象外です。
-- inline script / inline style の診断は元の HTML 上の位置に逆写像して報告し、抽出に使った一時ファイルは各実行後に削除します。
+- inline script / inline style の診断は元の HTML 上の位置に逆写像して報告し、ワークスペースルート直下の `.mamori-inline-tmp/` に作成した抽出用一時ファイルは各実行後に削除します。
 
 ## 検証モード
 | トリガー | 拡張インストール後に自動開始 | 追加セットアップ | 対象範囲 | 補足 |

@@ -44,6 +44,7 @@ const DEFAULT_IGNORED_DIRECTORIES = new Set([
   '.git',
   '.gradle',
   '.mamori',
+  '.mamori-inline-tmp',
   '.vscode-test',
   '.vscode-test-web',
   'build',

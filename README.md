@@ -37,9 +37,9 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 ## Managed Tool Provisioning
 - Mamori automatically provisions missing managed tools during `run` execution and stores them under `.mamori/tools` and `.mamori/node` in the workspace.
 - Use `Mamori Inspector: Setup Managed Tools` when you want to download the managed toolchain in advance.
-- Use `Mamori Inspector: Clear Managed Tool Cache` when you want to remove `.mamori/tools` and `.mamori/node` and force a fresh download on the next run.
+- Use `Mamori Inspector: Clear Managed Tool Cache` when you want to remove `.mamori/tools`, `.mamori/node`, and `.mamori-inline-tmp` and force a fresh download on the next run.
 - CLI equivalents are `mamori.js setup` and `mamori.js cache-clear`.
-- During `setup` and `run --execute`, Mamori also updates the local `.git/info/exclude` with the workspace-root `/.mamori/` entry and any discovered repo-relative nested `.mamori` entries on a best-effort basis when the workspace contains a Git repository. This does not modify `.gitignore`, and it does not affect files that are already tracked by Git.
+- During `setup` and `run --execute`, Mamori also updates the local `.git/info/exclude` with the workspace-root `/.mamori/` and `/.mamori-inline-tmp/` entries and any discovered repo-relative nested `.mamori` entries on a best-effort basis when the workspace contains a Git repository. This does not modify `.gitignore`, and it does not affect files that are already tracked by Git.
 
 | Tool group | Managed version | Install location | Notes |
 | ---- | ---- | ---- | ---- |
@@ -81,10 +81,10 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 - The commands `Mamori Inspector: Enable In Workspace` and `Mamori Inspector: Disable In Workspace` toggle automatic save-time validation per workspace folder. The default is disabled.
 - `Enable In Workspace` and `Disable In Workspace` only change `mamori-inspector.enabled`; they do not rewrite VS Code formatter or save-related editor settings.
 - The command `Mamori Inspector: Setup Managed Tools` downloads the managed Maven, Gradle, Semgrep, Prettier, ESLint, Stylelint, and htmlhint toolchain into the workspace cache.
-- The command `Mamori Inspector: Clear Managed Tool Cache` removes the managed cache directories under `.mamori/tools` and `.mamori/node`.
+- The command `Mamori Inspector: Clear Managed Tool Cache` removes the managed cache directories under `.mamori/tools` and `.mamori/node`, and also removes `.mamori-inline-tmp`.
 - The commands `Mamori Inspector: Install Git Hooks` and `Mamori Inspector: Uninstall Git Hooks` call the same runner as the CLI and manage `.git/hooks/pre-commit` and `.git/hooks/pre-push`.
 - Maven and Gradle build definitions are inspected to resolve Java tooling such as Checkstyle, PMD, Spotless, CPD, and SpotBugs.
-- `mamori.js setup` prepares the same managed toolchain as the VS Code setup command and best-effort updates the local `.git/info/exclude` with the workspace-root `/.mamori/` entry and any discovered repo-relative nested `.mamori` entries, while `mamori.js cache-clear` removes the same cache directories as the VS Code cache-clear command.
+- `mamori.js setup` prepares the same managed toolchain as the VS Code setup command and best-effort updates the local `.git/info/exclude` with the workspace-root `/.mamori/` and `/.mamori-inline-tmp/` entries and any discovered repo-relative nested `.mamori` entries, while `mamori.js cache-clear` removes the same cache directories and `.mamori-inline-tmp` as the VS Code cache-clear command.
 - `mamori.js hooks install` and `mamori.js hooks uninstall` create or remove managed `pre-commit` and `pre-push` hooks under `.git/hooks`.
 
 ## HTML Inline JS And CSS Checks
@@ -94,7 +94,7 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 - Inline script blocks with non-JavaScript `type` values such as `text/plain` are excluded from ESLint.
 - Inline style checks target only `style` tags whose `type` is omitted, empty, `text/css`, or a parameterized `text/css` value such as `text/css; charset=utf-8`.
 - Inline style blocks with non-CSS `type` values are excluded from Stylelint.
-- Findings from inline script and inline style checks are mapped back to the original HTML locations, and the temporary extracted files are removed after each execution.
+- Findings from inline script and inline style checks are mapped back to the original HTML locations, and the temporary extracted files created under the workspace-root `.mamori-inline-tmp/` directory are removed after each execution.
 
 ## Validation Modes
 | Trigger | Starts automatically after extension install | Additional setup | Scope | Notes |

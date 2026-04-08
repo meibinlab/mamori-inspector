@@ -2570,6 +2570,8 @@ suite('Mamori CLI Test Suite', () => {
     assert.ok(targetMatch);
     const temporaryInlineStylePath = targetMatch ? targetMatch[1].trim() : '';
     assert.notStrictEqual(temporaryInlineStylePath, '');
+    assert.doesNotMatch(temporaryInlineStylePath, /[\\/]\.mamori[\\/]/u);
+    assert.match(temporaryInlineStylePath, /[\\/]\.mamori-inline-tmp[\\/]/u);
     assert.ok(!fs.existsSync(temporaryInlineStylePath));
   });
 
@@ -2877,6 +2879,8 @@ suite('Mamori CLI Test Suite', () => {
     assert.ok(targetMatch);
     const temporaryInlineScriptPath = targetMatch ? targetMatch[1].trim() : '';
     assert.notStrictEqual(temporaryInlineScriptPath, '');
+    assert.doesNotMatch(temporaryInlineScriptPath, /[\\/]\.mamori[\\/]/u);
+    assert.match(temporaryInlineScriptPath, /[\\/]\.mamori-inline-tmp[\\/]/u);
     assert.ok(!fs.existsSync(temporaryInlineScriptPath));
   });
 
@@ -4558,6 +4562,8 @@ suite('Mamori CLI Test Suite', () => {
     assert.match(stylelintLog, /TARGET=.*\.css/u);
     const temporaryInlineStylePath = targetMatch ? targetMatch[1].trim() : '';
     assert.notStrictEqual(temporaryInlineStylePath, '');
+    assert.doesNotMatch(temporaryInlineStylePath, /[\\/]\.mamori[\\/]/u);
+    assert.match(temporaryInlineStylePath, /[\\/]\.mamori-inline-tmp[\\/]/u);
     assert.ok(!fs.existsSync(temporaryInlineStylePath));
   });
 
@@ -5289,6 +5295,7 @@ suite('Mamori CLI Test Suite', () => {
     assert.strictEqual(secondResult.status, 0);
     const excludeLines = readGitExcludeLines(excludePath);
     assert.strictEqual(excludeLines.filter((line) => line === '/.mamori/').length, 1);
+    assert.strictEqual(excludeLines.filter((line) => line === '/.mamori-inline-tmp/').length, 1);
   });
 
   /**
@@ -5342,6 +5349,7 @@ suite('Mamori CLI Test Suite', () => {
     assert.strictEqual(result.status, 0);
     const excludeLines = readGitExcludeLines(excludePath);
     assert.ok(excludeLines.includes('/.mamori/'));
+    assert.ok(excludeLines.includes('/.mamori-inline-tmp/'));
     assert.ok(excludeLines.includes('/mamori-inspector/.mamori/'));
     assert.ok(excludeLines.includes('/packages/sample/.mamori/'));
     assert.ok(!excludeLines.includes('/node_modules/ignored-package/.mamori/'));
@@ -5704,6 +5712,7 @@ suite('Mamori CLI Test Suite', () => {
     assert.ok(fs.existsSync(sarifOutputPath));
     const excludeLines = readGitExcludeLines(excludePath);
     assert.ok(excludeLines.includes('/.mamori/'));
+    assert.ok(excludeLines.includes('/.mamori-inline-tmp/'));
     assert.ok(excludeLines.includes('/mamori-inspector/.mamori/'));
     assert.ok(excludeLines.includes('/modules/demo/.mamori/'));
   });
@@ -5829,11 +5838,13 @@ suite('Mamori CLI Test Suite', () => {
     assert.strictEqual(setupResult.status, 0);
     assert.ok(fs.existsSync(path.join(temporaryDirectory, '.mamori', 'tools')));
     assert.ok(fs.existsSync(path.join(temporaryDirectory, '.mamori', 'node')));
+    fs.mkdirSync(path.join(temporaryDirectory, '.mamori-inline-tmp', 'stale-inline-temp'), { recursive: true });
 
     const cacheClearResult = runMamoriCli(temporaryDirectory, ['cache-clear']);
     assert.strictEqual(cacheClearResult.status, 0);
     assert.match(cacheClearResult.stdout, /mamori: cache-clear completed/u);
     assert.ok(!fs.existsSync(path.join(temporaryDirectory, '.mamori', 'tools')));
     assert.ok(!fs.existsSync(path.join(temporaryDirectory, '.mamori', 'node')));
+    assert.ok(!fs.existsSync(path.join(temporaryDirectory, '.mamori-inline-tmp')));
   });
 });

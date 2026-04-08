@@ -28,6 +28,55 @@ const { resolveCommandEntryRuntime } = require('../tools/provision');
 // HTML ファイル拡張子一覧を表す
 const HTML_FILE_EXTENSIONS = new Set(['.html', '.htm']);
 
+// inline HTML 抽出用の一時ディレクトリ名を表す
+const INLINE_TEMP_DIRECTORY_NAME = '.mamori-inline-tmp';
+
+/**
+ * inline HTML 向け一時ディレクトリの絶対パスを返す。
+ * @param {string|undefined} workspaceRoot ワークスペースルートを表す。
+ * @returns {string} 一時ディレクトリの絶対パスを返す。
+ */
+function resolveInlineTempRoot(workspaceRoot) {
+  return path.join(
+    path.resolve(workspaceRoot || process.cwd()),
+    INLINE_TEMP_DIRECTORY_NAME,
+  );
+}
+
+/**
+ * inline HTML 向け親一時ディレクトリを掃除する。
+ * @param {string|undefined} tempDirectory mkdtemp で作成した子ディレクトリを表す。
+ * @returns {string|undefined} cleanup に失敗した場合の警告を返す。
+ */
+function cleanupInlineTempRoot(tempDirectory) {
+  if (!tempDirectory) {
+    return undefined;
+  }
+
+  const parentDirectory = path.dirname(tempDirectory);
+  if (path.basename(parentDirectory) !== INLINE_TEMP_DIRECTORY_NAME) {
+    return undefined;
+  }
+
+  try {
+    const remainingEntries = fs.readdirSync(parentDirectory);
+    if (remainingEntries.length === 0) {
+      fs.rmSync(parentDirectory, {
+        force: true,
+        maxRetries: process.platform === 'win32' ? 5 : 0,
+        recursive: true,
+        retryDelay: process.platform === 'win32' ? 100 : 0,
+      });
+    }
+  } catch (error) {
+    if (!(error instanceof Error) || error.code !== 'ENOENT') {
+      return error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  return undefined;
+}
+
 /**
  * ESLint 実行引数から設定ファイルパスを返す。
  * @param {string[]|undefined} args ESLint 実行引数一覧を表す。
@@ -619,10 +668,10 @@ function extractInlineStyleSources(htmlFilePath) {
 /**
  * ESLint 向け inline script 一時ファイル群を作成する。
  * @param {string[]|undefined} inlineHtmlFiles HTML ファイル一覧を表す。
- * @param {string|undefined} currentWorkingDirectory 実行時の作業ディレクトリを表す。
+ * @param {string|undefined} workspaceRoot ワークスペースルートを表す。
  * @returns {{tempDirectory?: string, tempFilePaths: string[], filePathMappings: Record<string, string>}} 一時ファイル情報を返す。
  */
-function materializeInlineScriptFiles(inlineHtmlFiles, currentWorkingDirectory) {
+function materializeInlineScriptFiles(inlineHtmlFiles, workspaceRoot) {
   if (!Array.isArray(inlineHtmlFiles) || inlineHtmlFiles.length === 0) {
     return {
       tempFilePaths: [],
@@ -630,11 +679,7 @@ function materializeInlineScriptFiles(inlineHtmlFiles, currentWorkingDirectory) 
     };
   }
 
-  const workspaceTempRoot = path.join(
-    path.resolve(currentWorkingDirectory || process.cwd()),
-    '.mamori',
-    'tmp',
-  );
+  const workspaceTempRoot = resolveInlineTempRoot(workspaceRoot);
   fs.mkdirSync(workspaceTempRoot, { recursive: true });
   const tempDirectory = fs.mkdtempSync(path.join(workspaceTempRoot, 'mamori-eslint-inline-'));
   const tempFilePaths = [];
@@ -673,10 +718,10 @@ function materializeInlineScriptFiles(inlineHtmlFiles, currentWorkingDirectory) 
 /**
  * Stylelint 向け inline style 一時ファイル群を作成する。
  * @param {string[]|undefined} inlineHtmlFiles HTML ファイル一覧を表す。
- * @param {string|undefined} currentWorkingDirectory 実行時の作業ディレクトリを表す。
+ * @param {string|undefined} workspaceRoot ワークスペースルートを表す。
  * @returns {{tempDirectory?: string, tempFilePaths: string[], filePathMappings: Record<string, string>}} 一時ファイル情報を返す。
  */
-function materializeInlineStyleFiles(inlineHtmlFiles, currentWorkingDirectory) {
+function materializeInlineStyleFiles(inlineHtmlFiles, workspaceRoot) {
   if (!Array.isArray(inlineHtmlFiles) || inlineHtmlFiles.length === 0) {
     return {
       tempFilePaths: [],
@@ -684,11 +729,7 @@ function materializeInlineStyleFiles(inlineHtmlFiles, currentWorkingDirectory) {
     };
   }
 
-  const workspaceTempRoot = path.join(
-    path.resolve(currentWorkingDirectory || process.cwd()),
-    '.mamori',
-    'tmp',
-  );
+  const workspaceTempRoot = resolveInlineTempRoot(workspaceRoot);
   fs.mkdirSync(workspaceTempRoot, { recursive: true });
   const tempDirectory = fs.mkdtempSync(path.join(workspaceTempRoot, 'mamori-stylelint-inline-'));
   const tempFilePaths = [];
@@ -726,10 +767,11 @@ function materializeInlineStyleFiles(inlineHtmlFiles, currentWorkingDirectory) {
 
 /**
  * 実行前にコマンド引数と付帯情報を調整する。
+ * @param {string} workspaceRoot ワークスペースルートを表す。
  * @param {object} commandEntry コマンド計画を表す。
  * @returns {{args: string[], filePathMappings?: Record<string, string>, tempDirectory?: string, skipReason?: string}} 実行準備結果を返す。
  */
-async function prepareCommandExecution(commandEntry) {
+async function prepareCommandExecution(workspaceRoot, commandEntry) {
   if (commandEntry.tool !== 'eslint' && commandEntry.tool !== 'stylelint') {
     return {
       args: Array.isArray(commandEntry.args) ? commandEntry.args : [],
@@ -749,8 +791,8 @@ async function prepareCommandExecution(commandEntry) {
       : [])
     : (Array.isArray(commandEntry.args) ? commandEntry.args : []);
   const inlineArtifacts = commandEntry.tool === 'eslint'
-    ? materializeInlineScriptFiles(inlineHtmlFiles, commandEntry.cwd)
-    : materializeInlineStyleFiles(inlineHtmlFiles, commandEntry.cwd);
+    ? materializeInlineScriptFiles(inlineHtmlFiles, workspaceRoot)
+    : materializeInlineStyleFiles(inlineHtmlFiles, workspaceRoot);
   if (filteredDirectFiles.length === 0 && inlineArtifacts.tempFilePaths.length === 0) {
     return {
       args: baseArguments,
@@ -784,6 +826,11 @@ function cleanupPreparedCommand(preparedCommand) {
     fs.rmSync(preparedCommand.tempDirectory, { recursive: true, force: true });
   } catch (error) {
     return error instanceof Error ? error.message : String(error);
+  }
+
+  const parentCleanupWarning = cleanupInlineTempRoot(preparedCommand.tempDirectory);
+  if (parentCleanupWarning) {
+    return parentCleanupWarning;
   }
 
   return undefined;
@@ -1067,7 +1114,7 @@ async function executeCommandEntry(workspaceRoot, moduleRoot, commandEntry, exec
   }
 
   try {
-    preparedCommand = await prepareCommandExecution(commandEntry);
+    preparedCommand = await prepareCommandExecution(workspaceRoot, commandEntry);
 
     if (preparedCommand.skipReason) {
       commandResult = {

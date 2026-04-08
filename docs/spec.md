@@ -194,6 +194,7 @@ Java 17互換のpin例:
 - ESLint の組み込み最小設定は互換性を優先し、core rule のみで構成する
 - HTML の inline script は ESLint 設定解決後に抽出・実行する
 - HTML の inline style は Stylelint 設定解決後に抽出・実行する
+- HTML の inline script / inline style 抽出に使う一時ファイルは、ワークスペースルート直下の `.mamori-inline-tmp/` に作成し、各実行後に削除する
 - 設定検出例:
   - ESLint: `eslint.config.*`、`.eslintrc*`、`package.json#eslintConfig`
   - Stylelint: `stylelint.config.*`、`.stylelintrc*`、`package.json#stylelint`
@@ -208,6 +209,7 @@ Java 17互換のpin例:
 - デフォルト除外例:
   - `**/.git/**`
   - `**/.mamori/**`
+  - `**/.mamori-inline-tmp/**`
   - `**/node_modules/**`
   - `**/target/**`
   - `**/build/**`
@@ -220,6 +222,7 @@ SpotBugsのclass探索は別系統（除外に巻き込まない）:
 
 Git のローカル除外（確定）:
 - `setup` と `run --execute` は、ワークスペースが Git リポジトリであれば、ローカルの `.git/info/exclude` へワークスペースルートの `/.mamori/` と、リポジトリ配下で見つかった repo-relative な nested `.mamori` を best-effort で追加する
+- `setup` と `run --execute` は、ワークスペースルートの `/.mamori-inline-tmp/` もローカルの `.git/info/exclude` へ best-effort で追加する
 - これはリポジトリ共有の `.gitignore` を変更しない
 - 既に Git で追跡されているファイルには影響しない
 

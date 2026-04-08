@@ -26,6 +26,8 @@ const {
 const MANAGED_NODE_TOOL_NAMES = Object.keys(NODE_TOOL_PACKAGES);
 // ローカル Git 除外へ追記する Mamori 管理ディレクトリエントリを表す
 const MAMORI_GIT_EXCLUDE_ENTRY = '/.mamori/';
+// inline HTML 向け一時ディレクトリのローカル Git 除外エントリを表す
+const INLINE_TEMP_GIT_EXCLUDE_ENTRY = '/.mamori-inline-tmp/';
 // nested `.mamori` 探索で再帰走査から除外するディレクトリ名を表す
 const MAMORI_GIT_EXCLUDE_SCAN_SKIP_DIRECTORY_NAMES = new Set([
   '.git',
@@ -73,8 +75,11 @@ function normalizeMamoriGitExcludeEntry(line) {
   if (canonicalPath === '.mamori') {
     return MAMORI_GIT_EXCLUDE_ENTRY;
   }
+  if (canonicalPath === '.mamori-inline-tmp') {
+    return INLINE_TEMP_GIT_EXCLUDE_ENTRY;
+  }
   if (!canonicalPath.endsWith('/.mamori')) {
-    return '';
+    return canonicalPath.endsWith('/.mamori-inline-tmp') ? `/${canonicalPath}/` : '';
   }
 
   return `/${canonicalPath}/`;
@@ -167,6 +172,7 @@ function ensureMamoriGitExclude(workspaceRoot) {
     );
     const requiredEntries = Array.from(new Set([
       MAMORI_GIT_EXCLUDE_ENTRY,
+      INLINE_TEMP_GIT_EXCLUDE_ENTRY,
       ...collectNestedMamoriGitExcludeEntries(workspaceRoot),
     ]));
     const missingEntries = requiredEntries.filter((entry) => !existingEntries.has(entry));
@@ -990,7 +996,11 @@ function clearManagedToolCaches(workspaceRoot) {
   const directories = getManagedDirectories(workspaceRoot);
   const removedDirectories = [];
 
-  for (const targetPath of [directories.toolsRoot, directories.nodeRoot]) {
+  for (const targetPath of [
+    directories.toolsRoot,
+    directories.nodeRoot,
+    path.join(workspaceRoot, '.mamori-inline-tmp'),
+  ]) {
     if (!fs.existsSync(targetPath)) {
       continue;
     }
