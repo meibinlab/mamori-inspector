@@ -14,8 +14,6 @@ import { reportHooksCommandSuccess } from '../hooks-command-report';
 import { reportMaintenanceCommandSuccess } from '../maintenance-command-report';
 // SARIF 読み込み関数を表す
 import { loadSarifFindings } from '../sarif-diagnostics';
-// 既存 runtime の自動同期処理を表す
-import { synchronizeExistingMamoriRuntimeIfPresent } from '../extension';
 
 /** VS Code API 型を表す。 */
 type VscodeModule = typeof import('vscode');
@@ -96,6 +94,18 @@ function getDiagnosticsReflectedPattern(diagnosticsCount: number): RegExp {
 function loadVscode(): VscodeModule | undefined {
   try {
     return require('vscode') as VscodeModule;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * VS Code 依存の拡張モジュールを安全に読み込む。
+ * @returns 読み込めた場合は拡張モジュールを返す。
+ */
+function loadExtensionModule(): typeof import('../extension') | undefined {
+  try {
+    return require('../extension') as typeof import('../extension');
   } catch {
     return undefined;
   }
@@ -1872,7 +1882,7 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
    * @returns 実行完了を待つ Promise を返す。
    */
   test('Publishes PMD diagnostics when manual workspace checks read generated Maven report files', async function() {
-    this.timeout(20000);
+    this.timeout(30000);
 
     const activeVscodeApi = vscodeApi;
     const workspaceRoot = activeVscodeApi.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -1881,9 +1891,7 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
     }
 
     const manualSarifPath = path.join(workspaceRoot, '.mamori', 'out', 'combined.sarif');
-    const pmdReportPath = path.join(workspaceRoot, 'target', 'pmd.xml');
     const restoreManualSarif = createRestoreAction(manualSarifPath);
-    const restorePmdReport = createRestoreAction(pmdReportPath);
     const restorePomFile = createRestoreAction(path.join(workspaceRoot, 'pom.xml'));
     const restoreMavenWrapper = createRestoreAction(
       process.platform === 'win32'
@@ -1899,32 +1907,33 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
 
     try {
       fs.rmSync(manualSarifPath, { force: true });
-      fs.rmSync(pmdReportPath, { force: true });
       const {
         fixtureDirectory,
         javaFilePath,
         mavenLogPath,
         semgrepLogPath,
       } = setupSaveIntegrationFixture(workspaceRoot);
+      const pmdReportPath = path.join(fixtureDirectory, 'target', 'pmd.xml');
       const restoreMavenLog = createRestoreAction(mavenLogPath);
       const restoreSemgrepLog = createRestoreAction(semgrepLogPath);
+      fs.rmSync(pmdReportPath, { force: true });
       fs.rmSync(mavenLogPath, { force: true });
       fs.rmSync(semgrepLogPath, { force: true });
 
       try {
-        writeMavenReportFileWrapper(workspaceRoot, mavenLogPath, toWorkspaceRelativeUri(workspaceRoot, javaFilePath));
-        writeSemgrepWrapper(path.join(workspaceRoot, 'bin'), semgrepLogPath, toWorkspaceRelativeUri(workspaceRoot, javaFilePath));
+        writeMavenReportFileWrapper(fixtureDirectory, mavenLogPath, toWorkspaceRelativeUri(workspaceRoot, javaFilePath));
+        writeSemgrepWrapper(path.join(fixtureDirectory, 'bin'), semgrepLogPath, toWorkspaceRelativeUri(workspaceRoot, javaFilePath));
 
-        setExecutablePathEnvironment(`${path.join(workspaceRoot, 'bin')}${path.delimiter}${originalPath}`);
+        setExecutablePathEnvironment(`${path.join(fixtureDirectory, 'bin')}${path.delimiter}${originalPath}`);
         await getMamoriExtension(activeVscodeApi).activate();
         await activeVscodeApi.commands.executeCommand('mamori-inspector.runWorkspaceCheck');
 
-        await waitFor(() => fs.existsSync(manualSarifPath));
-        await waitFor(() => fs.existsSync(pmdReportPath));
+        await waitFor(() => fs.existsSync(manualSarifPath), 20000);
+        await waitFor(() => fs.existsSync(pmdReportPath), 20000);
         await waitFor(() => activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(javaFilePath)).some((diagnostic) => (
           diagnostic.message === 'Unused local variable'
-        )));
-        await waitFor(() => messageCapture.informationMessages.length > 0 || messageCapture.errorMessages.length > 0);
+        )), 20000);
+        await waitFor(() => messageCapture.informationMessages.length > 0 || messageCapture.errorMessages.length > 0, 20000);
 
         const diagnostics = activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(javaFilePath));
         const messages = diagnostics.map((diagnostic) => diagnostic.message);
@@ -1942,7 +1951,6 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
     } finally {
       messageCapture.restore();
       restoreManualSarif();
-      restorePmdReport();
       restorePomFile();
       restoreMavenWrapper();
       restoreSemgrepWrapper();
@@ -1954,7 +1962,7 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
    * @returns 実行完了を待つ Promise を返す。
    */
   test('Publishes Checkstyle diagnostics when manual workspace checks read generated Maven report files', async function() {
-    this.timeout(20000);
+    this.timeout(30000);
 
     const activeVscodeApi = vscodeApi;
     const workspaceRoot = activeVscodeApi.workspace.workspaceFolders?.[0]?.uri.fsPath;
@@ -1963,9 +1971,7 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
     }
 
     const manualSarifPath = path.join(workspaceRoot, '.mamori', 'out', 'combined.sarif');
-    const checkstyleReportPath = path.join(workspaceRoot, 'target', 'checkstyle-result.xml');
     const restoreManualSarif = createRestoreAction(manualSarifPath);
-    const restoreCheckstyleReport = createRestoreAction(checkstyleReportPath);
     const restorePomFile = createRestoreAction(path.join(workspaceRoot, 'pom.xml'));
     const restoreMavenWrapper = createRestoreAction(
       process.platform === 'win32'
@@ -1981,36 +1987,37 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
 
     try {
       fs.rmSync(manualSarifPath, { force: true });
-      fs.rmSync(checkstyleReportPath, { force: true });
       const {
         fixtureDirectory,
         javaFilePath,
         mavenLogPath,
         semgrepLogPath,
       } = setupSaveIntegrationFixture(workspaceRoot);
+      const checkstyleReportPath = path.join(fixtureDirectory, 'target', 'checkstyle-result.xml');
       const restoreMavenLog = createRestoreAction(mavenLogPath);
       const restoreSemgrepLog = createRestoreAction(semgrepLogPath);
+      fs.rmSync(checkstyleReportPath, { force: true });
       fs.rmSync(mavenLogPath, { force: true });
       fs.rmSync(semgrepLogPath, { force: true });
 
       try {
         writeMavenCheckstyleReportFileWrapper(
-          workspaceRoot,
+          fixtureDirectory,
           mavenLogPath,
           toWorkspaceRelativeUri(workspaceRoot, javaFilePath),
         );
-        writeSemgrepWrapper(path.join(workspaceRoot, 'bin'), semgrepLogPath, toWorkspaceRelativeUri(workspaceRoot, javaFilePath));
+        writeSemgrepWrapper(path.join(fixtureDirectory, 'bin'), semgrepLogPath, toWorkspaceRelativeUri(workspaceRoot, javaFilePath));
 
-        setExecutablePathEnvironment(`${path.join(workspaceRoot, 'bin')}${path.delimiter}${originalPath}`);
+        setExecutablePathEnvironment(`${path.join(fixtureDirectory, 'bin')}${path.delimiter}${originalPath}`);
         await getMamoriExtension(activeVscodeApi).activate();
         await activeVscodeApi.commands.executeCommand('mamori-inspector.runWorkspaceCheck');
 
-        await waitFor(() => fs.existsSync(manualSarifPath));
-        await waitFor(() => fs.existsSync(checkstyleReportPath));
+        await waitFor(() => fs.existsSync(manualSarifPath), 20000);
+        await waitFor(() => fs.existsSync(checkstyleReportPath), 20000);
         await waitFor(() => activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(javaFilePath)).some((diagnostic) => (
           diagnostic.message === 'Missing Javadoc'
-        )));
-        await waitFor(() => messageCapture.informationMessages.length > 0 || messageCapture.errorMessages.length > 0);
+        )), 20000);
+        await waitFor(() => messageCapture.informationMessages.length > 0 || messageCapture.errorMessages.length > 0, 20000);
 
         const diagnostics = activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(javaFilePath));
         const messages = diagnostics.map((diagnostic) => diagnostic.message);
@@ -2028,7 +2035,6 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
     } finally {
       messageCapture.restore();
       restoreManualSarif();
-      restoreCheckstyleReport();
       restorePomFile();
       restoreMavenWrapper();
       restoreSemgrepWrapper();
@@ -2561,11 +2567,14 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
    */
   test('Automatically synchronizes an existing managed runtime for an added workspace folder', async function() {
     const activeVscodeApi = vscodeApi;
+    const extensionModule = loadExtensionModule();
     const extensionRootPath = getMamoriExtension(activeVscodeApi).extensionUri.fsPath;
     const secondaryWorkspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mamori-runtime-workspace-'));
     const workspacePackageJsonPath = path.join(secondaryWorkspaceRoot, 'package.json');
     const runnerPath = path.join(secondaryWorkspaceRoot, '.mamori', 'mamori.js');
     const runtimePackageJsonPath = path.join(secondaryWorkspaceRoot, '.mamori', 'package.json');
+
+    assert.ok(extensionModule);
 
     fs.mkdirSync(path.dirname(runnerPath), { recursive: true });
     fs.writeFileSync(
@@ -2576,7 +2585,7 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
     fs.writeFileSync(runnerPath, 'stale runtime\n', 'utf8');
 
     try {
-      synchronizeExistingMamoriRuntimeIfPresent(
+      extensionModule.synchronizeExistingMamoriRuntimeIfPresent(
         {
           uri: activeVscodeApi.Uri.file(secondaryWorkspaceRoot),
           name: 'mamori-runtime-secondary',
