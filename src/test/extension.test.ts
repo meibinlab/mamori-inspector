@@ -1244,7 +1244,7 @@ function captureOutputChannelLines(
 suite('Extension Utility Test Suite', () => {
   /** 保存時通知ヘルパーを表す。 */
   const extensionHelpers = require('../save-check-notifications') as {
-    getSaveCheckStartToastMessage: (fileName: string, toolLabel: string) => string;
+    getSaveCheckStartStatusMessage: (fileName: string, toolLabel: string) => string;
     getSaveCheckToolLabel: (toolId: string) => string;
     parseSaveCheckToolStartLine: (outputLine: string) => string | undefined;
   };
@@ -1357,7 +1357,7 @@ suite('Extension Utility Test Suite', () => {
       'mamori: tool-start tool=checkstyle phase=check moduleRoot=C:\\workspace\\sample',
     );
     const toolLabel = extensionHelpers.getSaveCheckToolLabel(toolId || '');
-    const statusMessage = extensionHelpers.getSaveCheckStartToastMessage('App.java', toolLabel);
+    const statusMessage = extensionHelpers.getSaveCheckStartStatusMessage('App.java', toolLabel);
 
     assert.strictEqual(toolId, 'checkstyle');
     assert.strictEqual(toolLabel, 'Checkstyle');
@@ -3389,7 +3389,7 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
       0,
       {
         uri: activeVscodeApi.Uri.file(realProjectRoot),
-        name: 'mamori-real-project-save-toast',
+        name: 'mamori-real-project-save-status',
       },
     );
 

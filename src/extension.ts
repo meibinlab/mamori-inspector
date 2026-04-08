@@ -16,7 +16,7 @@ import {
 import { loadSarifFindings, SarifFinding } from './sarif-diagnostics';
 // 保存時通知文言補助を表す
 import {
-  getSaveCheckStartToastMessage as buildSaveCheckStartToastMessage,
+  getSaveCheckStartStatusMessage as buildSaveCheckStartStatusMessage,
   getSaveCheckToolLabel as buildSaveCheckToolLabel,
   parseSaveCheckToolStartLine as parseSaveCheckToolStartOutputLine,
 } from './save-check-notifications';
@@ -366,15 +366,15 @@ function getSaveCheckToolLabel(toolId: string): string {
 }
 
 /**
- * 保存時開始トースト文言を返す。
+ * 保存時開始ステータス文言を返す。
  * @param fileName 対象ファイル名を表す。
  * @param toolLabel 表示用ツール名を表す。
- * @returns トースト文言を返す。
+ * @returns ステータス文言を返す。
  */
-function getSaveCheckStartToastMessage(fileName: string, toolLabel: string): string {
+function getSaveCheckStartStatusMessage(fileName: string, toolLabel: string): string {
   return localize(
-    buildSaveCheckStartToastMessage(fileName, toolLabel),
-    'Information toast shown when a save-time formatter or checker starts for a file.',
+    buildSaveCheckStartStatusMessage(fileName, toolLabel),
+    'Status bar message shown when a save-time formatter or checker starts for a file.',
   );
 }
 
@@ -1598,7 +1598,7 @@ async function runSaveCheck(
         const toolLabel = getSaveCheckToolLabel(toolId);
         outputChannel.appendLine(`Mamori Inspector save check running for ${filePath}: ${toolLabel}`);
         setTimeout(() => {
-          showTransientNonErrorMessage(getSaveCheckStartToastMessage(fileName, toolLabel));
+          showTransientNonErrorMessage(getSaveCheckStartStatusMessage(fileName, toolLabel));
         }, 0);
       },
     });

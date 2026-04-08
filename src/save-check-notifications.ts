@@ -33,11 +33,11 @@ export function getSaveCheckToolLabel(toolId: string): string {
 }
 
 /**
- * 保存時開始トースト文言を返す。
+ * 保存時開始ステータス文言を返す。
  * @param fileName 対象ファイル名を表す。
  * @param toolLabel 表示用ツール名を表す。
- * @returns トースト文言を返す。
+ * @returns ステータス文言を返す。
  */
-export function getSaveCheckStartToastMessage(fileName: string, toolLabel: string): string {
+export function getSaveCheckStartStatusMessage(fileName: string, toolLabel: string): string {
   return `Mamori Inspector: ${fileName} - ${toolLabel}`;
 }
