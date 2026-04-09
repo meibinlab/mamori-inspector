@@ -31,6 +31,8 @@ import { SaveCheckScheduler } from './save-check-scheduler';
 // Mamori CLI 実行に使う spawn 実装を表す
 let spawnProcess: typeof childProcess.spawn = childProcess.spawn;
 
+// 管理対象 hook の識別子を表す
+const MANAGED_HOOK_MARKER = 'mamori-inspector-managed-hook';
 // 診断コレクション名を表す
 const DIAGNOSTIC_COLLECTION_NAME = 'mamori-inspector';
 // 拡張設定セクション名を表す
@@ -62,6 +64,8 @@ const WORKSPACE_MAMORI_RUNTIME_ENTRIES = [
   path.join('tools', 'exec.js'),
   path.join('tools', 'provision.js'),
 ];
+// 管理対象 hook ファイル名一覧を表す
+const MANAGED_HOOK_FILENAMES = ['pre-commit', 'pre-push'];
 // 保存時自動チェック対象の言語一覧を表す
 const AUTO_SAVE_LANGUAGE_IDS = new Set([
   'java',
@@ -708,6 +712,15 @@ function getWorkspaceMamoriCliPath(workspaceFolder: vscode.WorkspaceFolder): str
 }
 
 /**
+ * ワークスペースの Git hooks ディレクトリパスを返す。
+ * @param workspaceFolder ワークスペースフォルダーを表す。
+ * @returns Git hooks ディレクトリパスを返す。
+ */
+function getWorkspaceGitHooksPath(workspaceFolder: vscode.WorkspaceFolder): string {
+  return path.join(workspaceFolder.uri.fsPath, '.git', 'hooks');
+}
+
+/**
  * 拡張同梱の Mamori ルートパスを返す。
  * @param extensionRootPath 拡張ルートパスを表す。
  * @returns Mamori ルートパスを返す。
@@ -759,6 +772,73 @@ function synchronizeMamoriRuntimeToWorkspace(
 }
 
 /**
+ * 既存の管理対象 hook があるか判定する。
+ * @param workspaceFolder 対象ワークスペースフォルダーを表す。
+ * @returns 管理対象 hook が 1 つでも存在すれば true を返す。
+ */
+function hasExistingManagedHooks(workspaceFolder: vscode.WorkspaceFolder): boolean {
+  const hooksDirectoryPath = getWorkspaceGitHooksPath(workspaceFolder);
+
+  for (const hookFilename of MANAGED_HOOK_FILENAMES) {
+    const hookPath = path.join(hooksDirectoryPath, hookFilename);
+    if (!fs.existsSync(hookPath)) {
+      continue;
+    }
+
+    if (fs.readFileSync(hookPath, 'utf8').includes(MANAGED_HOOK_MARKER)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * 既存の管理対象 hook がある場合は最新テンプレートで再同期する。
+ * @param workspaceFolder 対象ワークスペースフォルダーを表す。
+ * @param extensionRootPath 拡張ルートパスを表す。
+ * @returns 返り値はない。
+ */
+function synchronizeExistingManagedHooksIfPresent(
+  workspaceFolder: vscode.WorkspaceFolder,
+  extensionRootPath: string,
+): void {
+  if (!hasExistingManagedHooks(workspaceFolder)) {
+    return;
+  }
+
+  const cliPath = getMamoriCliPath(workspaceFolder, extensionRootPath);
+  const cliExecutablePath = getMamoriCliExecutablePath();
+  const result = childProcess.spawnSync(
+    cliExecutablePath,
+    [cliPath, ...buildMamoriHooksArguments('install')],
+    {
+      cwd: workspaceFolder.uri.fsPath,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        ELECTRON_RUN_AS_NODE: '1',
+      },
+      windowsHide: true,
+    },
+  );
+
+  if (result.error) {
+    throw result.error;
+  }
+
+  if ((result.status ?? null) !== 0) {
+    throw new Error(
+      getMamoriCliFailureMessage(
+        typeof result.stdout === 'string' ? result.stdout : '',
+        typeof result.stderr === 'string' ? result.stderr : '',
+        result.status ?? null,
+      ),
+    );
+  }
+}
+
+/**
  * 既存の `.mamori` を持つワークスペースに対して runtime を best-effort で同期する。
  * @param workspaceFolder 対象ワークスペースフォルダーを表す。
  * @param extensionRootPath 拡張ルートパスを表す。
@@ -777,6 +857,7 @@ export function synchronizeExistingMamoriRuntimeIfPresent(
 
   try {
     synchronizeMamoriRuntimeToWorkspace(workspaceFolder, extensionRootPath);
+    synchronizeExistingManagedHooksIfPresent(workspaceFolder, extensionRootPath);
   } catch (error) {
     outputChannel.appendLine(
       `Mamori Inspector could not synchronize existing workspace runtime: ${workspaceFolder.uri.fsPath}: ${error instanceof Error ? error.message : String(error)}`,

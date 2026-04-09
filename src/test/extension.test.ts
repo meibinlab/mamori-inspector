@@ -2642,6 +2642,78 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
   });
 
   /**
+   * 既存の管理対象 hook を持つワークスペースが activate 後に最新 hook へ自動同期されること。
+   * @returns 実行完了を待つ Promise を返す。
+   */
+  test('Automatically synchronizes existing managed hooks for an added workspace folder', async function() {
+    const activeVscodeApi = vscodeApi;
+    const extensionModule = loadExtensionModule();
+    const extensionRootPath = getMamoriExtension(activeVscodeApi).extensionUri.fsPath;
+    const secondaryWorkspaceRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'mamori-managed-hooks-workspace-'));
+    const runnerPath = path.join(secondaryWorkspaceRoot, '.mamori', 'mamori.js');
+    const preCommitHookPath = path.join(secondaryWorkspaceRoot, '.git', 'hooks', 'pre-commit');
+    const prePushHookPath = path.join(secondaryWorkspaceRoot, '.git', 'hooks', 'pre-push');
+
+    assert.ok(extensionModule);
+
+    fs.mkdirSync(path.dirname(runnerPath), { recursive: true });
+    fs.mkdirSync(path.dirname(preCommitHookPath), { recursive: true });
+    fs.writeFileSync(runnerPath, 'stale runtime\n', 'utf8');
+    fs.writeFileSync(
+      preCommitHookPath,
+      [
+        '#!/bin/sh',
+        '# mamori-inspector-managed-hook',
+        '# generated for pre-commit',
+        'set -eu',
+        'REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"',
+        'NODE_BIN="${NODE:-node}"',
+        'RUNNER_PATH="$REPO_ROOT/.mamori/mamori.js"',
+        '"$NODE_BIN" "$RUNNER_PATH" run --mode precommit --scope staged --execute',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    fs.writeFileSync(
+      prePushHookPath,
+      [
+        '#!/bin/sh',
+        '# mamori-inspector-managed-hook',
+        '# generated for pre-push',
+        'set -eu',
+        'REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"',
+        'NODE_BIN="${NODE:-node}"',
+        'RUNNER_PATH="$REPO_ROOT/.mamori/mamori.js"',
+        '"$NODE_BIN" "$RUNNER_PATH" run --mode prepush --scope workspace --execute',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+
+    try {
+      extensionModule.synchronizeExistingMamoriRuntimeIfPresent(
+        {
+          uri: activeVscodeApi.Uri.file(secondaryWorkspaceRoot),
+          name: 'mamori-managed-hooks-secondary',
+          index: 0,
+        } as VscodeWorkspaceFolder,
+        extensionRootPath,
+        {
+          appendLine: () => {},
+        } as unknown as import('vscode').OutputChannel,
+      );
+
+      assert.match(fs.readFileSync(runnerPath, 'utf8'), /hooks <install\|uninstall>/u);
+      assert.match(fs.readFileSync(preCommitHookPath, 'utf8'), /MAMORI_MANAGED_HOOK=precommit/u);
+      assert.match(fs.readFileSync(preCommitHookPath, 'utf8'), /Git continues/u);
+      assert.match(fs.readFileSync(prePushHookPath, 'utf8'), /MAMORI_MANAGED_HOOK=prepush/u);
+      assert.match(fs.readFileSync(prePushHookPath, 'utf8'), /Git continues/u);
+    } finally {
+      fs.rmSync(secondaryWorkspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  /**
    * setup コマンドが `close` を受信しない子プロセスでも完了できること。
    * @returns 実行完了を待つ Promise を返す。
    */

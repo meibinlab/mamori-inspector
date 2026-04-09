@@ -25,6 +25,7 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 - Git hook 検証は、拡張をインストールしただけでは開始しません。管理対象の hook を明示的にインストールする必要があります。
 - `Mamori Inspector: Install Git Hooks` は、管理対象 hook を生成する前に、同梱 runner の静的 runtime をワークスペースの `.mamori/` へ同期します。同期される runtime には `type: commonjs` を持つ `.mamori/package.json` も含まれるため、導入先プロジェクトが `"type": "module"` の場合でも repo-local runner を正しく起動できます。
 - 既にワークスペースに `.mamori/` がある場合、Mamori は拡張の有効化時と workspace 追加時にも管理 runtime を自動再同期します。そのため、利用者は通常、拡張更新後に一度 VS Code で対象 workspace を開けば setup や hook install を再実行する必要はありません。
+- `.git/hooks/pre-commit` または `.git/hooks/pre-push` が Mamori 管理外の独自 hook に置き換えられている場合、Mamori はそれを自動上書きしません。その場合は既存 hook の内容を確認したうえで、管理対象 hook に戻したいときだけ手動で切り替えてください。
 - 管理対象の pre-commit / pre-push hook は、`$REPO_ROOT/.mamori/mamori.js` が無い場合や、解決した `node` コマンドが利用できない場合に stderr へ warning を出して成功終了するため、古い hook が残っていても commit / push を妨げません。
 - 初回の検証実行前に管理ツール一式を先に取得したい場合は、`Mamori Inspector: Setup Managed Tools` を一度実行します。
 - `precommit/staged` は、ステージ済みファイルを `git diff --cached --name-only --diff-filter=ACMR` で解決するため、`PATH` 上の Git CLI が必要です。
