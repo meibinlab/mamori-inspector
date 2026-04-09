@@ -1,7 +1,9 @@
 // 断言ユーティリティを表す
 import * as assert from 'assert';
 // 子プロセス同期実行 API を表す
-import { spawnSync } from 'child_process';
+import * as childProcess from 'child_process';
+// イベントエミッター API を表す
+import { EventEmitter } from 'events';
 // ファイルシステム API を表す
 import * as fs from 'fs';
 // OS 固有 API を表す
@@ -368,7 +370,7 @@ async function runHooksCommandForTest(
 ): Promise<void> {
   const repositoryRoot = path.resolve(__dirname, '..', '..');
   const cliScriptPath = path.join(repositoryRoot, '.mamori', 'mamori.js');
-  const result = spawnSync(process.execPath, [cliScriptPath, 'hooks', action], {
+  const result = childProcess.spawnSync(process.execPath, [cliScriptPath, 'hooks', action], {
     cwd: workspaceRoot,
     encoding: 'utf8',
     env: process.env,
@@ -393,7 +395,7 @@ async function runSaveCommandForTest(
 ): Promise<void> {
   const repositoryRoot = path.resolve(__dirname, '..', '..');
   const cliScriptPath = path.join(repositoryRoot, '.mamori', 'mamori.js');
-  const result = spawnSync(
+  const result = childProcess.spawnSync(
     process.execPath,
     [
       cliScriptPath,
@@ -2541,7 +2543,7 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
         },
       );
 
-      const runnerExecutionResult = spawnSync(process.execPath, [runnerPath, 'help'], {
+      const runnerExecutionResult = childProcess.spawnSync(process.execPath, [runnerPath, 'help'], {
         cwd: secondaryWorkspaceRoot,
         encoding: 'utf8',
       });
@@ -2609,7 +2611,7 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
       );
       assert.match(fs.readFileSync(runnerPath, 'utf8'), /hooks <install\|uninstall>/u);
 
-      const runnerExecutionResult = spawnSync(process.execPath, [runnerPath, 'help'], {
+      const runnerExecutionResult = childProcess.spawnSync(process.execPath, [runnerPath, 'help'], {
         cwd: secondaryWorkspaceRoot,
         encoding: 'utf8',
       });
@@ -2619,6 +2621,80 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
       assert.strictEqual(runnerExecutionResult.stderr, '');
     } finally {
       fs.rmSync(secondaryWorkspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  /**
+   * setup コマンドが `close` を受信しない子プロセスでも完了できること。
+   * @returns 実行完了を待つ Promise を返す。
+   */
+  test('Completes managed tool setup when the child process only emits exit', async function() {
+    this.timeout(10000);
+
+    const activeVscodeApi = vscodeApi;
+    const extensionModule = loadExtensionModule();
+    const workspaceFolder = activeVscodeApi.workspace.workspaceFolders?.[0];
+    if (!extensionModule) {
+      throw new Error('Extension module was not found');
+    }
+    if (!workspaceFolder) {
+      throw new Error('Workspace root was not found');
+    }
+
+    const extensionRootPath = getMamoriExtension(activeVscodeApi).extensionUri.fsPath;
+    let spawnCalled = false;
+
+    extensionModule.setMamoriCliSpawnForTesting(
+      ((() => {
+        spawnCalled = true;
+
+        const stdout = new EventEmitter();
+        const stderr = new EventEmitter();
+        const child = new EventEmitter() as EventEmitter & childProcess.ChildProcessWithoutNullStreams;
+
+        Object.defineProperty(child, 'stdout', {
+          configurable: true,
+          writable: true,
+          value: stdout,
+        });
+        Object.defineProperty(child, 'stderr', {
+          configurable: true,
+          writable: true,
+          value: stderr,
+        });
+
+        queueMicrotask(() => {
+          stdout.emit('data', Buffer.from('mamori: setup completed\n', 'utf8'));
+          stdout.emit('data', Buffer.from('mamori: setup tools=eslint:C:/mamori/eslint.cmd\n', 'utf8'));
+          stdout.emit('end');
+          stderr.emit('end');
+          child.emit('exit', 0, null);
+        });
+
+        return child;
+      }) as unknown) as typeof childProcess.spawn,
+    );
+
+    try {
+      let completed = false;
+      let commandResult: { stdout: string; stderr: string } | undefined;
+      const commandPromise = extensionModule.runMamoriCliCommandForTesting(
+        workspaceFolder,
+        ['setup'],
+        extensionRootPath,
+      ).then((result: { stdout: string; stderr: string }) => {
+        commandResult = result;
+        completed = true;
+      });
+
+      await waitFor(() => spawnCalled, 5000);
+      await waitFor(() => completed, 5000);
+      await commandPromise;
+
+      assert.match(commandResult?.stdout || '', /mamori: setup completed/u);
+      assert.strictEqual(commandResult?.stderr || '', '');
+    } finally {
+      extensionModule.setMamoriCliSpawnForTesting(undefined);
     }
   });
 

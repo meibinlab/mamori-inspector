@@ -1,7 +1,7 @@
 // VS Code 拡張APIを表す
 import * as vscode from 'vscode';
 // 子プロセス実行 API を表す
-import { spawn } from 'child_process';
+import * as childProcess from 'child_process';
 // Node のファイルシステム API を表す
 import * as fs from 'fs';
 // Node のパス操作 API を表す
@@ -27,6 +27,9 @@ import {
 } from './maintenance-command-report';
 // 保存時チェックのスケジューラーを表す
 import { SaveCheckScheduler } from './save-check-scheduler';
+
+// Mamori CLI 実行に使う spawn 実装を表す
+let spawnProcess: typeof childProcess.spawn = childProcess.spawn;
 
 // 診断コレクション名を表す
 const DIAGNOSTIC_COLLECTION_NAME = 'mamori-inspector';
@@ -668,6 +671,17 @@ function getMamoriCliExecutablePath(): string {
 }
 
 /**
+ * テスト用に Mamori CLI 実行の spawn 実装を差し替える。
+ * @param spawnImplementation 差し替える spawn 実装を表す。
+ * @returns 返り値はない。
+ */
+export function setMamoriCliSpawnForTesting(
+  spawnImplementation: typeof childProcess.spawn | undefined,
+): void {
+  spawnProcess = spawnImplementation || childProcess.spawn;
+}
+
+/**
  * Mamori CLI 失敗時に表示する詳細メッセージを返す。
  * @param stdout 標準出力を表す。
  * @param stderr 標準エラー出力を表す。
@@ -868,7 +882,7 @@ function runMamoriCliCommand(
       return;
     }
 
-    const child = spawn(
+    const child = spawnProcess(
       cliExecutablePath,
       [cliPath, ...argumentsList],
       {
@@ -883,6 +897,46 @@ function runMamoriCliCommand(
     let stdout = '';
     let stderr = '';
     let pendingStdoutLine = '';
+    let settled = false;
+    let exitCode: number | null | undefined;
+    let stdoutEnded = !child.stdout;
+    let stderrEnded = !child.stderr;
+
+    /**
+     * CLI 実行結果を 1 回だけ確定する。
+     * @param code 終了コードを表す。
+     * @returns 返り値はない。
+     */
+    function settleCommand(code: number | null): void {
+      if (settled) {
+        return;
+      }
+
+      settled = true;
+      emitPendingOutputLine(pendingStdoutLine, events?.onStdoutLine);
+
+      if (typeof code === 'number' && code <= 1) {
+        resolve({ stdout, stderr });
+        return;
+      }
+
+      reject(new Error(getMamoriCliFailureMessage(stdout, stderr, code ?? null)));
+    }
+
+    /**
+     * `exit` のみ受信した場合に標準入出力終端後の完了判定を行う。
+     * @returns 返り値はない。
+     */
+    function trySettleAfterExit(): void {
+      if (typeof exitCode === 'undefined') {
+        return;
+      }
+      if (!stdoutEnded || !stderrEnded) {
+        return;
+      }
+
+      settleCommand(exitCode);
+    }
 
     child.stdout.on('data', (chunk: Buffer) => {
       const chunkText = chunk.toString('utf8');
@@ -893,25 +947,51 @@ function runMamoriCliCommand(
         events?.onStdoutLine,
       );
     });
+    child.stdout.once('end', () => {
+      stdoutEnded = true;
+      trySettleAfterExit();
+    });
 
     child.stderr.on('data', (chunk: Buffer) => {
       stderr += chunk.toString('utf8');
     });
+    child.stderr.once('end', () => {
+      stderrEnded = true;
+      trySettleAfterExit();
+    });
 
     child.on('error', (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
       reject(error);
     });
 
-    child.on('close', (code) => {
-      emitPendingOutputLine(pendingStdoutLine, events?.onStdoutLine);
+    child.on('exit', (code) => {
+      exitCode = code ?? null;
+      trySettleAfterExit();
+    });
 
-      if (typeof code === 'number' && code <= 1) {
-        resolve({ stdout, stderr });
-        return;
-      }
-      reject(new Error(getMamoriCliFailureMessage(stdout, stderr, code ?? null)));
+    child.on('close', (code) => {
+      settleCommand(code ?? exitCode ?? null);
     });
   });
+}
+
+/**
+ * テスト用に Mamori CLI 実行 Promise を直接返す。
+ * @param workspaceFolder 対象ワークスペースフォルダーを表す。
+ * @param argumentsList CLI 引数一覧を表す。
+ * @param extensionRootPath 拡張ルートパスを表す。
+ * @returns 実行完了を待つ Promise を返す。
+ */
+export function runMamoriCliCommandForTesting(
+  workspaceFolder: vscode.WorkspaceFolder,
+  argumentsList: string[],
+  extensionRootPath: string,
+): Promise<MamoriCliCommandResult> {
+  return runMamoriCliCommand(workspaceFolder, argumentsList, extensionRootPath);
 }
 
 /**
