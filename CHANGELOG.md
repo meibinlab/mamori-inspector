@@ -4,6 +4,16 @@
 
 形式は Keep a Changelog を参考にしつつ、このリポジトリの実装状況に合わせて整理します。
 
+## [0.2.42] - 2026-04-09
+
+### Changed
+- managed pre-commit が失敗したとき、Mamori Output を開く、ワークスペースチェックを実行する、または `git commit --no-verify` のコマンド例をコピーする選択肢付き通知を表示するようにしました。
+- managed pre-push が失敗したとき、最新結果を拡張が検知して Problems を更新し、Problems 確認を促す通知を表示するようにしました。
+
+### Added
+- pre-commit / pre-push の最新結果メタデータを `.mamori/out/latest-precommit-result.json` と `.mamori/out/latest-prepush-result.json` に保存し、拡張側で後追い通知できるようにしました。
+- pre-commit / pre-push の失敗通知と no-verify コマンドコピーを確認する CLI / 拡張回帰テストを追加しました。
+
 ## [0.2.41] - 2026-04-09
 
 ### Fixed
