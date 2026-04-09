@@ -673,6 +673,92 @@ function resolveSarifOutputPath(currentWorkingDirectory, explicitOutput) {
 }
 
 /**
+ * pre-push 最新結果の出力先を返す。
+ * @param {string} currentWorkingDirectory 現在の作業ディレクトリを表す。
+ * @returns {string} 結果ファイルパスを返す。
+ */
+function resolvePrePushResultOutputPath(currentWorkingDirectory) {
+  return path.resolve(currentWorkingDirectory, '.mamori', 'out', 'latest-prepush-result.json');
+}
+
+/**
+ * pre-commit 最新結果の出力先を返す。
+ * @param {string} currentWorkingDirectory 現在の作業ディレクトリを表す。
+ * @returns {string} 結果ファイルパスを返す。
+ */
+function resolvePreCommitResultOutputPath(currentWorkingDirectory) {
+  return path.resolve(currentWorkingDirectory, '.mamori', 'out', 'latest-precommit-result.json');
+}
+
+/**
+ * pre-push 最新結果を best-effort で書き込む。
+ * @param {string} currentWorkingDirectory 現在の作業ディレクトリを表す。
+ * @param {{exitCode: number, issues?: Array<unknown>, warnings?: string[]}} executionResult 実行結果を表す。
+ * @param {string} sarifOutputPath SARIF 出力先を表す。
+ * @returns {void} 返り値はない。
+ */
+function writeLatestPrePushResult(currentWorkingDirectory, executionResult, sarifOutputPath) {
+  const prePushResultOutputPath = resolvePrePushResultOutputPath(currentWorkingDirectory);
+
+  try {
+    fs.mkdirSync(path.dirname(prePushResultOutputPath), { recursive: true });
+    fs.writeFileSync(
+      prePushResultOutputPath,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        runId: `${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2, 8)}`,
+        createdAt: new Date().toISOString(),
+        mode: 'prepush',
+        scope: 'workspace',
+        exitCode: executionResult.exitCode,
+        issueCount: Array.isArray(executionResult.issues) ? executionResult.issues.length : 0,
+        warnings: Array.isArray(executionResult.warnings) ? executionResult.warnings : [],
+        sarifOutputPath,
+      }, null, 2)}\n`,
+      'utf8',
+    );
+  } catch (error) {
+    process.stderr.write(
+      `mamori: failed to write latest pre-push result: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+  }
+}
+
+/**
+ * pre-commit 最新結果を best-effort で書き込む。
+ * @param {string} currentWorkingDirectory 現在の作業ディレクトリを表す。
+ * @param {{exitCode: number, issues?: Array<unknown>, warnings?: string[]}} executionResult 実行結果を表す。
+ * @param {string} sarifOutputPath SARIF 出力先を表す。
+ * @returns {void} 返り値はない。
+ */
+function writeLatestPreCommitResult(currentWorkingDirectory, executionResult, sarifOutputPath) {
+  const preCommitResultOutputPath = resolvePreCommitResultOutputPath(currentWorkingDirectory);
+
+  try {
+    fs.mkdirSync(path.dirname(preCommitResultOutputPath), { recursive: true });
+    fs.writeFileSync(
+      preCommitResultOutputPath,
+      `${JSON.stringify({
+        schemaVersion: 1,
+        runId: `${Date.now()}-${process.pid}-${Math.random().toString(36).slice(2, 8)}`,
+        createdAt: new Date().toISOString(),
+        mode: 'precommit',
+        scope: 'staged',
+        exitCode: executionResult.exitCode,
+        issueCount: Array.isArray(executionResult.issues) ? executionResult.issues.length : 0,
+        warnings: Array.isArray(executionResult.warnings) ? executionResult.warnings : [],
+        sarifOutputPath,
+      }, null, 2)}\n`,
+      'utf8',
+    );
+  } catch (error) {
+    process.stderr.write(
+      `mamori: failed to write latest pre-commit result: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+  }
+}
+
+/**
  * 最小CLIの実行結果を返す。
  * @returns {number} 終了コードを返す。
  */
@@ -759,6 +845,12 @@ async function runMinimal() {
     const sarifLog = buildCombinedSarif(Array.isArray(executionResult.issues) ? executionResult.issues : []);
     writeSarifFile(sarifLog, sarifOutputPath);
     executionResult.sarifOutputPath = sarifOutputPath;
+    if (parsedArguments.mode === 'precommit' && parsedArguments.scope === 'staged') {
+      writeLatestPreCommitResult(process.cwd(), executionResult, sarifOutputPath);
+    }
+    if (parsedArguments.mode === 'prepush' && parsedArguments.scope === 'workspace') {
+      writeLatestPrePushResult(process.cwd(), executionResult, sarifOutputPath);
+    }
     printExecutionResult(executionResult);
     return executionResult.exitCode;
   }

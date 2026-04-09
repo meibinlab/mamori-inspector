@@ -2341,6 +2341,7 @@ suite('Mamori CLI Test Suite', () => {
     const htmlDirectory = path.join(temporaryDirectory, 'public');
     const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
     const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-web-prepush.sarif');
+    const prePushResultPath = path.join(temporaryDirectory, '.mamori', 'out', 'latest-prepush-result.json');
     const javascriptFilePath = path.join(scriptDirectory, 'main.js');
     const cssFilePath = path.join(styleDirectory, 'site.css');
     const htmlFilePath = path.join(htmlDirectory, 'index.html');
@@ -2420,6 +2421,19 @@ suite('Mamori CLI Test Suite', () => {
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /no-console/u);
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /color-no-invalid-hex/u);
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /tag-pair/u);
+
+    const prePushResult = JSON.parse(fs.readFileSync(prePushResultPath, 'utf8')) as {
+      exitCode: number;
+      issueCount: number;
+      sarifOutputPath: string;
+      mode: string;
+      scope: string;
+    };
+    assert.strictEqual(prePushResult.exitCode, 1);
+    assert.strictEqual(prePushResult.issueCount, 3);
+    assert.strictEqual(prePushResult.mode, 'prepush');
+    assert.strictEqual(prePushResult.scope, 'workspace');
+    assert.strictEqual(prePushResult.sarifOutputPath, sarifOutputPath);
   });
 
   /**
@@ -4320,6 +4334,7 @@ suite('Mamori CLI Test Suite', () => {
     const eslintLogPath = path.join(nodeBinDirectory, 'eslint.log');
     const indexSnapshotPath = path.join(temporaryDirectory, '.tmp-index', 'main.js');
     const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-web-precommit.sarif');
+    const preCommitResultPath = path.join(temporaryDirectory, '.mamori', 'out', 'latest-precommit-result.json');
     const eslintOutput = JSON.stringify([
       {
         filePath: javascriptFilePath,
@@ -4381,6 +4396,19 @@ suite('Mamori CLI Test Suite', () => {
     assert.match(fs.readFileSync(indexSnapshotPath, 'utf8'), /formatted by eslint/u);
     assert.ok(fs.existsSync(sarifOutputPath));
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Missing semicolon\./u);
+
+    const preCommitResult = JSON.parse(fs.readFileSync(preCommitResultPath, 'utf8')) as {
+      exitCode: number;
+      issueCount: number;
+      mode: string;
+      scope: string;
+      sarifOutputPath: string;
+    };
+    assert.strictEqual(preCommitResult.exitCode, 1);
+    assert.strictEqual(preCommitResult.issueCount, 1);
+    assert.strictEqual(preCommitResult.mode, 'precommit');
+    assert.strictEqual(preCommitResult.scope, 'staged');
+    assert.strictEqual(preCommitResult.sarifOutputPath, sarifOutputPath);
   });
 
   /**

@@ -1093,17 +1093,20 @@ function createHooksMessageRecorder(): {
  */
 function captureWindowMessages(vscodeApi: VscodeModule): {
   informationMessages: string[];
+  warningMessages: string[];
   errorMessages: string[];
   statusBarMessages: string[];
   notificationProgressTitles: string[];
   restore: () => void;
 } {
   const informationMessages: string[] = [];
+  const warningMessages: string[] = [];
   const errorMessages: string[] = [];
   const statusBarMessages: string[] = [];
   const notificationProgressTitles: string[] = [];
   const windowApi = vscodeApi.window as unknown as Record<string, unknown>;
   const originalShowInformationMessage = windowApi.showInformationMessage;
+  const originalShowWarningMessage = windowApi.showWarningMessage;
   const originalShowErrorMessage = windowApi.showErrorMessage;
   const originalSetStatusBarMessage = windowApi.setStatusBarMessage;
   const originalWithProgress = windowApi.withProgress;
@@ -1113,6 +1116,14 @@ function captureWindowMessages(vscodeApi: VscodeModule): {
     writable: true,
     value: async(message: string) => {
       informationMessages.push(message);
+      return undefined;
+    },
+  });
+  Object.defineProperty(windowApi, 'showWarningMessage', {
+    configurable: true,
+    writable: true,
+    value: async(message: string) => {
+      warningMessages.push(message);
       return undefined;
     },
   });
@@ -1163,6 +1174,7 @@ function captureWindowMessages(vscodeApi: VscodeModule): {
 
   return {
     informationMessages,
+    warningMessages,
     errorMessages,
     statusBarMessages,
     notificationProgressTitles,
@@ -1171,6 +1183,11 @@ function captureWindowMessages(vscodeApi: VscodeModule): {
         configurable: true,
         writable: true,
         value: originalShowInformationMessage,
+      });
+      Object.defineProperty(windowApi, 'showWarningMessage', {
+        configurable: true,
+        writable: true,
+        value: originalShowWarningMessage,
       });
       Object.defineProperty(windowApi, 'showErrorMessage', {
         configurable: true,
@@ -3227,6 +3244,272 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
     } finally {
       messageCapture.restore();
       restoreCliScript();
+    }
+  });
+
+  /**
+   * 観測した pre-push 失敗で Problems 更新と警告通知を表示すること。
+   * @returns 実行完了を待つ Promise を返す。
+   */
+  test('Shows a warning notification when observed pre-push failures update Problems', async function() {
+    this.timeout(20000);
+
+    const activeVscodeApi = vscodeApi;
+    const workspaceRoot = activeVscodeApi.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceRoot) {
+      throw new Error('Workspace root was not found');
+    }
+
+    const prePushResultPath = path.join(workspaceRoot, '.mamori', 'out', 'latest-prepush-result.json');
+    const prePushSarifPath = path.join(workspaceRoot, '.mamori', 'out', 'observed-prepush.sarif');
+    const targetFilePath = path.join(workspaceRoot, 'src', 'extension.ts');
+    const restorePrePushResult = createRestoreAction(prePushResultPath);
+    const restorePrePushSarif = createRestoreAction(prePushSarifPath);
+    const messageCapture = captureWindowMessages(activeVscodeApi);
+
+    try {
+      fs.rmSync(prePushResultPath, { force: true });
+      fs.rmSync(prePushSarifPath, { force: true });
+
+      await getMamoriExtension(activeVscodeApi).activate();
+
+      fs.mkdirSync(path.dirname(prePushResultPath), { recursive: true });
+      fs.writeFileSync(
+        prePushSarifPath,
+        JSON.stringify({
+          version: '2.1.0',
+          runs: [
+            {
+              results: [
+                {
+                  ruleId: 'prepush-rule',
+                  level: 'warning',
+                  message: {
+                    text: 'Observed pre-push failure finding.',
+                  },
+                  locations: [
+                    {
+                      physicalLocation: {
+                        artifactLocation: {
+                          uri: targetFilePath,
+                        },
+                        region: {
+                          startLine: 1,
+                          startColumn: 1,
+                        },
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        }),
+        'utf8',
+      );
+      fs.writeFileSync(
+        prePushResultPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: `test-prepush-${Date.now()}`,
+          createdAt: new Date().toISOString(),
+          mode: 'prepush',
+          scope: 'workspace',
+          exitCode: 1,
+          issueCount: 1,
+          warnings: [],
+          sarifOutputPath: prePushSarifPath,
+        }, null, 2),
+        'utf8',
+      );
+
+      await waitFor(
+        () => activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(targetFilePath)).some(
+          (diagnostic) => diagnostic.message === 'Observed pre-push failure finding.',
+        ),
+        20000,
+      );
+      await waitFor(() => messageCapture.warningMessages.length > 0, 20000);
+
+      const diagnostics = activeVscodeApi.languages.getDiagnostics(activeVscodeApi.Uri.file(targetFilePath));
+
+      assert.strictEqual(messageCapture.errorMessages.length, 0);
+      assert.ok(messageCapture.warningMessages.some((message) => /pre-push/u.test(message)));
+      assert.ok(messageCapture.warningMessages.some((message) => /Problems/u.test(message)));
+      assert.ok(diagnostics.some((diagnostic) => diagnostic.message === 'Observed pre-push failure finding.'));
+    } finally {
+      messageCapture.restore();
+      restorePrePushResult();
+      restorePrePushSarif();
+    }
+  });
+
+  /**
+   * 観測した pre-commit 失敗で選択肢付き通知を表示できること。
+   * @returns 実行完了を待つ Promise を返す。
+   */
+  test('Shows selectable actions when observed pre-commit failures are reported', async function() {
+    this.timeout(20000);
+
+    const activeVscodeApi = vscodeApi;
+    const workspaceRoot = activeVscodeApi.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceRoot) {
+      throw new Error('Workspace root was not found');
+    }
+
+    const preCommitResultPath = path.join(workspaceRoot, '.mamori', 'out', 'latest-precommit-result.json');
+    const restorePreCommitResult = createRestoreAction(preCommitResultPath);
+    const messageCapture = captureWindowMessages(activeVscodeApi);
+    const warningActionSets: string[][] = [];
+    const executedCommands: string[] = [];
+    const windowApi = activeVscodeApi.window as unknown as Record<string, unknown>;
+    const commandsApi = activeVscodeApi.commands as unknown as Record<string, unknown>;
+    const originalShowWarningMessage = windowApi.showWarningMessage;
+    const originalExecuteCommand = commandsApi.executeCommand;
+
+    try {
+      fs.rmSync(preCommitResultPath, { force: true });
+      await getMamoriExtension(activeVscodeApi).activate();
+
+      Object.defineProperty(windowApi, 'showWarningMessage', {
+        configurable: true,
+        writable: true,
+        value: async(message: string, ...items: string[]) => {
+          messageCapture.warningMessages.push(message);
+          warningActionSets.push(items);
+          return items.find((item) => /Run Workspace Check|ワークスペースチェックを実行/u.test(item));
+        },
+      });
+      Object.defineProperty(commandsApi, 'executeCommand', {
+        configurable: true,
+        writable: true,
+        value: async(command: string, ...args: unknown[]) => {
+          if (command === 'mamori-inspector.runWorkspaceCheck') {
+            executedCommands.push(command);
+            return undefined;
+          }
+
+          const executeCommand = originalExecuteCommand as (commandId: string, ...innerArgs: unknown[]) => Thenable<unknown>;
+          return executeCommand(command, ...args);
+        },
+      });
+
+      fs.mkdirSync(path.dirname(preCommitResultPath), { recursive: true });
+      fs.writeFileSync(
+        preCommitResultPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: `test-precommit-${Date.now()}`,
+          createdAt: new Date().toISOString(),
+          mode: 'precommit',
+          scope: 'staged',
+          exitCode: 1,
+          issueCount: 2,
+          warnings: [],
+        }, null, 2),
+        'utf8',
+      );
+
+      await waitFor(() => messageCapture.warningMessages.length > 0, 20000);
+      await waitFor(() => executedCommands.includes('mamori-inspector.runWorkspaceCheck'), 20000);
+
+      assert.strictEqual(messageCapture.errorMessages.length, 0);
+      assert.ok(messageCapture.warningMessages.some((message) => /pre-commit/u.test(message)));
+      assert.strictEqual(warningActionSets.length, 1);
+      assert.ok(warningActionSets[0]?.some((item) => /Open Mamori Output|Mamori Output を開く/u.test(item)));
+      assert.ok(warningActionSets[0]?.some((item) => /Run Workspace Check|ワークスペースチェックを実行/u.test(item)));
+      assert.ok(warningActionSets[0]?.some((item) => /Copy no-verify Commit Command|no-verify/u.test(item)));
+      assert.deepStrictEqual(executedCommands, ['mamori-inspector.runWorkspaceCheck']);
+    } finally {
+      Object.defineProperty(windowApi, 'showWarningMessage', {
+        configurable: true,
+        writable: true,
+        value: originalShowWarningMessage,
+      });
+      Object.defineProperty(commandsApi, 'executeCommand', {
+        configurable: true,
+        writable: true,
+        value: originalExecuteCommand,
+      });
+      messageCapture.restore();
+      restorePreCommitResult();
+    }
+  });
+
+  /**
+   * 観測した pre-commit 失敗通知から no-verify コマンドをコピーできること。
+   * @returns 実行完了を待つ Promise を返す。
+   */
+  test('Copies a no-verify commit command from observed pre-commit failures', async function() {
+    this.timeout(20000);
+
+    const activeVscodeApi = vscodeApi;
+    const workspaceRoot = activeVscodeApi.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceRoot) {
+      throw new Error('Workspace root was not found');
+    }
+
+    const preCommitResultPath = path.join(workspaceRoot, '.mamori', 'out', 'latest-precommit-result.json');
+    const restorePreCommitResult = createRestoreAction(preCommitResultPath);
+    const messageCapture = captureWindowMessages(activeVscodeApi);
+    const windowApi = activeVscodeApi.window as unknown as Record<string, unknown>;
+    const originalShowWarningMessage = windowApi.showWarningMessage;
+    const extension = getMamoriExtension(activeVscodeApi);
+    const extensionModule = loadExtensionModule();
+    let copiedText = '';
+
+    try {
+      if (!extensionModule) {
+        throw new Error('Extension module was not loaded');
+      }
+
+      fs.rmSync(preCommitResultPath, { force: true });
+      await extension.activate();
+
+      extensionModule.setClipboardWriterForTesting(async(value: string) => {
+        copiedText = value;
+      });
+      Object.defineProperty(windowApi, 'showWarningMessage', {
+        configurable: true,
+        writable: true,
+        value: async(message: string, ...items: string[]) => {
+          messageCapture.warningMessages.push(message);
+          return items.find((item) => /Copy no-verify Commit Command|no-verify/u.test(item));
+        },
+      });
+
+      fs.mkdirSync(path.dirname(preCommitResultPath), { recursive: true });
+      fs.writeFileSync(
+        preCommitResultPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: `test-precommit-copy-${Date.now()}`,
+          createdAt: new Date().toISOString(),
+          mode: 'precommit',
+          scope: 'staged',
+          exitCode: 1,
+          issueCount: 1,
+          warnings: [],
+        }, null, 2),
+        'utf8',
+      );
+
+      await waitFor(() => copiedText !== '', 20000);
+      await waitFor(() => messageCapture.informationMessages.some((message) => /no-verify/u.test(message)), 20000);
+
+      assert.strictEqual(copiedText, 'git commit --no-verify');
+      assert.ok(messageCapture.informationMessages.some((message) => /clipboard|クリップボード/u.test(message)));
+    } finally {
+      if (extensionModule) {
+        extensionModule.setClipboardWriterForTesting(undefined);
+      }
+      Object.defineProperty(windowApi, 'showWarningMessage', {
+        configurable: true,
+        writable: true,
+        value: originalShowWarningMessage,
+      });
+      messageCapture.restore();
+      restorePreCommitResult();
     }
   });
 

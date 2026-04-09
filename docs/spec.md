@@ -87,6 +87,11 @@ HTML inline style の扱い（確定）:
 - HTML 内 inline style: Stylelint（対象は CSS と判定されたものに限る。設定解決は明示設定 → discovery → `package.json#stylelint` → Mamori 同梱の最小設定。HTML 本体は引き続き htmlhint）
 - HTML: htmlhint（明示設定 → discovery → `package.json#htmlhint` を優先し、無ければ Mamori 同梱の最小設定を使用）
 
+pre-commit の通知仕様（確定）:
+- managed pre-commit が終了コード 1 または 2 で失敗した場合、runner は最新結果メタデータを `.mamori/out/latest-precommit-result.json` へ保存する
+- VS Code 拡張は最新結果を検知した場合、staged 内容とエディタ表示内容の差異を考慮して Problems は自動更新せず、Output を開く、手動ワークスペースチェックを実行する、または `git commit --no-verify` のコマンド例をコピーする選択肢付き通知を表示する
+- managed pre-commit が成功した場合、runner は同じ結果メタデータを成功状態で更新し、拡張は古い失敗通知を再利用しない
+
 ### 3.3 pre-push（scope=workspace、失敗でブロック）
 チェック（デフォルト有効）:
 - Java: Checkstyle / PMD / Semgrep / CPD / SpotBugs
@@ -99,6 +104,12 @@ HTML inline style の扱い（確定）:
 
 SpotBugsの例外仕様（確定）:
 - class files（例: `target/classes` や `build/classes/java/main`）が見つからない場合は警告ログを出してスキップし、pushは継続する
+
+pre-push の通知仕様（確定）:
+- managed pre-push が終了コード 1 で失敗した場合、runner は最新結果メタデータを `.mamori/out/latest-prepush-result.json` へ保存する
+- VS Code 拡張は最新結果を検知した場合、生成済み SARIF があれば Problems を更新し、pre-push チェック失敗と Problems 確認を促す warning 通知を表示する
+- managed pre-push が終了コード 2 で失敗した場合も、生成済み SARIF があれば Problems を更新し、Problems と Output Channel の確認を促す error 通知を表示する
+- managed pre-push が成功した場合、runner は同じ結果メタデータを成功状態で更新し、拡張は以前の pre-push 由来 Diagnostics を消去できるようにする
 
 ### 3.4 手動（manual、将来対応あり）
 現行実装:

@@ -78,6 +78,9 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 - When a manual workspace check starts, Mamori shows a short-lived notification toast to signal the start, while the ongoing static-analysis progress remains in the status bar.
 - Save-time and manual static-analysis progress are shown in the status bar, not as toast notifications.
 - When a manual workspace check succeeds, the extension replaces previously published save diagnostics for the same workspace with the latest manual results.
+- When a managed pre-commit run fails, Mamori shows a selectable notification that lets you open the Mamori output, run a workspace check, or copy a `git commit --no-verify` command, instead of automatically republishing staged-only findings to Problems.
+- When a managed pre-push run fails with rule violations, Mamori updates Problems from the latest pre-push SARIF and also shows a warning notification that the pre-push check failed and that you should review Problems.
+- When a managed pre-push run ends with an execution error, Mamori still shows an error notification that asks you to review Problems and the Mamori Inspector output, and it reuses any generated pre-push SARIF when available.
 - The commands `Mamori Inspector: Enable In Workspace` and `Mamori Inspector: Disable In Workspace` toggle automatic save-time validation per workspace folder. The default is disabled.
 - `Enable In Workspace` and `Disable In Workspace` only change `mamori-inspector.enabled`; they do not rewrite VS Code formatter or save-related editor settings.
 - The command `Mamori Inspector: Setup Managed Tools` downloads the managed Maven, Gradle, Semgrep, Prettier, ESLint, Stylelint, and htmlhint toolchain into the workspace cache.

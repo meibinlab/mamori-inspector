@@ -30,6 +30,8 @@ import { SaveCheckScheduler } from './save-check-scheduler';
 
 // Mamori CLI 実行に使う spawn 実装を表す
 let spawnProcess: typeof childProcess.spawn = childProcess.spawn;
+// クリップボード書き込み実装を表す
+let clipboardWriter: (value: string) => Thenable<void> = (value: string) => vscode.env.clipboard.writeText(value);
 
 // 診断コレクション名を表す
 const DIAGNOSTIC_COLLECTION_NAME = 'mamori-inspector';
@@ -41,6 +43,14 @@ const ENABLED_CONFIGURATION_KEY = 'enabled';
 const MANUAL_SARIF_OUTPUT = path.join('.mamori', 'out', 'combined.sarif');
 // 保存時実行向けの SARIF 出力先を表す
 const SAVE_SARIF_OUTPUT = path.join('.mamori', 'out', 'combined-save.sarif');
+// pre-commit 最新結果の出力先を表す
+const PRE_COMMIT_RESULT_OUTPUT = path.join('.mamori', 'out', 'latest-precommit-result.json');
+// pre-push 最新結果の出力先を表す
+const PRE_PUSH_RESULT_OUTPUT = path.join('.mamori', 'out', 'latest-prepush-result.json');
+// pre-commit 最新結果監視に使う glob を表す
+const PRE_COMMIT_RESULT_GLOB = '**/.mamori/out/latest-precommit-result.json';
+// pre-push 最新結果監視に使う glob を表す
+const PRE_PUSH_RESULT_GLOB = '**/.mamori/out/latest-prepush-result.json';
 // ワークスペースへ同期する Mamori runtime の静的エントリ一覧を表す
 const WORKSPACE_MAMORI_RUNTIME_ENTRIES = [
   'mamori.js',
@@ -441,6 +451,149 @@ function getWorkspaceCheckFailureMessage(details: string): string {
 }
 
 /**
+ * Problems 表示アクション文言を返す。
+ * @returns アクション文言を返す。
+ */
+function getOpenProblemsActionLabel(): string {
+  return localize(
+    'Open Problems',
+    'Action label shown in notifications to open the Problems view.',
+  );
+}
+
+/**
+ * Output 表示アクション文言を返す。
+ * @returns アクション文言を返す。
+ */
+function getOpenOutputActionLabel(): string {
+  return localize(
+    'Open Mamori Output',
+    'Action label shown in notifications to open the Mamori Inspector output channel.',
+  );
+}
+
+/**
+ * 手動チェック実行アクション文言を返す。
+ * @returns アクション文言を返す。
+ */
+function getRunWorkspaceCheckActionLabel(): string {
+  return localize(
+    'Run Workspace Check',
+    'Action label shown in notifications to run a Mamori workspace check.',
+  );
+}
+
+/**
+ * no-verify コマンドコピーのアクション文言を返す。
+ * @returns アクション文言を返す。
+ */
+function getCopyNoVerifyCommitCommandActionLabel(): string {
+  return localize(
+    'Copy no-verify Commit Command',
+    'Action label shown in notifications to copy a git commit --no-verify command.',
+  );
+}
+
+/**
+ * no-verify 回避用コミットコマンドを返す。
+ * @returns コマンド文字列を返す。
+ */
+function getNoVerifyCommitCommand(): string {
+  return 'git commit --no-verify';
+}
+
+/**
+ * no-verify コマンドコピー完了通知文言を返す。
+ * @returns 情報通知文言を返す。
+ */
+function getNoVerifyCommitCommandCopiedMessage(): string {
+  return localize(
+    'Mamori Inspector: Copied git commit --no-verify to the clipboard.',
+    'Information message shown after copying the no-verify git commit command.',
+  );
+}
+
+/**
+ * pre-commit ルール違反通知文言を返す。
+ * @param issueCount 検出件数を表す。
+ * @returns 警告通知文言を返す。
+ */
+function getPreCommitChecksFailedMessage(issueCount: number): string {
+  if (issueCount > 0) {
+    return localize(
+      'Mamori Inspector: pre-commit checks failed on staged files with {0} findings. Review the output or run a workspace check.',
+      'Warning message shown when managed pre-commit validation finds issues on staged files.',
+      [issueCount],
+    );
+  }
+
+  return localize(
+    'Mamori Inspector: pre-commit checks failed on staged files. Review the output or run a workspace check.',
+    'Warning message shown when managed pre-commit validation fails on staged files.',
+  );
+}
+
+/**
+ * pre-commit 実行エラー通知文言を返す。
+ * @param details 失敗詳細を表す。
+ * @returns エラー通知文言を返す。
+ */
+function getPreCommitExecutionFailureMessage(details: string): string {
+  if (details.trim() !== '') {
+    return localize(
+      'Mamori Inspector: pre-commit execution failed. Review the output or run a workspace check. {0}',
+      'Error message shown when managed pre-commit validation fails due to an execution error.',
+      [details],
+    );
+  }
+
+  return localize(
+    'Mamori Inspector: pre-commit execution failed. Review the output or run a workspace check.',
+    'Error message shown when managed pre-commit validation fails due to an execution error without extra detail.',
+  );
+}
+
+/**
+ * pre-push ルール違反通知文言を返す。
+ * @param diagnosticsCount 検出件数を表す。
+ * @returns 警告通知文言を返す。
+ */
+function getPrePushChecksFailedMessage(diagnosticsCount: number): string {
+  if (diagnosticsCount > 0) {
+    return localize(
+      'Mamori Inspector: pre-push checks failed with {0} diagnostics. Review Problems for details.',
+      'Warning message shown when managed pre-push validation finds issues and updates Problems.',
+      [diagnosticsCount],
+    );
+  }
+
+  return localize(
+    'Mamori Inspector: pre-push checks failed. Review Problems for details.',
+    'Warning message shown when managed pre-push validation fails and the user should review Problems.',
+  );
+}
+
+/**
+ * pre-push 実行エラー通知文言を返す。
+ * @param details 失敗詳細を表す。
+ * @returns エラー通知文言を返す。
+ */
+function getPrePushExecutionFailureMessage(details: string): string {
+  if (details.trim() !== '') {
+    return localize(
+      'Mamori Inspector: pre-push execution failed. Review Problems and Mamori Inspector output for details. {0}',
+      'Error message shown when managed pre-push validation fails due to an execution error.',
+      [details],
+    );
+  }
+
+  return localize(
+    'Mamori Inspector: pre-push execution failed. Review Problems and Mamori Inspector output for details.',
+    'Error message shown when managed pre-push validation fails due to an execution error without extra detail.',
+  );
+}
+
+/**
  * ワークスペース有効化の成功通知文言を返す。
  * @param enabled 有効化後の状態を表す。
  * @param workspaceFolderName 対象ワークスペース名を表す。
@@ -526,8 +679,46 @@ interface DiagnosticsByUriEntry {
 interface DiagnosticsState {
   /** 手動実行由来の Diagnostics を表す。 */
   manualDiagnosticsByUri: Map<string, DiagnosticsByUriEntry>;
+  /** pre-push 実行由来の Diagnostics を表す。 */
+  prePushDiagnosticsByUri: Map<string, DiagnosticsByUriEntry>;
   /** 保存時実行由来の Diagnostics を表す。 */
   saveDiagnosticsByUri: Map<string, DiagnosticsByUriEntry>;
+}
+
+/**
+ * 観測した pre-push 実行結果を表す。
+ */
+interface ObservedPrePushResult {
+  /** 実行を一意に識別する ID を表す。 */
+  runId: string;
+  /** 終了コードを表す。 */
+  exitCode: number;
+  /** 生成時刻を表す。 */
+  createdAt: string;
+  /** 問題件数を表す。 */
+  issueCount: number;
+  /** 警告一覧を表す。 */
+  warnings: string[];
+  /** SARIF 出力パスを表す。 */
+  sarifOutputPath?: string;
+}
+
+/**
+ * 観測した pre-commit 実行結果を表す。
+ */
+interface ObservedPreCommitResult {
+  /** 実行を一意に識別する ID を表す。 */
+  runId: string;
+  /** 終了コードを表す。 */
+  exitCode: number;
+  /** 生成時刻を表す。 */
+  createdAt: string;
+  /** 問題件数を表す。 */
+  issueCount: number;
+  /** 警告一覧を表す。 */
+  warnings: string[];
+  /** SARIF 出力パスを表す。 */
+  sarifOutputPath?: string;
 }
 
 /**
@@ -682,6 +873,17 @@ export function setMamoriCliSpawnForTesting(
 }
 
 /**
+ * テスト用にクリップボード書き込み実装を差し替える。
+ * @param writerImplementation 差し替えるクリップボード書き込み実装を表す。
+ * @returns 返り値はない。
+ */
+export function setClipboardWriterForTesting(
+  writerImplementation: ((value: string) => Thenable<void>) | undefined,
+): void {
+  clipboardWriter = writerImplementation || ((value: string) => vscode.env.clipboard.writeText(value));
+}
+
+/**
  * Mamori CLI 失敗時に表示する詳細メッセージを返す。
  * @param stdout 標準出力を表す。
  * @param stderr 標準エラー出力を表す。
@@ -723,6 +925,24 @@ function getMamoriCliFailureMessage(stdout: string, stderr: string, code: number
  */
 function getSarifOutputPath(workspaceFolder: vscode.WorkspaceFolder, relativePath: string): string {
   return path.join(workspaceFolder.uri.fsPath, relativePath);
+}
+
+/**
+ * pre-push 最新結果ファイルパスを返す。
+ * @param workspaceFolder ワークスペースフォルダーを表す。
+ * @returns 結果ファイルパスを返す。
+ */
+function getPrePushResultOutputPath(workspaceFolder: vscode.WorkspaceFolder): string {
+  return getSarifOutputPath(workspaceFolder, PRE_PUSH_RESULT_OUTPUT);
+}
+
+/**
+ * pre-commit 最新結果ファイルパスを返す。
+ * @param workspaceFolder ワークスペースフォルダーを表す。
+ * @returns 結果ファイルパスを返す。
+ */
+function getPreCommitResultOutputPath(workspaceFolder: vscode.WorkspaceFolder): string {
+  return getSarifOutputPath(workspaceFolder, PRE_COMMIT_RESULT_OUTPUT);
 }
 
 /**
@@ -1325,6 +1545,7 @@ function buildMergedDiagnosticsByUri(
 ): Map<string, DiagnosticsByUriEntry> {
   const mergedDiagnosticsByUri = new Map<string, DiagnosticsByUriEntry>();
   mergeDiagnosticsByUri(mergedDiagnosticsByUri, diagnosticsState.manualDiagnosticsByUri);
+  mergeDiagnosticsByUri(mergedDiagnosticsByUri, diagnosticsState.prePushDiagnosticsByUri);
   mergeDiagnosticsByUri(mergedDiagnosticsByUri, diagnosticsState.saveDiagnosticsByUri);
   return mergedDiagnosticsByUri;
 }
@@ -1401,6 +1622,302 @@ function publishSaveDiagnosticsFromSarif(
   );
   publishTrackedDiagnostics(diagnosticCollection, diagnosticsState);
   return countDiagnosticsByUri(saveDiagnosticsByUri);
+}
+
+/**
+ * 観測した pre-push 実行結果を読み込む。
+ * @param workspaceFolder 対象ワークスペースフォルダーを表す。
+ * @param outputChannel 出力チャネルを表す。
+ * @returns 読み込めた結果を返す。
+ */
+function loadObservedPrePushResult(
+  workspaceFolder: vscode.WorkspaceFolder,
+  outputChannel: vscode.OutputChannel,
+): ObservedPrePushResult | undefined {
+  const resultPath = getPrePushResultOutputPath(workspaceFolder);
+  if (!fs.existsSync(resultPath)) {
+    return undefined;
+  }
+
+  try {
+    const rawResult = readJsonObjectFile(resultPath);
+    const runId = typeof rawResult.runId === 'string' ? rawResult.runId : '';
+    const exitCode = typeof rawResult.exitCode === 'number' ? rawResult.exitCode : undefined;
+    if (runId === '' || typeof exitCode === 'undefined') {
+      outputChannel.appendLine(`Mamori Inspector could not parse pre-push result metadata: ${resultPath}`);
+      return undefined;
+    }
+
+    return {
+      runId,
+      exitCode,
+      createdAt: typeof rawResult.createdAt === 'string' ? rawResult.createdAt : '',
+      issueCount: typeof rawResult.issueCount === 'number' ? rawResult.issueCount : 0,
+      warnings: Array.isArray(rawResult.warnings)
+        ? rawResult.warnings.filter((warning): warning is string => typeof warning === 'string')
+        : [],
+      sarifOutputPath: typeof rawResult.sarifOutputPath === 'string' && rawResult.sarifOutputPath !== ''
+        ? rawResult.sarifOutputPath
+        : undefined,
+    };
+  } catch (error) {
+    outputChannel.appendLine(
+      `Mamori Inspector failed to read pre-push result metadata: ${resultPath}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return undefined;
+  }
+}
+
+/**
+ * 観測した pre-commit 実行結果を読み込む。
+ * @param workspaceFolder 対象ワークスペースフォルダーを表す。
+ * @param outputChannel 出力チャネルを表す。
+ * @returns 読み込めた結果を返す。
+ */
+function loadObservedPreCommitResult(
+  workspaceFolder: vscode.WorkspaceFolder,
+  outputChannel: vscode.OutputChannel,
+): ObservedPreCommitResult | undefined {
+  const resultPath = getPreCommitResultOutputPath(workspaceFolder);
+  if (!fs.existsSync(resultPath)) {
+    return undefined;
+  }
+
+  try {
+    const rawResult = readJsonObjectFile(resultPath);
+    const runId = typeof rawResult.runId === 'string' ? rawResult.runId : '';
+    const exitCode = typeof rawResult.exitCode === 'number' ? rawResult.exitCode : undefined;
+    if (runId === '' || typeof exitCode === 'undefined') {
+      outputChannel.appendLine(`Mamori Inspector could not parse pre-commit result metadata: ${resultPath}`);
+      return undefined;
+    }
+
+    return {
+      runId,
+      exitCode,
+      createdAt: typeof rawResult.createdAt === 'string' ? rawResult.createdAt : '',
+      issueCount: typeof rawResult.issueCount === 'number' ? rawResult.issueCount : 0,
+      warnings: Array.isArray(rawResult.warnings)
+        ? rawResult.warnings.filter((warning): warning is string => typeof warning === 'string')
+        : [],
+      sarifOutputPath: typeof rawResult.sarifOutputPath === 'string' && rawResult.sarifOutputPath !== ''
+        ? rawResult.sarifOutputPath
+        : undefined,
+    };
+  } catch (error) {
+    outputChannel.appendLine(
+      `Mamori Inspector failed to read pre-commit result metadata: ${resultPath}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return undefined;
+  }
+}
+
+/**
+ * 観測した pre-commit 失敗を選択肢付きで通知する。
+ * @param observedResult 観測した結果を表す。
+ * @param outputChannel 出力チャネルを表す。
+ * @returns 通知完了を待つ Promise を返す。
+ */
+async function showObservedPreCommitFailureNotification(
+  observedResult: ObservedPreCommitResult,
+  outputChannel: vscode.OutputChannel,
+): Promise<void> {
+  const openOutputActionLabel = getOpenOutputActionLabel();
+  const runWorkspaceCheckActionLabel = getRunWorkspaceCheckActionLabel();
+  const copyNoVerifyCommitCommandActionLabel = getCopyNoVerifyCommitCommandActionLabel();
+  const selectedAction = observedResult.exitCode === 1
+    ? await vscode.window.showWarningMessage(
+      getPreCommitChecksFailedMessage(observedResult.issueCount),
+      openOutputActionLabel,
+      runWorkspaceCheckActionLabel,
+      copyNoVerifyCommitCommandActionLabel,
+    )
+    : await vscode.window.showErrorMessage(
+      getPreCommitExecutionFailureMessage(observedResult.warnings[0] || ''),
+      openOutputActionLabel,
+      runWorkspaceCheckActionLabel,
+      copyNoVerifyCommitCommandActionLabel,
+    );
+
+  if (selectedAction === openOutputActionLabel) {
+    outputChannel.show(true);
+    return;
+  }
+
+  if (selectedAction === runWorkspaceCheckActionLabel) {
+    void vscode.commands.executeCommand('mamori-inspector.runWorkspaceCheck');
+    return;
+  }
+
+  if (selectedAction === copyNoVerifyCommitCommandActionLabel) {
+    await clipboardWriter(getNoVerifyCommitCommand());
+    void vscode.window.showInformationMessage(getNoVerifyCommitCommandCopiedMessage());
+  }
+}
+
+/**
+ * 観測した pre-push 失敗を通知する。
+ * @param observedResult 観測した結果を表す。
+ * @param diagnosticsCount Problems に反映した件数を表す。
+ * @returns 通知完了を待つ Promise を返す。
+ */
+async function showObservedPrePushFailureNotification(
+  observedResult: ObservedPrePushResult,
+  diagnosticsCount: number,
+): Promise<void> {
+  const openProblemsActionLabel = getOpenProblemsActionLabel();
+  const selectedAction = observedResult.exitCode === 1
+    ? await vscode.window.showWarningMessage(
+      getPrePushChecksFailedMessage(diagnosticsCount > 0 ? diagnosticsCount : observedResult.issueCount),
+      openProblemsActionLabel,
+    )
+    : await vscode.window.showErrorMessage(
+      getPrePushExecutionFailureMessage(observedResult.warnings[0] || ''),
+      openProblemsActionLabel,
+    );
+
+  if (selectedAction === openProblemsActionLabel) {
+    void vscode.commands.executeCommand('workbench.actions.view.problems');
+  }
+}
+
+/**
+ * 観測した pre-push 実行結果を Problems へ反映する。
+ * @param workspaceFolder 対象ワークスペースフォルダーを表す。
+ * @param diagnosticsState Diagnostics 保持状態を表す。
+ * @param diagnosticCollection 診断コレクションを表す。
+ * @param outputChannel 出力チャネルを表す。
+ * @param handledRunIdsByWorkspace ワークスペースごとの処理済み runId を表す。
+ * @returns 返り値はない。
+ */
+function processObservedPrePushResultForWorkspace(
+  workspaceFolder: vscode.WorkspaceFolder,
+  diagnosticsState: DiagnosticsState,
+  diagnosticCollection: vscode.DiagnosticCollection,
+  outputChannel: vscode.OutputChannel,
+  handledRunIdsByWorkspace: Map<string, string>,
+): void {
+  const observedResult = loadObservedPrePushResult(workspaceFolder, outputChannel);
+  if (!observedResult) {
+    return;
+  }
+
+  const workspaceKey = workspaceFolder.uri.toString();
+  if (handledRunIdsByWorkspace.get(workspaceKey) === observedResult.runId) {
+    return;
+  }
+  handledRunIdsByWorkspace.set(workspaceKey, observedResult.runId);
+
+  clearWorkspaceDiagnosticsByUri(diagnosticsState.manualDiagnosticsByUri, workspaceFolder);
+
+  if (observedResult.exitCode === 0) {
+    clearWorkspaceDiagnosticsByUri(diagnosticsState.prePushDiagnosticsByUri, workspaceFolder);
+    publishTrackedDiagnostics(diagnosticCollection, diagnosticsState);
+    outputChannel.appendLine(
+      `Mamori Inspector observed successful pre-push result for ${workspaceFolder.uri.fsPath} at ${observedResult.createdAt}.`,
+    );
+    return;
+  }
+
+  const prePushDiagnosticsByUri = observedResult.sarifOutputPath
+    ? buildDiagnosticsByUri(workspaceFolder, observedResult.sarifOutputPath)
+    : new Map<string, DiagnosticsByUriEntry>();
+  replaceWorkspaceDiagnosticsByUri(
+    diagnosticsState.prePushDiagnosticsByUri,
+    workspaceFolder,
+    prePushDiagnosticsByUri,
+  );
+  publishTrackedDiagnostics(diagnosticCollection, diagnosticsState);
+
+  const diagnosticsCount = countDiagnosticsByUri(prePushDiagnosticsByUri);
+  outputChannel.appendLine(
+    `Mamori Inspector observed failed pre-push result for ${workspaceFolder.uri.fsPath}: exitCode=${String(observedResult.exitCode)} diagnostics=${String(diagnosticsCount)}.`,
+  );
+  void showObservedPrePushFailureNotification(observedResult, diagnosticsCount);
+}
+
+/**
+ * ワークスペース群の pre-push 実行結果を Problems へ反映する。
+ * @param workspaceFolders 対象ワークスペース一覧を表す。
+ * @param diagnosticsState Diagnostics 保持状態を表す。
+ * @param diagnosticCollection 診断コレクションを表す。
+ * @param outputChannel 出力チャネルを表す。
+ * @param handledRunIdsByWorkspace ワークスペースごとの処理済み runId を表す。
+ * @returns 返り値はない。
+ */
+function processObservedPrePushResultForWorkspaceFolders(
+  workspaceFolders: readonly vscode.WorkspaceFolder[],
+  diagnosticsState: DiagnosticsState,
+  diagnosticCollection: vscode.DiagnosticCollection,
+  outputChannel: vscode.OutputChannel,
+  handledRunIdsByWorkspace: Map<string, string>,
+): void {
+  for (const workspaceFolder of workspaceFolders) {
+    processObservedPrePushResultForWorkspace(
+      workspaceFolder,
+      diagnosticsState,
+      diagnosticCollection,
+      outputChannel,
+      handledRunIdsByWorkspace,
+    );
+  }
+}
+
+/**
+ * 観測した pre-commit 実行結果を通知する。
+ * @param workspaceFolder 対象ワークスペースフォルダーを表す。
+ * @param outputChannel 出力チャネルを表す。
+ * @param handledRunIdsByWorkspace ワークスペースごとの処理済み runId を表す。
+ * @returns 返り値はない。
+ */
+function processObservedPreCommitResultForWorkspace(
+  workspaceFolder: vscode.WorkspaceFolder,
+  outputChannel: vscode.OutputChannel,
+  handledRunIdsByWorkspace: Map<string, string>,
+): void {
+  const observedResult = loadObservedPreCommitResult(workspaceFolder, outputChannel);
+  if (!observedResult) {
+    return;
+  }
+
+  const workspaceKey = workspaceFolder.uri.toString();
+  if (handledRunIdsByWorkspace.get(workspaceKey) === observedResult.runId) {
+    return;
+  }
+  handledRunIdsByWorkspace.set(workspaceKey, observedResult.runId);
+
+  if (observedResult.exitCode === 0) {
+    outputChannel.appendLine(
+      `Mamori Inspector observed successful pre-commit result for ${workspaceFolder.uri.fsPath} at ${observedResult.createdAt}.`,
+    );
+    return;
+  }
+
+  outputChannel.appendLine(
+    `Mamori Inspector observed failed pre-commit result for ${workspaceFolder.uri.fsPath}: exitCode=${String(observedResult.exitCode)} findings=${String(observedResult.issueCount)}.`,
+  );
+  void showObservedPreCommitFailureNotification(observedResult, outputChannel);
+}
+
+/**
+ * ワークスペース群の pre-commit 実行結果を通知する。
+ * @param workspaceFolders 対象ワークスペース一覧を表す。
+ * @param outputChannel 出力チャネルを表す。
+ * @param handledRunIdsByWorkspace ワークスペースごとの処理済み runId を表す。
+ * @returns 返り値はない。
+ */
+function processObservedPreCommitResultForWorkspaceFolders(
+  workspaceFolders: readonly vscode.WorkspaceFolder[],
+  outputChannel: vscode.OutputChannel,
+  handledRunIdsByWorkspace: Map<string, string>,
+): void {
+  for (const workspaceFolder of workspaceFolders) {
+    processObservedPreCommitResultForWorkspace(
+      workspaceFolder,
+      outputChannel,
+      handledRunIdsByWorkspace,
+    );
+  }
 }
 
 /**
@@ -1611,6 +2128,7 @@ function clearDiagnosticsForWorkspaceFolder(
   workspaceFolder: vscode.WorkspaceFolder,
 ): void {
   clearWorkspaceDiagnosticsByUri(diagnosticsState.saveDiagnosticsByUri, workspaceFolder);
+  clearWorkspaceDiagnosticsByUri(diagnosticsState.prePushDiagnosticsByUri, workspaceFolder);
   publishTrackedDiagnostics(diagnosticCollection, diagnosticsState);
 }
 
@@ -1794,6 +2312,10 @@ function createRunWorkspaceCheckCommand(
           diagnosticsState.saveDiagnosticsByUri,
           sarifOutput.workspaceFolder,
         );
+        clearWorkspaceDiagnosticsByUri(
+          diagnosticsState.prePushDiagnosticsByUri,
+          sarifOutput.workspaceFolder,
+        );
       }
       diagnosticsState.manualDiagnosticsByUri.clear();
       mergeDiagnosticsByUri(diagnosticsState.manualDiagnosticsByUri, diagnosticsByUri);
@@ -1854,8 +2376,11 @@ export function activate(context: vscode.ExtensionContext): void {
   const extensionRootPath = context.extensionUri.fsPath;
   const diagnosticsState: DiagnosticsState = {
     manualDiagnosticsByUri: new Map<string, DiagnosticsByUriEntry>(),
+    prePushDiagnosticsByUri: new Map<string, DiagnosticsByUriEntry>(),
     saveDiagnosticsByUri: new Map<string, DiagnosticsByUriEntry>(),
   };
+  const handledPreCommitRunIdsByWorkspace = new Map<string, string>();
+  const handledPrePushRunIdsByWorkspace = new Map<string, string>();
   const saveCheckScheduler = new SaveCheckScheduler({
     debounceMilliseconds: SAVE_DEBOUNCE_MILLISECONDS,
     suppressionMilliseconds: SAVE_SUPPRESSION_MILLISECONDS,
@@ -1886,6 +2411,78 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.workspace.workspaceFolders || [],
     extensionRootPath,
     outputChannel,
+  );
+  processObservedPrePushResultForWorkspaceFolders(
+    vscode.workspace.workspaceFolders || [],
+    diagnosticsState,
+    diagnosticCollection,
+    outputChannel,
+    handledPrePushRunIdsByWorkspace,
+  );
+  processObservedPreCommitResultForWorkspaceFolders(
+    vscode.workspace.workspaceFolders || [],
+    outputChannel,
+    handledPreCommitRunIdsByWorkspace,
+  );
+  const preCommitResultWatcher = vscode.workspace.createFileSystemWatcher(PRE_COMMIT_RESULT_GLOB);
+  context.subscriptions.push(preCommitResultWatcher);
+  context.subscriptions.push(
+    preCommitResultWatcher.onDidCreate((resultUri) => {
+      const workspaceFolder = getWorkspaceFolderForUri(resultUri);
+      if (!workspaceFolder) {
+        return;
+      }
+      processObservedPreCommitResultForWorkspace(
+        workspaceFolder,
+        outputChannel,
+        handledPreCommitRunIdsByWorkspace,
+      );
+    }),
+  );
+  context.subscriptions.push(
+    preCommitResultWatcher.onDidChange((resultUri) => {
+      const workspaceFolder = getWorkspaceFolderForUri(resultUri);
+      if (!workspaceFolder) {
+        return;
+      }
+      processObservedPreCommitResultForWorkspace(
+        workspaceFolder,
+        outputChannel,
+        handledPreCommitRunIdsByWorkspace,
+      );
+    }),
+  );
+  const prePushResultWatcher = vscode.workspace.createFileSystemWatcher(PRE_PUSH_RESULT_GLOB);
+  context.subscriptions.push(prePushResultWatcher);
+  context.subscriptions.push(
+    prePushResultWatcher.onDidCreate((resultUri) => {
+      const workspaceFolder = getWorkspaceFolderForUri(resultUri);
+      if (!workspaceFolder) {
+        return;
+      }
+      processObservedPrePushResultForWorkspace(
+        workspaceFolder,
+        diagnosticsState,
+        diagnosticCollection,
+        outputChannel,
+        handledPrePushRunIdsByWorkspace,
+      );
+    }),
+  );
+  context.subscriptions.push(
+    prePushResultWatcher.onDidChange((resultUri) => {
+      const workspaceFolder = getWorkspaceFolderForUri(resultUri);
+      if (!workspaceFolder) {
+        return;
+      }
+      processObservedPrePushResultForWorkspace(
+        workspaceFolder,
+        diagnosticsState,
+        diagnosticCollection,
+        outputChannel,
+        handledPrePushRunIdsByWorkspace,
+      );
+    }),
   );
   context.subscriptions.push(
     vscode.commands.registerCommand(
@@ -1940,6 +2537,18 @@ export function activate(context: vscode.ExtensionContext): void {
         event.added,
         extensionRootPath,
         outputChannel,
+      );
+      processObservedPrePushResultForWorkspaceFolders(
+        event.added,
+        diagnosticsState,
+        diagnosticCollection,
+        outputChannel,
+        handledPrePushRunIdsByWorkspace,
+      );
+      processObservedPreCommitResultForWorkspaceFolders(
+        event.added,
+        outputChannel,
+        handledPreCommitRunIdsByWorkspace,
       );
     }),
   );
