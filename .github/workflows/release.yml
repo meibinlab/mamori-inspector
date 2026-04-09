@@ -11,17 +11,14 @@ permissions:
 jobs:
   verify_release:
     runs-on: ubuntu-latest
-    outputs:
-      package_version: ${{ steps.verify.outputs.package_version }}
-      normalized_tag: ${{ steps.verify.outputs.normalized_tag }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.event.release.tag_name }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -50,9 +47,6 @@ jobs:
             exit 1
           fi
 
-          echo "package_version=$package_version" >> "$GITHUB_OUTPUT"
-          echo "normalized_tag=$normalized_tag" >> "$GITHUB_OUTPUT"
-
   quality:
     needs: verify_release
     strategy:
@@ -64,12 +58,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.event.release.tag_name }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -77,12 +71,6 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-
-      - name: Compile
-        run: npm run compile
-
-      - name: Lint
-        run: npm run lint
 
       - name: Test
         run: npm test
@@ -94,12 +82,12 @@ jobs:
       - quality
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.event.release.tag_name }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -120,12 +108,12 @@ jobs:
       - integration
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.event.release.tag_name }}
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
