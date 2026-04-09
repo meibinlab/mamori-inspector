@@ -2133,6 +2133,95 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
   });
 
   /**
+   * 保存時 Diagnostics が残っている状態で内容を変更した場合、未保存時点で stale な save Diagnostics が消えること。
+   * @returns 実行完了を待つ Promise を返す。
+   */
+  test('Clears stale save diagnostics when the document content changes before the next save', async function() {
+    this.timeout(30000);
+    const activeVscodeApi = vscodeApi;
+    const workspaceRoot = activeVscodeApi.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceRoot) {
+      throw new Error('Workspace root was not found');
+    }
+
+    const saveSarifPath = path.join(workspaceRoot, SAVE_SARIF_OUTPUT);
+    const pomFilePath = path.join(workspaceRoot, 'pom.xml');
+    const mavenWrapperPath = process.platform === 'win32'
+      ? path.join(workspaceRoot, 'mvnw.cmd')
+      : path.join(workspaceRoot, 'mvnw');
+    const semgrepWrapperPath = process.platform === 'win32'
+      ? path.join(workspaceRoot, 'bin', 'semgrep.cmd')
+      : path.join(workspaceRoot, 'bin', 'semgrep');
+    const restorePomFile = createRestoreAction(pomFilePath);
+    const restoreMavenWrapper = createRestoreAction(mavenWrapperPath);
+    const restoreSemgrepWrapper = createRestoreAction(semgrepWrapperPath);
+    const restoreSaveSarif = createRestoreAction(saveSarifPath);
+
+    try {
+      fs.rmSync(pomFilePath, { force: true });
+      fs.rmSync(mavenWrapperPath, { force: true });
+      fs.rmSync(semgrepWrapperPath, { force: true });
+      fs.rmSync(saveSarifPath, { force: true });
+      const {
+        fixtureDirectory,
+        binDirectory,
+        javascriptFilePath,
+        prettierLogPath,
+        eslintLogPath,
+      } = setupWebSaveIntegrationFixture(workspaceRoot);
+      const restorePrettierLog = createRestoreAction(prettierLogPath);
+      const restoreEslintLog = createRestoreAction(eslintLogPath);
+      fs.rmSync(prettierLogPath, { force: true });
+      fs.rmSync(eslintLogPath, { force: true });
+
+      try {
+        setExecutablePathEnvironment(`${binDirectory}${path.delimiter}${originalPath}`);
+        await getMamoriExtension(activeVscodeApi).activate();
+        await setWorkspaceMamoriEnabled(activeVscodeApi, true);
+
+        const targetUri = activeVscodeApi.Uri.file(javascriptFilePath);
+        const document = await activeVscodeApi.workspace.openTextDocument(targetUri);
+        const editor = await activeVscodeApi.window.showTextDocument(document);
+
+        await editor.edit((editBuilder) => {
+          editBuilder.insert(new activeVscodeApi.Position(0, 0), 'console.log(sample);\n');
+        });
+        await document.save();
+
+        await waitFor(() => fs.existsSync(saveSarifPath), 20000);
+        await waitFor(() => fs.existsSync(eslintLogPath), 20000);
+        await waitFor(
+          () => activeVscodeApi.languages.getDiagnostics(targetUri).some(
+            (diagnostic) => diagnostic.message === 'Unexpected console statement.',
+          ),
+          20000,
+        );
+
+        await editor.edit((editBuilder) => {
+          editBuilder.insert(new activeVscodeApi.Position(0, 0), '// touching the document keeps save diagnostics stale\n');
+        });
+
+        await waitFor(
+          () => activeVscodeApi.languages.getDiagnostics(targetUri).length === 0,
+          20000,
+        );
+
+        assert.deepStrictEqual(activeVscodeApi.languages.getDiagnostics(targetUri), []);
+      } finally {
+        restorePrettierLog();
+        restoreEslintLog();
+        fs.rmSync(fixtureDirectory, { recursive: true, force: true });
+        await setWorkspaceMamoriEnabled(activeVscodeApi, undefined);
+      }
+    } finally {
+      restorePomFile();
+      restoreMavenWrapper();
+      restoreSemgrepWrapper();
+      restoreSaveSarif();
+    }
+  });
+
+  /**
    * JavaScript 設定ファイルが無い保存時でも組み込み最小 ESLint 設定で finding が Diagnostics と SARIF へ反映されること。
    * @returns 実行完了を待つ Promise を返す。
    */
@@ -3411,6 +3500,106 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
       assert.ok(diagnostics.some((diagnostic) => diagnostic.message === 'Observed pre-push failure finding.'));
     } finally {
       messageCapture.restore();
+      restorePrePushResult();
+      restorePrePushSarif();
+    }
+  });
+
+  /**
+   * 観測済み pre-push Diagnostics がドキュメント編集時に stale 扱いで消えること。
+   * @returns 実行完了を待つ Promise を返す。
+   */
+  test('Clears stale observed pre-push diagnostics when the document content changes', async function() {
+    this.timeout(20000);
+
+    const activeVscodeApi = vscodeApi;
+    const workspaceRoot = activeVscodeApi.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceRoot) {
+      throw new Error('Workspace root was not found');
+    }
+
+    const prePushResultPath = path.join(workspaceRoot, '.mamori', 'out', 'latest-prepush-result.json');
+    const prePushSarifPath = path.join(workspaceRoot, '.mamori', 'out', 'observed-prepush-edit.sarif');
+    const targetFilePath = path.join(workspaceRoot, 'src', 'extension.ts');
+    const targetUri = activeVscodeApi.Uri.file(targetFilePath);
+    const restorePrePushResult = createRestoreAction(prePushResultPath);
+    const restorePrePushSarif = createRestoreAction(prePushSarifPath);
+    const restoreTargetFile = createRestoreAction(targetFilePath);
+
+    try {
+      fs.rmSync(prePushResultPath, { force: true });
+      fs.rmSync(prePushSarifPath, { force: true });
+
+      await getMamoriExtension(activeVscodeApi).activate();
+
+      fs.mkdirSync(path.dirname(prePushResultPath), { recursive: true });
+      fs.writeFileSync(
+        prePushSarifPath,
+        JSON.stringify({
+          version: '2.1.0',
+          runs: [
+            {
+              results: [
+                {
+                  ruleId: 'prepush-rule',
+                  level: 'warning',
+                  message: {
+                    text: 'Observed pre-push failure finding.',
+                  },
+                  locations: [
+                    {
+                      physicalLocation: {
+                        artifactLocation: {
+                          uri: targetFilePath,
+                        },
+                        region: {
+                          startLine: 1,
+                          startColumn: 1,
+                        },
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        }),
+        'utf8',
+      );
+      fs.writeFileSync(
+        prePushResultPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: `test-prepush-edit-${Date.now()}`,
+          createdAt: new Date().toISOString(),
+          mode: 'prepush',
+          scope: 'workspace',
+          exitCode: 1,
+          issueCount: 1,
+          warnings: [],
+          sarifOutputPath: prePushSarifPath,
+        }, null, 2),
+        'utf8',
+      );
+
+      await waitFor(
+        () => activeVscodeApi.languages.getDiagnostics(targetUri).some(
+          (diagnostic) => diagnostic.message === 'Observed pre-push failure finding.',
+        ),
+        20000,
+      );
+
+      const document = await activeVscodeApi.workspace.openTextDocument(targetUri);
+      const editor = await activeVscodeApi.window.showTextDocument(document);
+      await editor.edit((editBuilder) => {
+        editBuilder.insert(new activeVscodeApi.Position(0, 0), '// stale pre-push diagnostics should clear on edit\n');
+      });
+
+      await waitFor(() => activeVscodeApi.languages.getDiagnostics(targetUri).length === 0, 20000);
+
+      assert.deepStrictEqual(activeVscodeApi.languages.getDiagnostics(targetUri), []);
+    } finally {
+      restoreTargetFile();
       restorePrePushResult();
       restorePrePushSarif();
     }

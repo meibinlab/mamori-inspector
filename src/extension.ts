@@ -78,22 +78,6 @@ const AUTO_SAVE_LANGUAGE_IDS = new Set([
   'sass',
   'html',
 ]);
-// 実行中の追随再実行を抑止する拡張子一覧を表す
-const AUTO_SAVE_NON_QUEUE_EXTENSIONS = new Set([
-  '.js',
-  '.cjs',
-  '.mjs',
-  '.jsx',
-  '.ts',
-  '.cts',
-  '.mts',
-  '.tsx',
-  '.css',
-  '.scss',
-  '.sass',
-  '.html',
-  '.htm',
-]);
 // 保存時チェックのデバウンス時間を表す
 const SAVE_DEBOUNCE_MILLISECONDS = 400;
 // 自己再帰抑止時間を表す
@@ -1556,6 +1540,47 @@ function clearDocumentDiagnosticsByUri(
 }
 
 /**
+ * 対象ファイルの現在内容を返す。
+ * @param filePath 対象ファイルパスを表す。
+ * @returns 読み込めたファイル内容を返す。
+ */
+function readFileContent(filePath: string): string {
+  try {
+    return fs.readFileSync(filePath, 'utf8');
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * 対象ドキュメントに紐づく stale な Mamori Diagnostics を消去する。
+ * @param diagnosticsState Diagnostics 保持状態を表す。
+ * @param diagnosticCollection 診断コレクションを表す。
+ * @param documentUri 対象ドキュメント URI を表す。
+ * @returns Diagnostics を消去した場合は true を返す。
+ */
+function clearStaleDiagnosticsForDocument(
+  diagnosticsState: DiagnosticsState,
+  diagnosticCollection: vscode.DiagnosticCollection,
+  documentUri: vscode.Uri,
+): boolean {
+  const documentUriKey = documentUri.toString();
+  const hadDiagnostics = diagnosticsState.saveDiagnosticsByUri.has(documentUriKey)
+    || diagnosticsState.manualDiagnosticsByUri.has(documentUriKey)
+    || diagnosticsState.prePushDiagnosticsByUri.has(documentUriKey);
+
+  if (!hadDiagnostics) {
+    return false;
+  }
+
+  clearDocumentDiagnosticsByUri(diagnosticsState.saveDiagnosticsByUri, documentUri);
+  clearDocumentDiagnosticsByUri(diagnosticsState.manualDiagnosticsByUri, documentUri);
+  clearDocumentDiagnosticsByUri(diagnosticsState.prePushDiagnosticsByUri, documentUri);
+  publishTrackedDiagnostics(diagnosticCollection, diagnosticsState);
+  return true;
+}
+
+/**
  * 対象ワークスペースの Diagnostics を最新結果へ置き換える。
  * @param target 集約先を表す。
  * @param workspaceFolder 対象ワークスペースフォルダーを表す。
@@ -1653,6 +1678,7 @@ function publishSaveDiagnosticsFromSarif(
 ): number {
   const saveDiagnosticsByUri = buildDiagnosticsByUri(workspaceFolder, sarifPath);
   clearDocumentDiagnosticsByUri(diagnosticsState.manualDiagnosticsByUri, documentUri);
+  clearDocumentDiagnosticsByUri(diagnosticsState.prePushDiagnosticsByUri, documentUri);
   replaceWorkspaceDiagnosticsByUri(
     diagnosticsState.saveDiagnosticsByUri,
     workspaceFolder,
@@ -2175,15 +2201,6 @@ function shouldRunAutomaticSaveCheck(document: vscode.TextDocument): boolean {
 }
 
 /**
- * 実行中保存の追随再実行を許可するか判定する。
- * @param filePath 対象ファイルパスを表す。
- * @returns 追随再実行する場合は true を返す。
- */
-function shouldQueueSaveCheckWhileRunning(filePath: string): boolean {
-  return !AUTO_SAVE_NON_QUEUE_EXTENSIONS.has(path.extname(filePath).toLowerCase());
-}
-
-/**
  * 単一ファイルの保存時チェックを実行する。
  * @param workspaceFolder ワークスペースフォルダーを表す。
  * @param filePath 対象ファイルパスを表す。
@@ -2203,6 +2220,7 @@ async function runSaveCheck(
   const documentUri = vscode.Uri.file(filePath);
   const fileName = path.basename(filePath);
   const notifiedToolIds = new Set<string>();
+  const fileContentBeforeRun = readFileContent(filePath);
 
   fs.rmSync(sarifPath, { force: true });
 
@@ -2229,6 +2247,32 @@ async function runSaveCheck(
         }, 0);
       },
     });
+    if (readFileContent(filePath) !== fileContentBeforeRun) {
+      outputChannel.appendLine(
+        `Mamori Inspector save check detected formatter changes for ${filePath}; rerunning checks for the latest content.`,
+      );
+      fs.rmSync(sarifPath, { force: true });
+      await runMamoriCli(workspaceFolder, {
+        mode: 'save',
+        scope: 'file',
+        files: [filePath],
+        sarifOutputPath: sarifPath,
+      }, extensionRootPath, {
+        onStdoutLine: (outputLine: string) => {
+          const toolId = parseSaveCheckToolStartOutputLine(outputLine);
+          if (!toolId || notifiedToolIds.has(toolId)) {
+            return;
+          }
+
+          notifiedToolIds.add(toolId);
+          const toolLabel = getSaveCheckToolLabel(toolId);
+          outputChannel.appendLine(`Mamori Inspector save check running for ${filePath}: ${toolLabel}`);
+          setTimeout(() => {
+            showTransientNonErrorMessage(getSaveCheckStartStatusMessage(fileName, toolLabel));
+          }, 0);
+        },
+      });
+    }
     if (!isWorkspaceEnabled(workspaceFolder)) {
       return;
     }
@@ -2408,12 +2452,12 @@ export function activate(context: vscode.ExtensionContext): void {
     prePushDiagnosticsByUri: new Map<string, DiagnosticsByUriEntry>(),
     saveDiagnosticsByUri: new Map<string, DiagnosticsByUriEntry>(),
   };
+  publishTrackedDiagnostics(diagnosticCollection, diagnosticsState);
   const handledPreCommitRunIdsByWorkspace = new Map<string, string>();
   const handledPrePushRunIdsByWorkspace = new Map<string, string>();
   const saveCheckScheduler = new SaveCheckScheduler({
     debounceMilliseconds: SAVE_DEBOUNCE_MILLISECONDS,
     suppressionMilliseconds: SAVE_SUPPRESSION_MILLISECONDS,
-    shouldQueueDuringRun: shouldQueueSaveCheckWhileRunning,
     executeCheck: async(filePath: string) => {
       const workspaceFolder = getWorkspaceFolderForUri(vscode.Uri.file(filePath));
       if (!workspaceFolder || !isWorkspaceEnabled(workspaceFolder)) {
@@ -2598,6 +2642,19 @@ export function activate(context: vscode.ExtensionContext): void {
           clearDiagnosticsForWorkspaceFolder(diagnosticsState, diagnosticCollection, workspaceFolder);
         }
       }
+    }),
+  );
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeTextDocument((event) => {
+      if (event.contentChanges.length === 0) {
+        return;
+      }
+
+      clearStaleDiagnosticsForDocument(
+        diagnosticsState,
+        diagnosticCollection,
+        event.document.uri,
+      );
     }),
   );
   context.subscriptions.push(
