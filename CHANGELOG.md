@@ -4,6 +4,11 @@
 
 形式は Keep a Changelog を参考にしつつ、このリポジトリの実装状況に合わせて整理します。
 
+## [0.2.44] - 2026-04-09
+
+### Fixed
+- Windows を含む低速 CI 環境でも `Fails manual workspace when web checkers report findings and writes SARIF issues` の CLI 回帰テストがタイムアウトしにくいよう、対象テストの許容時間を見直しました。
+
 ## [0.2.43] - 2026-04-09
 
 ### Changed

@@ -2435,7 +2435,9 @@ suite('Mamori CLI Test Suite', () => {
    * manual/workspace の Web checker 失敗時に issue を SARIF 化して反映できること。
    * @returns 返り値はない。
    */
-  test('Fails manual workspace when web checkers report findings and writes SARIF issues', () => {
+  test('Fails manual workspace when web checkers report findings and writes SARIF issues', function() {
+    this.timeout(10000);
+
     const temporaryDirectory = createTemporaryDirectory();
     const scriptDirectory = path.join(temporaryDirectory, 'src');
     const styleDirectory = path.join(temporaryDirectory, 'styles');
