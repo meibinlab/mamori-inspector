@@ -100,8 +100,8 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 | トリガー | 拡張インストール後に自動開始 | 追加セットアップ | 対象範囲 | 補足 |
 | ---- | ---- | ---- | ---- | ---- |
 | 保存時 | いいえ | `Mamori Inspector: Enable In Workspace` を実行 | 保存したファイルのみ | Mamori Inspector を有効化したワークスペースフォルダー内の対応ファイルを保存したときに実行します。 |
-| pre-commit | いいえ | `Mamori Inspector: Install Git Hooks` を実行 | ステージ済みファイルのみ | 検証失敗時は commit を停止します。 |
-| pre-push | いいえ | `Mamori Inspector: Install Git Hooks` を実行 | ワークスペース | 検証失敗時は push を停止します。ただし SpotBugs の skip 条件は仕様に従います。 |
+| pre-commit | いいえ | `Mamori Inspector: Install Git Hooks` を実行 | ステージ済みファイルのみ | 検証失敗時は通知を表示し、そのまま commit を継続します。 |
+| pre-push | いいえ | `Mamori Inspector: Install Git Hooks` を実行 | ワークスペース | 検証失敗時は Problems 更新と通知を行い、そのまま push を継続します。 |
 | 手動 | いいえ | なし | ワークスペース | `Mamori Inspector: Run Workspace Check` で実行します。 |
 
 ## 保存時検証と Git hook 検証の違い
@@ -110,7 +110,7 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 - Git hook 検証は、管理対象 hook をインストールするまで実行されません。
 - 管理対象 hook は、ローカル runner が削除済みの場合や、解決した `node` コマンドが利用できない場合は warning を出してスキップします。
 - pre-commit 検証はステージ済みファイルのみを対象にし、整形による変更を自動で再ステージします。
-- pre-push 検証はワークスペース全体を対象にし、push 前のより広い品質ゲートとして動作します。
+- pre-push 検証はワークスペース全体を対象にし、Problems 更新と通知で結果を知らせたうえで push を継続します。
 
 ## 各チェックで用意すべきファイル
 | チェック | 用意すべきファイル | 補足 |

@@ -78,9 +78,9 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 - When a manual workspace check starts, Mamori shows a short-lived notification toast to signal the start, while the ongoing static-analysis progress remains in the status bar.
 - Save-time and manual static-analysis progress are shown in the status bar, not as toast notifications.
 - When a manual workspace check succeeds, the extension replaces previously published save diagnostics for the same workspace with the latest manual results.
-- When a managed pre-commit run fails, Mamori shows a selectable notification that lets you open the Mamori output, run a workspace check, or copy a `git commit --no-verify` command, instead of automatically republishing staged-only findings to Problems.
-- When a managed pre-push run fails with rule violations, Mamori updates Problems from the latest pre-push SARIF and also shows a warning notification that the pre-push check failed and that you should review Problems.
-- When a managed pre-push run ends with an execution error, Mamori still shows an error notification that asks you to review Problems and the Mamori Inspector output, and it reuses any generated pre-push SARIF when available.
+- When a managed pre-commit run finds issues, Mamori shows a selectable notification that lets you open the Mamori output or run a workspace check, and the commit continues without automatically republishing staged-only findings to Problems.
+- When a managed pre-push run finds rule violations, Mamori updates Problems from the latest pre-push SARIF, shows a warning notification, and lets the push continue.
+- When a managed pre-push run ends with an execution error, Mamori still shows an error notification that asks you to review Problems and the Mamori Inspector output, reuses any generated pre-push SARIF when available, and lets the push continue.
 - The commands `Mamori Inspector: Enable In Workspace` and `Mamori Inspector: Disable In Workspace` toggle automatic save-time validation per workspace folder. The default is disabled.
 - `Enable In Workspace` and `Disable In Workspace` only change `mamori-inspector.enabled`; they do not rewrite VS Code formatter or save-related editor settings.
 - The command `Mamori Inspector: Setup Managed Tools` downloads the managed Maven, Gradle, Semgrep, Prettier, ESLint, Stylelint, and htmlhint toolchain into the workspace cache.
@@ -103,8 +103,8 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 | Trigger | Starts automatically after extension install | Additional setup | Scope | Notes |
 | ---- | ---- | ---- | ---- | ---- |
 | Save | No | Run `Mamori Inspector: Enable In Workspace` | Saved file only | Runs when a supported file is saved in a workspace folder where Mamori Inspector is enabled. |
-| Pre-commit | No | Run `Mamori Inspector: Install Git Hooks` | Staged files only | Blocks commit on validation failure. |
-| Pre-push | No | Run `Mamori Inspector: Install Git Hooks` | Workspace | Blocks push on validation failure, except SpotBugs skip conditions defined in the spec. |
+| Pre-commit | No | Run `Mamori Inspector: Install Git Hooks` | Staged files only | Shows a notification on validation failure and then lets the commit continue. |
+| Pre-push | No | Run `Mamori Inspector: Install Git Hooks` | Workspace | Updates Problems and shows a notification on validation failure, then lets the push continue. |
 | Manual | No | None | Workspace | Run with `Mamori Inspector: Run Workspace Check`. |
 
 ## Save Validation Versus Git Hook Validation
@@ -113,7 +113,7 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 - Git hook validation does not run until the managed hooks are installed.
 - Managed hooks also skip with a warning instead of blocking when the local runner file has been removed or the resolved `node` command is unavailable.
 - Pre-commit validation runs on staged files only and re-stages formatter changes automatically.
-- Pre-push validation runs on the workspace scope and acts as a broader gate before pushing changes.
+- Pre-push validation runs on the workspace scope, updates Problems when diagnostics are available, and surfaces the result as a notification before pushing changes continue.
 
 ## Files Required For Each Check
 | Check | Files you should prepare | Notes |

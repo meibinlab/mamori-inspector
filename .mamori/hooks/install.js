@@ -7,6 +7,8 @@ const path = require('path');
 
 // Mamori 管理フック識別子を表す
 const HOOK_MARKER = 'mamori-inspector-managed-hook';
+// managed hook 実行を runner へ伝える環境変数名を表す
+const MANAGED_HOOK_ENV_NAME = 'MAMORI_MANAGED_HOOK';
 // 管理対象フック定義一覧を表す
 const MANAGED_HOOKS = [
   {
@@ -52,7 +54,10 @@ function buildHookScript(hookDefinition) {
     `  printf '%s\\n' "mamori: warning: ${hookDefinition.filename} skipped because node command was not found: $NODE_BIN" >&2`,
     '  exit 0',
     'fi',
-    '"$NODE_BIN" "$RUNNER_PATH" run --mode ' + hookDefinition.mode + ' --scope ' + hookDefinition.scope + ' --execute',
+    `if ! ${MANAGED_HOOK_ENV_NAME}=${hookDefinition.mode} "$NODE_BIN" "$RUNNER_PATH" run --mode ${hookDefinition.mode} --scope ${hookDefinition.scope} --execute; then`,
+    `  printf '%s\\n' "mamori: warning: ${hookDefinition.filename} reported issues or execution errors, but Git continues" >&2`,
+    'fi',
+    'exit 0',
   ].join('\n');
 }
 

@@ -7,12 +7,12 @@
 ## [0.2.42] - 2026-04-09
 
 ### Changed
-- managed pre-commit が失敗したとき、Mamori Output を開く、ワークスペースチェックを実行する、または `git commit --no-verify` のコマンド例をコピーする選択肢付き通知を表示するようにしました。
-- managed pre-push が失敗したとき、最新結果を拡張が検知して Problems を更新し、Problems 確認を促す通知を表示するようにしました。
+- managed pre-commit が問題や実行失敗を検出したとき、Mamori Output を開くかワークスペースチェックを実行する選択肢付き通知を表示し、そのまま commit を継続するようにしました。
+- managed pre-push が問題や実行失敗を検出したとき、最新結果を拡張が検知して Problems を更新し、通知を表示したうえでそのまま push を継続するようにしました。
 
 ### Added
-- pre-commit / pre-push の最新結果メタデータを `.mamori/out/latest-precommit-result.json` と `.mamori/out/latest-prepush-result.json` に保存し、拡張側で後追い通知できるようにしました。
-- pre-commit / pre-push の失敗通知と no-verify コマンドコピーを確認する CLI / 拡張回帰テストを追加しました。
+- managed pre-commit / pre-push の最新結果メタデータを `.mamori/out/latest-precommit-result.json` と `.mamori/out/latest-prepush-result.json` に保存し、拡張側で後追い通知できるようにしました。
+- pre-commit / pre-push の通知継続動作と managed hook 境界を確認する CLI / 拡張回帰テストを追加しました。
 
 ## [0.2.41] - 2026-04-09
 

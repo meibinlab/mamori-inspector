@@ -1,11 +1,11 @@
 # Mamori Inspector 仕様（確定版）
 
 ## 1. 目的
-複数の静的解析・Lint・整形ツールを統合し、以下のタイミングで自動実行して品質ゲートを提供する。
+複数の静的解析・Lint・整形ツールを統合し、以下のタイミングで自動実行して開発者へ通知する。
 
 - 保存時: 非同期で整形 → チェック（対象ファイルのみ）
-- pre-commit: 整形 → 再ステージ → チェック（ステージ済み対象のみ、失敗でコミット停止）
-- pre-push: チェック（ワークスペース全体、失敗でプッシュ停止）
+- pre-commit: 整形 → 再ステージ → チェック（ステージ済み対象のみ、失敗時は通知してコミット継続）
+- pre-push: チェック（ワークスペース全体、失敗時は Problems と通知を更新してプッシュ継続）
 - 手動: 重いツールや全体処理の実行（将来拡張あり）
 
 主目的は「品質」。
@@ -67,7 +67,7 @@ HTML inline style の扱い（確定）:
 - 保存が連続した場合はデバウンスし、最新状態のみを処理（古いジョブはキャンセル）
 - 自動整形による更新を識別し、無限ループを防止する
 
-### 3.2 pre-commit（scope=staged、失敗でブロック）
+### 3.2 pre-commit（scope=staged、失敗時は通知して継続）
 実行順序（確定）:
 1) 整形（自動適用）
 2) 整形で変更があれば自動で再ステージ（git addし直す）
@@ -89,10 +89,10 @@ HTML inline style の扱い（確定）:
 
 pre-commit の通知仕様（確定）:
 - managed pre-commit が終了コード 1 または 2 で失敗した場合、runner は最新結果メタデータを `.mamori/out/latest-precommit-result.json` へ保存する
-- VS Code 拡張は最新結果を検知した場合、staged 内容とエディタ表示内容の差異を考慮して Problems は自動更新せず、Output を開く、手動ワークスペースチェックを実行する、または `git commit --no-verify` のコマンド例をコピーする選択肢付き通知を表示する
+- VS Code 拡張は最新結果を検知した場合、staged 内容とエディタ表示内容の差異を考慮して Problems は自動更新せず、Output を開く、または手動ワークスペースチェックを実行する選択肢付き通知を表示する
 - managed pre-commit が成功した場合、runner は同じ結果メタデータを成功状態で更新し、拡張は古い失敗通知を再利用しない
 
-### 3.3 pre-push（scope=workspace、失敗でブロック）
+### 3.3 pre-push（scope=workspace、失敗時は通知して継続）
 チェック（デフォルト有効）:
 - Java: Checkstyle / PMD / Semgrep / CPD / SpotBugs
 - JavaScript: ESLint（デフォルト有効・設定でOFF可。設定解決は明示設定 → discovery → `package.json#eslintConfig` → Mamori 同梱の最小設定）
@@ -150,9 +150,9 @@ pre-push の通知仕様（確定）:
 - `.git/info/exclude` の更新失敗は warning として扱い、Mamori の処理自体は継続する
 
 終了コード（確定）:
-- 0: 成功（fail対象の指摘なし、または「スキップ許容」のみ）
-- 1: ルール違反あり（ゲート失敗）
-- 2: 実行エラー（ツールDL失敗、依存不足など。ゲート失敗）
+- 0: 成功（fail対象の指摘なし、または「スキップ許容」のみ）、または pre-commit / pre-push の managed 実行で結果を通知して継続した場合
+- 1: ルール違反あり（save/manual など停止対象の実行ではこの終了コードを返し、pre-commit / pre-push の managed 実行では結果メタデータへ保持する）
+- 2: 実行エラー（ツールDL失敗、依存不足など。save/manual など停止対象の実行ではこの終了コードを返し、pre-commit / pre-push の managed 実行では結果メタデータへ保持する）
 
 ### 4.2 結果フォーマット
 - SARIFを統合フォーマットの軸とする
@@ -239,10 +239,10 @@ Git のローカル除外（確定）:
 
 ## 9. Git hooks（確定）
 - pre-commit / pre-push のhookを生成して、Nodeランナーを呼ぶ
-- 失敗時はブロック（ただし `--no-verify` で回避可能）
+- managed hook は runner の実行結果を結果メタデータへ保存したうえで、問題や実行エラーがあっても warning を出して成功終了する
 - 管理対象 hook は、`$REPO_ROOT/.mamori/mamori.js` が見つからない場合に stderr へ warning を出して成功終了する
 - 管理対象 hook は、解決した `node` コマンドが利用できない場合も stderr へ warning を出して成功終了する
-- runner が存在する通常ケースでは、managed hook は runner の終了コードをそのまま返し、ルール違反や実行エラー時は block する
+- runner が存在する通常ケースでも、managed hook は runner の最新結果メタデータを VS Code 拡張へ受け渡し、Git 操作自体は継続する
 
 Git hooks の競合時仕様（確定）:
 - `pre-commit` または `pre-push` が既に存在し、Mamori が生成した管理対象hookでない場合は上書きしない

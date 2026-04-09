@@ -30,8 +30,6 @@ import { SaveCheckScheduler } from './save-check-scheduler';
 
 // Mamori CLI 実行に使う spawn 実装を表す
 let spawnProcess: typeof childProcess.spawn = childProcess.spawn;
-// クリップボード書き込み実装を表す
-let clipboardWriter: (value: string) => Thenable<void> = (value: string) => vscode.env.clipboard.writeText(value);
 
 // 診断コレクション名を表す
 const DIAGNOSTIC_COLLECTION_NAME = 'mamori-inspector';
@@ -484,52 +482,22 @@ function getRunWorkspaceCheckActionLabel(): string {
 }
 
 /**
- * no-verify コマンドコピーのアクション文言を返す。
- * @returns アクション文言を返す。
- */
-function getCopyNoVerifyCommitCommandActionLabel(): string {
-  return localize(
-    'Copy no-verify Commit Command',
-    'Action label shown in notifications to copy a git commit --no-verify command.',
-  );
-}
-
-/**
- * no-verify 回避用コミットコマンドを返す。
- * @returns コマンド文字列を返す。
- */
-function getNoVerifyCommitCommand(): string {
-  return 'git commit --no-verify';
-}
-
-/**
- * no-verify コマンドコピー完了通知文言を返す。
- * @returns 情報通知文言を返す。
- */
-function getNoVerifyCommitCommandCopiedMessage(): string {
-  return localize(
-    'Mamori Inspector: Copied git commit --no-verify to the clipboard.',
-    'Information message shown after copying the no-verify git commit command.',
-  );
-}
-
-/**
- * pre-commit ルール違反通知文言を返す。
+ * pre-commit 検出通知文言を返す。
  * @param issueCount 検出件数を表す。
  * @returns 警告通知文言を返す。
  */
 function getPreCommitChecksFailedMessage(issueCount: number): string {
   if (issueCount > 0) {
     return localize(
-      'Mamori Inspector: pre-commit checks failed on staged files with {0} findings. Review the output or run a workspace check.',
-      'Warning message shown when managed pre-commit validation finds issues on staged files.',
+      'Mamori Inspector: pre-commit found {0} findings on staged files. The commit continued. Review the output or run a workspace check.',
+      'Warning message shown when managed pre-commit validation finds issues on staged files but the commit continues.',
       [issueCount],
     );
   }
 
   return localize(
-    'Mamori Inspector: pre-commit checks failed on staged files. Review the output or run a workspace check.',
-    'Warning message shown when managed pre-commit validation fails on staged files.',
+    'Mamori Inspector: pre-commit found issues on staged files. The commit continued. Review the output or run a workspace check.',
+    'Warning message shown when managed pre-commit validation finds issues on staged files but the commit continues.',
   );
 }
 
@@ -541,35 +509,35 @@ function getPreCommitChecksFailedMessage(issueCount: number): string {
 function getPreCommitExecutionFailureMessage(details: string): string {
   if (details.trim() !== '') {
     return localize(
-      'Mamori Inspector: pre-commit execution failed. Review the output or run a workspace check. {0}',
-      'Error message shown when managed pre-commit validation fails due to an execution error.',
+      'Mamori Inspector: pre-commit execution failed. The commit continued. Review the output or run a workspace check. {0}',
+      'Error message shown when managed pre-commit validation fails due to an execution error but the commit continues.',
       [details],
     );
   }
 
   return localize(
-    'Mamori Inspector: pre-commit execution failed. Review the output or run a workspace check.',
-    'Error message shown when managed pre-commit validation fails due to an execution error without extra detail.',
+    'Mamori Inspector: pre-commit execution failed. The commit continued. Review the output or run a workspace check.',
+    'Error message shown when managed pre-commit validation fails due to an execution error without extra detail but the commit continues.',
   );
 }
 
 /**
- * pre-push ルール違反通知文言を返す。
+ * pre-push 検出通知文言を返す。
  * @param diagnosticsCount 検出件数を表す。
  * @returns 警告通知文言を返す。
  */
 function getPrePushChecksFailedMessage(diagnosticsCount: number): string {
   if (diagnosticsCount > 0) {
     return localize(
-      'Mamori Inspector: pre-push checks failed with {0} diagnostics. Review Problems for details.',
-      'Warning message shown when managed pre-push validation finds issues and updates Problems.',
+      'Mamori Inspector: pre-push found {0} diagnostics. The push continued. Review Problems for details.',
+      'Warning message shown when managed pre-push validation finds issues, updates Problems, and the push continues.',
       [diagnosticsCount],
     );
   }
 
   return localize(
-    'Mamori Inspector: pre-push checks failed. Review Problems for details.',
-    'Warning message shown when managed pre-push validation fails and the user should review Problems.',
+    'Mamori Inspector: pre-push found issues. The push continued. Review Problems for details.',
+    'Warning message shown when managed pre-push validation finds issues, updates Problems, and the push continues.',
   );
 }
 
@@ -581,15 +549,15 @@ function getPrePushChecksFailedMessage(diagnosticsCount: number): string {
 function getPrePushExecutionFailureMessage(details: string): string {
   if (details.trim() !== '') {
     return localize(
-      'Mamori Inspector: pre-push execution failed. Review Problems and Mamori Inspector output for details. {0}',
-      'Error message shown when managed pre-push validation fails due to an execution error.',
+      'Mamori Inspector: pre-push execution failed. The push continued. Review Problems and Mamori Inspector output for details. {0}',
+      'Error message shown when managed pre-push validation fails due to an execution error but the push continues.',
       [details],
     );
   }
 
   return localize(
-    'Mamori Inspector: pre-push execution failed. Review Problems and Mamori Inspector output for details.',
-    'Error message shown when managed pre-push validation fails due to an execution error without extra detail.',
+    'Mamori Inspector: pre-push execution failed. The push continued. Review Problems and Mamori Inspector output for details.',
+    'Error message shown when managed pre-push validation fails due to an execution error without extra detail but the push continues.',
   );
 }
 
@@ -870,17 +838,6 @@ export function setMamoriCliSpawnForTesting(
   spawnImplementation: typeof childProcess.spawn | undefined,
 ): void {
   spawnProcess = spawnImplementation || childProcess.spawn;
-}
-
-/**
- * テスト用にクリップボード書き込み実装を差し替える。
- * @param writerImplementation 差し替えるクリップボード書き込み実装を表す。
- * @returns 返り値はない。
- */
-export function setClipboardWriterForTesting(
-  writerImplementation: ((value: string) => Thenable<void>) | undefined,
-): void {
-  clipboardWriter = writerImplementation || ((value: string) => vscode.env.clipboard.writeText(value));
 }
 
 /**
@@ -1724,19 +1681,16 @@ async function showObservedPreCommitFailureNotification(
 ): Promise<void> {
   const openOutputActionLabel = getOpenOutputActionLabel();
   const runWorkspaceCheckActionLabel = getRunWorkspaceCheckActionLabel();
-  const copyNoVerifyCommitCommandActionLabel = getCopyNoVerifyCommitCommandActionLabel();
   const selectedAction = observedResult.exitCode === 1
     ? await vscode.window.showWarningMessage(
       getPreCommitChecksFailedMessage(observedResult.issueCount),
       openOutputActionLabel,
       runWorkspaceCheckActionLabel,
-      copyNoVerifyCommitCommandActionLabel,
     )
     : await vscode.window.showErrorMessage(
       getPreCommitExecutionFailureMessage(observedResult.warnings[0] || ''),
       openOutputActionLabel,
       runWorkspaceCheckActionLabel,
-      copyNoVerifyCommitCommandActionLabel,
     );
 
   if (selectedAction === openOutputActionLabel) {
@@ -1746,12 +1700,6 @@ async function showObservedPreCommitFailureNotification(
 
   if (selectedAction === runWorkspaceCheckActionLabel) {
     void vscode.commands.executeCommand('mamori-inspector.runWorkspaceCheck');
-    return;
-  }
-
-  if (selectedAction === copyNoVerifyCommitCommandActionLabel) {
-    await clipboardWriter(getNoVerifyCommitCommand());
-    void vscode.window.showInformationMessage(getNoVerifyCommitCommandCopiedMessage());
   }
 }
 

@@ -35,6 +35,8 @@ const REQUIRED_RUN_OPTIONS = ['mode', 'scope'];
 const VALID_MODES = new Set(['save', 'precommit', 'prepush', 'manual']);
 // 有効な実行スコープ一覧を表す
 const VALID_SCOPES = new Set(['file', 'staged', 'workspace']);
+// managed hook 実行を表す環境変数名を表す
+const MANAGED_HOOK_ENV_NAME = 'MAMORI_MANAGED_HOOK';
 // 実行モードごとの許可スコープ一覧を表す
 const ALLOWED_SCOPE_BY_MODE = {
   save: new Set(['file']),
@@ -694,7 +696,7 @@ function resolvePreCommitResultOutputPath(currentWorkingDirectory) {
  * pre-push 最新結果を best-effort で書き込む。
  * @param {string} currentWorkingDirectory 現在の作業ディレクトリを表す。
  * @param {{exitCode: number, issues?: Array<unknown>, warnings?: string[]}} executionResult 実行結果を表す。
- * @param {string} sarifOutputPath SARIF 出力先を表す。
+ * @param {string|undefined} sarifOutputPath SARIF 出力先を表す。
  * @returns {void} 返り値はない。
  */
 function writeLatestPrePushResult(currentWorkingDirectory, executionResult, sarifOutputPath) {
@@ -728,7 +730,7 @@ function writeLatestPrePushResult(currentWorkingDirectory, executionResult, sari
  * pre-commit 最新結果を best-effort で書き込む。
  * @param {string} currentWorkingDirectory 現在の作業ディレクトリを表す。
  * @param {{exitCode: number, issues?: Array<unknown>, warnings?: string[]}} executionResult 実行結果を表す。
- * @param {string} sarifOutputPath SARIF 出力先を表す。
+ * @param {string|undefined} sarifOutputPath SARIF 出力先を表す。
  * @returns {void} 返り値はない。
  */
 function writeLatestPreCommitResult(currentWorkingDirectory, executionResult, sarifOutputPath) {
@@ -759,6 +761,93 @@ function writeLatestPreCommitResult(currentWorkingDirectory, executionResult, sa
 }
 
 /**
+ * managed hook として結果メタデータを扱う対象モード名を返す。
+ * @param {{mode?: string, scope?: string, execute?: boolean}} parsedArguments run 引数を表す。
+ * @returns {string|undefined} 対象モード名を返す。対象外の場合は undefined を返す。
+ */
+function resolveManagedHookMode(parsedArguments) {
+  if (!parsedArguments.execute) {
+    return undefined;
+  }
+
+  if (parsedArguments.mode === 'precommit' && parsedArguments.scope === 'staged') {
+    return 'precommit';
+  }
+
+  if (parsedArguments.mode === 'prepush' && parsedArguments.scope === 'workspace') {
+    return 'prepush';
+  }
+
+  return undefined;
+}
+
+/**
+ * managed hook からの実行か判定する。
+ * @param {{mode?: string, scope?: string, execute?: boolean}} parsedArguments run 引数を表す。
+ * @returns {boolean} managed hook 実行の場合は true を返す。
+ */
+function isManagedHookExecution(parsedArguments) {
+  const managedHookMode = resolveManagedHookMode(parsedArguments);
+  if (!managedHookMode) {
+    return false;
+  }
+
+  return process.env[MANAGED_HOOK_ENV_NAME] === managedHookMode;
+}
+
+/**
+ * managed hook 用の最新結果メタデータを best-effort で更新する。
+ * @param {string} currentWorkingDirectory 現在の作業ディレクトリを表す。
+ * @param {{mode?: string, scope?: string, execute?: boolean}} parsedArguments run 引数を表す。
+ * @param {{exitCode: number, issues?: Array<unknown>, warnings?: string[]}} executionResult 実行結果を表す。
+ * @param {string|undefined} sarifOutputPath SARIF 出力先を表す。
+ * @returns {void} 返り値はない。
+ */
+function writeLatestManagedHookResult(
+  currentWorkingDirectory,
+  parsedArguments,
+  executionResult,
+  sarifOutputPath,
+) {
+  if (!isManagedHookExecution(parsedArguments)) {
+    return;
+  }
+
+  if (parsedArguments.mode === 'precommit' && parsedArguments.scope === 'staged') {
+    writeLatestPreCommitResult(currentWorkingDirectory, executionResult, sarifOutputPath);
+    return;
+  }
+
+  if (parsedArguments.mode === 'prepush' && parsedArguments.scope === 'workspace') {
+    writeLatestPrePushResult(currentWorkingDirectory, executionResult, sarifOutputPath);
+  }
+}
+
+/**
+ * 必要に応じて managed hook 用の結果メタデータを書き出し、本来の終了コードを返す。
+ * @param {string} currentWorkingDirectory 現在の作業ディレクトリを表す。
+ * @param {{mode?: string, scope?: string, execute?: boolean}} parsedArguments run 引数を表す。
+ * @param {{exitCode: number, issues?: Array<unknown>, warnings?: string[]}} executionResult 実行結果を表す。
+ * @param {string|undefined} sarifOutputPath SARIF 出力先を表す。
+ * @returns {number} 実行の終了コードを返す。
+ */
+function finalizeManagedHookExitCode(
+  currentWorkingDirectory,
+  parsedArguments,
+  executionResult,
+  sarifOutputPath,
+) {
+  writeLatestManagedHookResult(
+    currentWorkingDirectory,
+    parsedArguments,
+    executionResult,
+    sarifOutputPath,
+  );
+
+  return executionResult.exitCode;
+}
+
+/**
  * 最小CLIの実行結果を返す。
  * @returns {number} 終了コードを返す。
  */
@@ -773,31 +862,41 @@ async function runMinimal() {
   const invalidConditions = findInvalidRunConditions(parsedArguments);
 
   if (parsedArguments.unknownOptions.length > 0) {
-    process.stderr.write(
-      `mamori: unknown options: ${parsedArguments.unknownOptions.join(', ')}\n`,
-    );
-    return 2;
+    const errorMessage = `unknown options: ${parsedArguments.unknownOptions.join(', ')}`;
+    process.stderr.write(`mamori: ${errorMessage}\n`);
+    return finalizeManagedHookExitCode(process.cwd(), parsedArguments, {
+      exitCode: 2,
+      warnings: [errorMessage],
+    });
   }
 
   if (missingOptions.length > 0) {
-    process.stderr.write(
-      `mamori: missing required options: ${missingOptions.join(', ')}\n`,
-    );
-    return 2;
+    const errorMessage = `missing required options: ${missingOptions.join(', ')}`;
+    process.stderr.write(`mamori: ${errorMessage}\n`);
+    return finalizeManagedHookExitCode(process.cwd(), parsedArguments, {
+      exitCode: 2,
+      warnings: [errorMessage],
+    });
   }
 
   if (invalidConditions.length > 0) {
-    process.stderr.write(
-      `mamori: invalid run options: ${invalidConditions.join('; ')}\n`,
-    );
-    return 2;
+    const errorMessage = `invalid run options: ${invalidConditions.join('; ')}`;
+    process.stderr.write(`mamori: ${errorMessage}\n`);
+    return finalizeManagedHookExitCode(process.cwd(), parsedArguments, {
+      exitCode: 2,
+      warnings: [errorMessage],
+    });
   }
 
   // 解決済みの対象ファイル一覧を表す
   const resolvedInputFiles = resolveInputFiles(process.cwd(), parsedArguments);
   if (resolvedInputFiles.error) {
-    process.stderr.write(`mamori: failed to resolve input files: ${resolvedInputFiles.error}\n`);
-    return 2;
+    const errorMessage = `failed to resolve input files: ${resolvedInputFiles.error}`;
+    process.stderr.write(`mamori: ${errorMessage}\n`);
+    return finalizeManagedHookExitCode(process.cwd(), parsedArguments, {
+      exitCode: 2,
+      warnings: [errorMessage],
+    });
   }
 
   // 正規化済みの対象ファイル一覧を表す
@@ -808,15 +907,20 @@ async function runMinimal() {
   const invalidFiles = findInvalidFiles(process.cwd(), normalizedFiles);
 
   if (invalidFiles.length > 0) {
-    process.stderr.write(
-      `mamori: invalid files: ${invalidFiles.join('; ')}\n`,
-    );
-    return 2;
+    const errorMessage = `invalid files: ${invalidFiles.join('; ')}`;
+    process.stderr.write(`mamori: ${errorMessage}\n`);
+    return finalizeManagedHookExitCode(process.cwd(), parsedArguments, {
+      exitCode: 2,
+      warnings: [errorMessage],
+    });
   }
 
   if (parsedArguments.mode === 'precommit' && parsedArguments.scope === 'staged' && normalizedFiles.length === 0) {
     process.stdout.write('mamori: no staged files were detected for precommit/staged.\n');
-    return 0;
+    return finalizeManagedHookExitCode(process.cwd(), parsedArguments, {
+      exitCode: 0,
+      warnings: [],
+    });
   }
 
   if (parsedArguments.execute) {
@@ -845,14 +949,13 @@ async function runMinimal() {
     const sarifLog = buildCombinedSarif(Array.isArray(executionResult.issues) ? executionResult.issues : []);
     writeSarifFile(sarifLog, sarifOutputPath);
     executionResult.sarifOutputPath = sarifOutputPath;
-    if (parsedArguments.mode === 'precommit' && parsedArguments.scope === 'staged') {
-      writeLatestPreCommitResult(process.cwd(), executionResult, sarifOutputPath);
-    }
-    if (parsedArguments.mode === 'prepush' && parsedArguments.scope === 'workspace') {
-      writeLatestPrePushResult(process.cwd(), executionResult, sarifOutputPath);
-    }
     printExecutionResult(executionResult);
-    return executionResult.exitCode;
+    return finalizeManagedHookExitCode(
+      process.cwd(),
+      parsedArguments,
+      executionResult,
+      sarifOutputPath,
+    );
   }
 
   return 0;

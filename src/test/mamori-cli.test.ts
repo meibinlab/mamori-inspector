@@ -2331,7 +2331,7 @@ suite('Mamori CLI Test Suite', () => {
   });
 
   /**
-   * pre-push の Web checker 失敗時に issue を SARIF 化して gate できること。
+   * pre-push の Web checker 失敗時に issue を SARIF 化して失敗を返すこと。
    * @returns 返り値はない。
    */
   test('Fails prepush when web checkers report findings and writes SARIF issues', () => {
@@ -2339,6 +2339,7 @@ suite('Mamori CLI Test Suite', () => {
     const scriptDirectory = path.join(temporaryDirectory, 'src');
     const styleDirectory = path.join(temporaryDirectory, 'styles');
     const htmlDirectory = path.join(temporaryDirectory, 'public');
+    const gitDirectory = path.join(temporaryDirectory, '.git');
     const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
     const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-web-prepush.sarif');
     const prePushResultPath = path.join(temporaryDirectory, '.mamori', 'out', 'latest-prepush-result.json');
@@ -2391,6 +2392,7 @@ suite('Mamori CLI Test Suite', () => {
     fs.mkdirSync(scriptDirectory, { recursive: true });
     fs.mkdirSync(styleDirectory, { recursive: true });
     fs.mkdirSync(htmlDirectory, { recursive: true });
+    fs.mkdirSync(gitDirectory, { recursive: true });
     fs.writeFileSync(javascriptFilePath, 'console.log("sample");\n', 'utf8');
     fs.writeFileSync(cssFilePath, 'body { color: #12; }\n', 'utf8');
     fs.writeFileSync(htmlFilePath, '<!doctype html>\n<div>\n', 'utf8');
@@ -2410,7 +2412,12 @@ suite('Mamori CLI Test Suite', () => {
       '--execute',
       '--sarif-output',
       path.relative(temporaryDirectory, sarifOutputPath),
-    ]);
+    ], {
+      env: {
+        ...process.env,
+        GIT_DIR: gitDirectory,
+      },
+    });
 
     assert.strictEqual(result.status, 1);
     assert.match(result.stdout, /issues=3/u);
@@ -2421,19 +2428,7 @@ suite('Mamori CLI Test Suite', () => {
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /no-console/u);
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /color-no-invalid-hex/u);
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /tag-pair/u);
-
-    const prePushResult = JSON.parse(fs.readFileSync(prePushResultPath, 'utf8')) as {
-      exitCode: number;
-      issueCount: number;
-      sarifOutputPath: string;
-      mode: string;
-      scope: string;
-    };
-    assert.strictEqual(prePushResult.exitCode, 1);
-    assert.strictEqual(prePushResult.issueCount, 3);
-    assert.strictEqual(prePushResult.mode, 'prepush');
-    assert.strictEqual(prePushResult.scope, 'workspace');
-    assert.strictEqual(prePushResult.sarifOutputPath, sarifOutputPath);
+    assert.ok(!fs.existsSync(prePushResultPath));
   });
 
   /**
@@ -3614,10 +3609,10 @@ suite('Mamori CLI Test Suite', () => {
   });
 
   /**
-   * 管理対象 hook が通常時は runner の終了コードを返すこと。
+   * 管理対象 hook が runner の失敗時も warning を出して継続すること。
    * @returns 返り値はない。
    */
-  test('Returns the runner exit code from the managed hook', function() {
+  test('Continues managed hook with warning when the runner exits with failure', function() {
     if (!resolvePosixShellCommand()) {
       this.skip();
       return;
@@ -3636,7 +3631,7 @@ suite('Mamori CLI Test Suite', () => {
       [
         "'use strict';",
         'const fs = require("fs");',
-        `fs.writeFileSync(${JSON.stringify(invocationLogPath)}, JSON.stringify(process.argv.slice(2)), 'utf8');`,
+        `fs.writeFileSync(${JSON.stringify(invocationLogPath)}, JSON.stringify({ args: process.argv.slice(2), managedHook: process.env.MAMORI_MANAGED_HOOK || '' }), 'utf8');`,
         'process.exit(1);',
         '',
       ].join('\n'),
@@ -3646,11 +3641,13 @@ suite('Mamori CLI Test Suite', () => {
 
     const result = runManagedHookScript(prePushHookPath, temporaryDirectory);
 
-    assert.strictEqual(result.status, 1);
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stderr, /reported issues or execution errors, but Git continues/u);
     assert.deepStrictEqual(
-      JSON.parse(fs.readFileSync(invocationLogPath, 'utf8')),
+      JSON.parse(fs.readFileSync(invocationLogPath, 'utf8')).args,
       ['run', '--mode', 'prepush', '--scope', 'workspace', '--execute'],
     );
+    assert.strictEqual(JSON.parse(fs.readFileSync(invocationLogPath, 'utf8')).managedHook, 'prepush');
   });
 
   /**
@@ -4321,13 +4318,14 @@ suite('Mamori CLI Test Suite', () => {
   });
 
   /**
-   * pre-commit の Web checker 失敗時にも整形結果を再ステージしつつ gate できること。
+   * pre-commit の Web checker 失敗時にも整形結果を再ステージしつつ失敗を返すこと。
    * @returns 返り値はない。
    */
   test('Fails precommit when web checkers report findings after formatting', () => {
     const temporaryDirectory = createTemporaryDirectory();
     const sourceDirectory = path.join(temporaryDirectory, 'src');
     const javascriptFilePath = path.join(sourceDirectory, 'main.js');
+    const gitDirectory = path.join(temporaryDirectory, '.git');
     const gitBinDirectory = createCommandBinDirectory(temporaryDirectory);
     const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
     const gitLogPath = path.join(gitBinDirectory, 'git.log');
@@ -4351,6 +4349,7 @@ suite('Mamori CLI Test Suite', () => {
     ]);
 
     fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.mkdirSync(gitDirectory, { recursive: true });
     fs.writeFileSync(javascriptFilePath, 'const sample = 1\n', 'utf8');
     fs.writeFileSync(path.join(temporaryDirectory, 'eslint.config.mjs'), 'export default [];\n', 'utf8');
     writeGitPrecommitWrapper(
@@ -4383,6 +4382,7 @@ suite('Mamori CLI Test Suite', () => {
       {
         env: {
           ...process.env,
+          GIT_DIR: gitDirectory,
           PATH: buildTestPath(gitBinDirectory),
         },
       },
@@ -4396,19 +4396,7 @@ suite('Mamori CLI Test Suite', () => {
     assert.match(fs.readFileSync(indexSnapshotPath, 'utf8'), /formatted by eslint/u);
     assert.ok(fs.existsSync(sarifOutputPath));
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Missing semicolon\./u);
-
-    const preCommitResult = JSON.parse(fs.readFileSync(preCommitResultPath, 'utf8')) as {
-      exitCode: number;
-      issueCount: number;
-      mode: string;
-      scope: string;
-      sarifOutputPath: string;
-    };
-    assert.strictEqual(preCommitResult.exitCode, 1);
-    assert.strictEqual(preCommitResult.issueCount, 1);
-    assert.strictEqual(preCommitResult.mode, 'precommit');
-    assert.strictEqual(preCommitResult.scope, 'staged');
-    assert.strictEqual(preCommitResult.sarifOutputPath, sarifOutputPath);
+    assert.ok(!fs.existsSync(preCommitResultPath));
   });
 
   /**
