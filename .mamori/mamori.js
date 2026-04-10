@@ -54,8 +54,10 @@ const RUN_OPTION_NAMES = new Set([
   'semgrep-config',
   'semgrep-rule',
   'eslint-config',
+  'oxlint-config',
   'stylelint-config',
   'htmlhint-config',
+  'html-validate-config',
 ]);
 
 /**
@@ -73,7 +75,7 @@ function printHelp() {
       '    [--execute]',
       '    [--sarif-output <path>]',
       '    [--semgrep-config <path>] [--semgrep-rule <rule>[,<rule>...]]',
-      '    [--eslint-config <path>] [--stylelint-config <path>] [--htmlhint-config <path>]',
+      '    [--eslint-config <path>] [--oxlint-config <path>] [--stylelint-config <path>] [--htmlhint-config <path>] [--html-validate-config <path>]',
       '  mamori.js setup',
       '  mamori.js cache-clear',
       '  mamori.js hooks <install|uninstall>',
@@ -120,7 +122,7 @@ function expandValues(rawValues) {
 /**
  * run サブコマンドの引数を解析する。
  * @param {string[]} rawArguments run サブコマンド以降の引数一覧を表す。
- * @returns {{mode?: string, scope?: string, files: string[], semgrepConfig?: string, semgrepRules: string[], eslintConfig?: string, stylelintConfig?: string, htmlhintConfig?: string, unknownOptions: string[]}} 解析結果を返す。
+ * @returns {{mode?: string, scope?: string, files: string[], semgrepConfig?: string, semgrepRules: string[], eslintConfig?: string, oxlintConfig?: string, stylelintConfig?: string, htmlhintConfig?: string, htmlValidateConfig?: string, unknownOptions: string[]}} 解析結果を返す。
  */
 function parseRunArguments(rawArguments) {
   // 値を複数保持するオプションを表す
@@ -180,11 +182,17 @@ function parseRunArguments(rawArguments) {
     eslintConfig: typeof collectedOptions['eslint-config'] === 'string'
       ? collectedOptions['eslint-config']
       : undefined,
+    oxlintConfig: typeof collectedOptions['oxlint-config'] === 'string'
+      ? collectedOptions['oxlint-config']
+      : undefined,
     stylelintConfig: typeof collectedOptions['stylelint-config'] === 'string'
       ? collectedOptions['stylelint-config']
       : undefined,
     htmlhintConfig: typeof collectedOptions['htmlhint-config'] === 'string'
       ? collectedOptions['htmlhint-config']
+      : undefined,
+    htmlValidateConfig: typeof collectedOptions['html-validate-config'] === 'string'
+      ? collectedOptions['html-validate-config']
       : undefined,
     sarifOutput: typeof collectedOptions['sarif-output'] === 'string'
       ? collectedOptions['sarif-output']
@@ -601,8 +609,10 @@ function printResolutionSummary(resolution) {
     'mamori: resolution-summary',
     ...formatToolSummary('semgrep', resolution.semgrep),
     ...formatToolSummary('eslint', resolution.web.eslint),
+    ...formatToolSummary('oxlint', resolution.web.oxlint),
     ...formatToolSummary('stylelint', resolution.web.stylelint),
     ...formatToolSummary('htmlhint', resolution.web.htmlhint),
+    ...formatToolSummary('html-validate', resolution.web['html-validate']),
     ...formatBuildDefinitionSummary(resolution.buildDefinition),
     ...formatExecutionPlanSummary(resolution.executionPlan),
     ...formatCommandPlanSummary(resolution.commandPlan),
@@ -937,8 +947,10 @@ async function runMinimal() {
     semgrepConfig: parsedArguments.semgrepConfig,
     semgrepRules: parsedArguments.semgrepRules,
     eslintConfig: parsedArguments.eslintConfig,
+    oxlintConfig: parsedArguments.oxlintConfig,
     stylelintConfig: parsedArguments.stylelintConfig,
     htmlhintConfig: parsedArguments.htmlhintConfig,
+    htmlValidateConfig: parsedArguments.htmlValidateConfig,
   });
 
   printResolutionSummary(resolution);

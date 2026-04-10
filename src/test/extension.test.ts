@@ -1387,6 +1387,15 @@ suite('Extension Utility Test Suite', () => {
   });
 
   /**
+   * 保存時通知で Oxlint と HTML-Validate の表示名を返せること。
+   * @returns 返り値はない。
+   */
+  test('Resolves save-check labels for Oxlint and HTML-Validate', () => {
+    assert.strictEqual(extensionHelpers.getSaveCheckToolLabel('oxlint'), 'Oxlint');
+    assert.strictEqual(extensionHelpers.getSaveCheckToolLabel('html-validate'), 'HTML-Validate');
+  });
+
+  /**
    * warning がない場合は成功通知のみ表示されること。
    * @returns 返り値はない。
    */

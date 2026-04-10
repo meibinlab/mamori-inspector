@@ -18,6 +18,10 @@
 
 ## 3. 実行タイミング別の構成（確定）
 
+注記:
+- 以下で「追加予定」と明記する `tsc --noEmit`、HTML-Validate、Oxlint、doiuse、Knip の 5 ツールは、現行実装には未反映の追加予定仕様とする
+- 現行実装の挙動説明と追加予定仕様が同じ節に併記される場合、実装済みの挙動は「現行実装」または「確定」と明記した記述を正とする
+
 ### 3.1 保存時（on save, scope=file）
 保存時検証の有効条件（確定）:
 - ワークスペース単位の設定 `mamori-inspector.enabled` が `true` の場合のみ実行する
@@ -45,6 +49,7 @@
 - CSS: Stylelint（明示設定 → discovery → `package.json#stylelint` を優先し、無ければ Mamori 同梱の最小設定を使用）
 - HTML 内 inline style: Stylelint（対象は CSS と判定されたものに限る。設定解決は明示設定 → discovery → `package.json#stylelint` → Mamori 同梱の最小設定。HTML 本体は引き続き htmlhint）
 - HTML: htmlhint（明示設定 → discovery → `package.json#htmlhint` を優先し、無ければ Mamori 同梱の最小設定を使用）
+- JavaScript / TypeScript direct file: Oxlint（追加予定。ESLint の代替ではなく高速な補助検査とし、対象は direct file のみとする。設定解決は明示設定 → discovery → Mamori 同梱の最小設定の順とし、HTML 内 inline script は初期導入対象外とする）
 
 HTML inline script の扱い（確定）:
 - `src` を持たない inline script のみを一時 JavaScript ファイルへ抽出して ESLint 実行対象に含める
@@ -86,6 +91,8 @@ HTML inline style の扱い（確定）:
 - CSS: Stylelint（明示設定 → discovery → `package.json#stylelint` を優先し、無ければ Mamori 同梱の最小設定を使用）
 - HTML 内 inline style: Stylelint（対象は CSS と判定されたものに限る。設定解決は明示設定 → discovery → `package.json#stylelint` → Mamori 同梱の最小設定。HTML 本体は引き続き htmlhint）
 - HTML: htmlhint（明示設定 → discovery → `package.json#htmlhint` を優先し、無ければ Mamori 同梱の最小設定を使用）
+- JavaScript / TypeScript direct file: Oxlint（追加予定。save と同じ解決順で staged direct file のみを対象とし、ESLint と重複する診断は補助情報として扱う）
+- HTML: HTML-Validate（追加予定。htmlhint の代替ではなく補完検査とし、設定解決は明示設定 → discovery → Mamori 同梱の最小設定の順とする）
 
 pre-commit の通知仕様（確定）:
 - managed pre-commit が終了コード 1 または 2 で失敗した場合、runner は最新結果メタデータを `.mamori/out/latest-precommit-result.json` へ保存する
@@ -101,6 +108,9 @@ pre-commit の通知仕様（確定）:
 - CSS: Stylelint（デフォルト有効・設定でOFF可。設定解決は明示設定 → discovery → `package.json#stylelint` → Mamori 同梱の最小設定）
 - HTML 内 inline style: Stylelint（デフォルト有効・設定でOFF可。対象は CSS と判定されたものに限る。設定解決は明示設定 → discovery → `package.json#stylelint` → Mamori 同梱の最小設定。HTML 本体は引き続き htmlhint）
 - HTML: htmlhint（デフォルト有効・設定でOFF可。設定解決は明示設定 → discovery → `package.json#htmlhint` → Mamori 同梱の最小設定）
+- TypeScript: `tsc --noEmit`（追加予定。型整合性検査として扱い、明示設定 → discovery の順で tsconfig を解決できる場合のみ実行する。tsconfig 未検出時は warning を残してスキップする）
+- HTML: HTML-Validate（追加予定。pre-commit と同じ設定解決でワークスペース単位に実行する）
+- CSS / SCSS / Sass / HTML 内 inline style: doiuse（追加予定。Browserslist を明示設定 → discovery → `package.json#browserslist` の順で解決できる場合のみ実行し、未検出時は warning を残してスキップする）
 
 SpotBugsの例外仕様（確定）:
 - class files（例: `target/classes` や `build/classes/java/main`）が見つからない場合は警告ログを出してスキップし、pushは継続する
@@ -122,6 +132,15 @@ pre-push の通知仕様（確定）:
 - 保存時と manual 実行の静的解析進捗表示はステータスバーへ統一する
 - 拡張の manual 実行が成功した場合、同一ワークスペースに対して反映済みの保存時 Diagnostics は、manual の最新結果で置き換える
 
+追加予定の実装方針:
+- JavaScript / TypeScript direct file: Oxlint を実行する
+- TypeScript: `tsc --noEmit` を実行する
+- HTML: HTML-Validate を実行する
+- CSS / SCSS / Sass / HTML 内 inline style: doiuse を実行する
+- JavaScript / TypeScript workspace: Knip を実行する
+- Knip は lint ではなく未使用 file / export / dependency の分析として扱い、manual を主配置とする
+- Knip は明示設定、Knip 設定ファイル、`package.json#knip`、`package.json` と `tsconfig` による auto-discovery の順で実行条件を解決し、設定ヒントは warning として扱う
+
 優先実装:
 - OWASP Dependency-Check
 - Trivy
@@ -133,6 +152,15 @@ pre-push の通知仕様（確定）:
 - ArchUnit
 - CK Metrics
 - JDepend
+
+### 3.5 追加予定の Web 拡張解析ツール
+| ツール | 主な実行タイミング | 主な対象 | 役割 | 設定未検出時の扱い |
+| ---- | ---- | ---- | ---- | ---- |
+| Oxlint | save / pre-commit / manual | JavaScript / TypeScript direct file | ESLint を補完する高速検査 | Mamori 同梱の最小設定で実行 |
+| `tsc --noEmit` | pre-push / manual | TypeScript project | 型整合性検査 | warning を残してスキップ |
+| HTML-Validate | pre-commit / pre-push / manual | HTML ファイル | htmlhint を補完する構造・アクセシビリティ検査 | Mamori 同梱の最小設定で実行 |
+| doiuse | pre-push / manual | CSS / SCSS / Sass / HTML 内 inline style | Browserslist ベースの互換性検査 | warning を残してスキップ |
+| Knip | manual | JavaScript / TypeScript workspace | 未使用 file / export / dependency の分析 | auto-discovery を試行し、成立しなければ warning を残してスキップ |
 
 ## 4. 実行エンジン構成
 
@@ -158,6 +186,10 @@ pre-push の通知仕様（確定）:
 - SARIFを統合フォーマットの軸とする
 - 直接SARIFを出せないツールは結果をパースしてSARIFに変換する
 - 統合SARIF（例: `combined.sarif`）を生成し、VS Code Problemsに反映する
+- `tsc --noEmit` の結果は TypeScript 診断コード（例: `TS2322`）を `ruleId` として SARIF に正規化する
+- HTML-Validate、Oxlint、doiuse の結果は upstream の rule 名または feature key を `ruleId` として SARIF に正規化する
+- Knip の結果は `knip/files`、`knip/exports`、`knip/dependencies` など issue type 単位の `ruleId` に正規化する
+- Knip の依存関係問題など、行番号を持たない結果は `package.json` または対象ワークスペースの設定ファイルへひも付けて報告する
 
 ## 5. ツール配布・自動導入（確定）
 
@@ -174,10 +206,11 @@ Java 17互換のpin例:
 - Dependency-Check: 12.2.0（手動枠）
 - Trivy: 0.69.1（手動枠）
 
-### 5.2 Node系（Prettier / ESLint / Stylelint / htmlhint）
+### 5.2 Node系（Prettier / ESLint / Stylelint / htmlhint / TypeScript / HTML-Validate / Oxlint / doiuse / Knip）
 - `.mamori/node/` に「本体のみ」を自動導入する（pin固定）
 - 初回実行時に自動でインストールする
 - ネット制限環境向けに、セットアップコマンドで明示的にインストールも可能にする
+- 追加予定の Web 拡張ツールも `.mamori/node/` への自動導入対象とし、プロジェクト `node_modules` を優先して解決する
 
 実行の優先順位（確定）:
 1) プロジェクト `node_modules` が存在し、設定も解決できる場合はそれを使用（最も整合性が高い）
@@ -210,6 +243,15 @@ Java 17互換のpin例:
   - ESLint: `eslint.config.*`、`.eslintrc*`、`package.json#eslintConfig`
   - Stylelint: `stylelint.config.*`、`.stylelintrc*`、`package.json#stylelint`
   - htmlhint: `.htmlhintrc*`、`package.json#htmlhint`
+
+### 6.5 追加予定 Web ツール
+- `tsc --noEmit`: 明示設定 → discovery の順で `tsconfig.json` または明示指定された tsconfig を解決する。組み込みデフォルトは持たず、tsconfig 未検出時は warning を残してスキップする
+- HTML-Validate: 明示設定 → discovery の順で `.htmlvalidate.js`、`.htmlvalidate.cjs`、`.htmlvalidate.mjs`、`.htmlvalidate.json` を解決し、未検出時は Mamori 同梱の最小設定を使用する
+- Oxlint: 明示設定 → discovery の順で `.oxlintrc.json` または `oxlint.config.ts` を解決し、未検出時は Mamori 同梱の最小設定を使用する
+- doiuse: 明示設定 → discovery → `package.json#browserslist` の順で Browserslist を解決する。discovery では `.browserslistrc` と `browserslist` ファイルを対象とし、未検出時は組み込みデフォルトを使わず warning を残してスキップする
+- Knip: 明示設定 → discovery → `package.json#knip` → `package.json` と `tsconfig` による auto-discovery の順で解決する。discovery の対象は `knip.json`、`knip.jsonc`、`.knip.json`、`.knip.jsonc`、`knip.js`、`knip.ts` とし、`package.json` が無い場合は warning を残してスキップする
+- Oxlint は初期導入では direct file のみを対象とし、HTML 内 inline script への適用は将来拡張とする
+- Knip の設定ヒントはルール違反ではなく warning として扱い、manual 実行の継続を優先する
 
 ## 7. マルチモジュール対応（確定）
 - pre-push/manualは「各モジュールごとに設定解決して実行」
@@ -272,7 +314,17 @@ Git hooks コマンドの通知仕様（確定）:
 - 競合や未変更 hook がある場合は成功通知に加えて warning 通知を表示する
 - warning は CLI の `mamori: hooks warnings=...` 行から拡張側で抽出し、Output Channel にも記録する
 
+### 10.1 追加予定 Web ツールで用意すべきファイル
+| チェック | 用意すべきファイル | 補足 |
+| ---- | ---- | ---- |
+| TypeScript `tsc --noEmit` | `tsconfig.json`、または明示指定する tsconfig | 組み込みデフォルトは持たず、tsconfig を解決できない場合は warning を残してスキップする。 |
+| HTML HTML-Validate | 任意: `.htmlvalidate.js`、`.htmlvalidate.cjs`、`.htmlvalidate.mjs`、`.htmlvalidate.json` | 設定未検出時は bundled minimal HTML-Validate config を使用する。 |
+| JavaScript / TypeScript Oxlint | 任意: `.oxlintrc.json` または `oxlint.config.ts` | 設定未検出時は bundled minimal Oxlint config を使用する。初期導入では direct file を主対象とする。 |
+| CSS / SCSS / Sass doiuse | `package.json#browserslist`、`.browserslistrc`、または `browserslist` ファイル | 対象ブラウザ定義を解決できない場合は warning を残してスキップする。 |
+| JavaScript / TypeScript Knip | `package.json`、必要に応じて `knip.json`、`knip.jsonc`、`.knip.json`、`.knip.jsonc`、`knip.js`、`knip.ts`、および `tsconfig.json` | manual を主対象とする。設定未検出時は auto-discovery を試行し、設定ヒントは warning として扱う。 |
+
 ## 11. 今後の拡張
+- Web 向け追加解析ツール 5 種の実装（`tsc --noEmit` / HTML-Validate / Oxlint / doiuse / Knip）
 - 手動ツールの追加（Dependency-Check/Trivyの取り込み強化、結果の詳細ビュー）
 - Python等への拡張
 - Gradle Kotlin DSLの設定抽出精度向上（必要になった時点で対応）

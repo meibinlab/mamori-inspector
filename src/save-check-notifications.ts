@@ -3,6 +3,8 @@ const SAVE_CHECK_TOOL_LABELS: Record<string, string> = {
   checkstyle: 'Checkstyle',
   eslint: 'ESLint',
   htmlhint: 'htmlhint',
+  'html-validate': 'HTML-Validate',
+  oxlint: 'Oxlint',
   pmd: 'PMD',
   prettier: 'Prettier',
   semgrep: 'Semgrep',

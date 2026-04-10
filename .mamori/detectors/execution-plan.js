@@ -26,12 +26,20 @@ const ESLINT_FORMATTER_FILE_EXTENSIONS = new Set([
 // HTML ファイル拡張子一覧を表す
 const HTML_FILE_EXTENSIONS = ['.html', '.htm'];
 
+// Oxlint の対象拡張子一覧を表す
+const OXLINT_FILE_EXTENSIONS = new Set([
+  ...JAVASCRIPT_FILE_EXTENSIONS,
+  ...TYPESCRIPT_FILE_EXTENSIONS,
+]);
+
 // Web 系ファイル拡張子一覧を表す
 const WEB_FILE_EXTENSIONS = {
   prettier: new Set([...JAVASCRIPT_FILE_EXTENSIONS, '.css', '.scss', '.sass', ...HTML_FILE_EXTENSIONS]),
   eslint: new Set([...JAVASCRIPT_FILE_EXTENSIONS, ...HTML_FILE_EXTENSIONS]),
+  oxlint: OXLINT_FILE_EXTENSIONS,
   stylelint: new Set(['.css', '.scss', '.sass', '.html', '.htm']),
   htmlhint: new Set(HTML_FILE_EXTENSIONS),
+  'html-validate': new Set(HTML_FILE_EXTENSIONS),
 };
 
 // ワークスペース探索時に除外するディレクトリ一覧を表す
@@ -277,6 +285,16 @@ function buildWebCheckEntry(toolName, hasTargetFiles, enabled) {
 }
 
 /**
+ * Web ツールの設定解決結果を返す。
+ * @param {object|undefined} webResolution Web 設定解決結果を表す。
+ * @param {string} toolName ツール名を表す。
+ * @returns {object|undefined} 設定解決結果を返す。
+ */
+function resolveWebToolResolution(webResolution, toolName) {
+  return webResolution ? webResolution[toolName] : undefined;
+}
+
+/**
  * Web 専用 module の必要性を返す。
  * @param {{mode: string, scope: string, cwd: string, files?: string[], web?: object}} options 計画生成条件を表す。
  * @returns {boolean} 必要な場合は true を返す。
@@ -301,18 +319,26 @@ function shouldIncludeWebModule(options) {
   if (options.scope === 'file' || options.scope === 'staged') {
     return filterWebFiles(options.files, 'prettier').length > 0
       || filterWebFiles(options.files, 'eslint', options.web && options.web.eslint).length > 0
+      || filterWebFiles(options.files, 'oxlint').length > 0
       || filterWebFiles(options.files, 'stylelint', options.web && options.web.stylelint).length > 0
-      || filterWebFiles(options.files, 'htmlhint', options.web && options.web.htmlhint).length > 0;
+      || filterWebFiles(options.files, 'htmlhint', options.web && options.web.htmlhint).length > 0
+      || filterWebFiles(options.files, 'html-validate').length > 0;
   }
 
   const web = options.web || {};
   if (web.eslint && web.eslint.enabled) {
     return true;
   }
+  if (web.oxlint && web.oxlint.enabled) {
+    return true;
+  }
   if (web.stylelint && web.stylelint.enabled) {
     return true;
   }
   if (web.htmlhint && web.htmlhint.enabled) {
+    return true;
+  }
+  if (web['html-validate'] && web['html-validate'].enabled) {
     return true;
   }
 
@@ -359,8 +385,10 @@ function resolveWebModuleRoot(options) {
     const webFiles = Array.from(new Set([
       ...filterWebFiles(options.files, 'prettier'),
       ...filterWebFiles(options.files, 'eslint', options.web && options.web.eslint),
+      ...filterWebFiles(options.files, 'oxlint'),
       ...filterWebFiles(options.files, 'stylelint', options.web && options.web.stylelint),
       ...filterWebFiles(options.files, 'htmlhint', options.web && options.web.htmlhint),
+      ...filterWebFiles(options.files, 'html-validate'),
     ]));
     const commonAncestorDirectory = resolveCommonAncestorDirectory(webFiles);
     if (commonAncestorDirectory) {
@@ -423,17 +451,25 @@ function buildWebChecks(options, webResolution, excludedDirectories = []) {
       excludedDirectories,
     )
     : filterWebFiles(options.files, 'eslint', webResolution && webResolution.eslint).length > 0;
+  const hasOxlintFiles = options.scope === 'workspace'
+    ? hasWorkspaceFilesExcluding(options.cwd, WEB_FILE_EXTENSIONS.oxlint, excludedDirectories)
+    : filterWebFiles(options.files, 'oxlint').length > 0;
   const hasStylelintFiles = options.scope === 'workspace'
     ? hasWorkspaceFilesExcluding(options.cwd, WEB_FILE_EXTENSIONS.stylelint, excludedDirectories)
     : filterWebFiles(options.files, 'stylelint').length > 0;
   const hasHtmlhintFiles = options.scope === 'workspace'
     ? hasWorkspaceFilesExcluding(options.cwd, WEB_FILE_EXTENSIONS.htmlhint, excludedDirectories)
     : filterWebFiles(options.files, 'htmlhint').length > 0;
+  const hasHtmlValidateFiles = options.scope === 'workspace'
+    ? hasWorkspaceFilesExcluding(options.cwd, WEB_FILE_EXTENSIONS['html-validate'], excludedDirectories)
+    : filterWebFiles(options.files, 'html-validate').length > 0;
 
   return [
-    buildWebCheckEntry('eslint', hasEslintFiles, Boolean(webResolution && webResolution.eslint && webResolution.eslint.enabled)),
-    buildWebCheckEntry('stylelint', hasStylelintFiles, Boolean(webResolution && webResolution.stylelint && webResolution.stylelint.enabled)),
-    buildWebCheckEntry('htmlhint', hasHtmlhintFiles, Boolean(webResolution && webResolution.htmlhint && webResolution.htmlhint.enabled)),
+    buildWebCheckEntry('eslint', hasEslintFiles, Boolean(resolveWebToolResolution(webResolution, 'eslint') && resolveWebToolResolution(webResolution, 'eslint').enabled)),
+    buildWebCheckEntry('oxlint', hasOxlintFiles, Boolean(resolveWebToolResolution(webResolution, 'oxlint') && resolveWebToolResolution(webResolution, 'oxlint').enabled)),
+    buildWebCheckEntry('stylelint', hasStylelintFiles, Boolean(resolveWebToolResolution(webResolution, 'stylelint') && resolveWebToolResolution(webResolution, 'stylelint').enabled)),
+    buildWebCheckEntry('htmlhint', hasHtmlhintFiles, Boolean(resolveWebToolResolution(webResolution, 'htmlhint') && resolveWebToolResolution(webResolution, 'htmlhint').enabled)),
+    buildWebCheckEntry('html-validate', hasHtmlValidateFiles, Boolean(resolveWebToolResolution(webResolution, 'html-validate') && resolveWebToolResolution(webResolution, 'html-validate').enabled)),
   ];
 }
 

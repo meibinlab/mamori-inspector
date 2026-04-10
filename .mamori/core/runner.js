@@ -10,8 +10,12 @@ const checkstyleAdapter = require('../adapters/checkstyle');
 const cpdAdapter = require('../adapters/cpd');
 // ESLint adapter を表す
 const eslintAdapter = require('../adapters/eslint');
+// HTML-Validate adapter を表す
+const htmlValidateAdapter = require('../adapters/html-validate');
 // htmlhint adapter を表す
 const htmlhintAdapter = require('../adapters/htmlhint');
+// Oxlint adapter を表す
+const oxlintAdapter = require('../adapters/oxlint');
 // PMD adapter を表す
 const pmdAdapter = require('../adapters/pmd');
 // SpotBugs adapter を表す
@@ -429,6 +433,10 @@ function extractIssues(commandResult) {
     );
   }
 
+  if (commandResult.tool === 'oxlint') {
+    return oxlintAdapter.parseOxlintJson(commandResult.stdout || '');
+  }
+
   if (commandResult.tool === 'stylelint') {
     return stylelintAdapter.parseStylelintJson(
       typeof commandResult.stdout === 'string' && commandResult.stdout.trim() !== ''
@@ -440,6 +448,10 @@ function extractIssues(commandResult) {
 
   if (commandResult.tool === 'htmlhint') {
     return htmlhintAdapter.parseHtmlhintJson(commandResult.stdout || '');
+  }
+
+  if (commandResult.tool === 'html-validate') {
+    return htmlValidateAdapter.parseHtmlValidateJson(commandResult.stdout || '');
   }
 
   return [];

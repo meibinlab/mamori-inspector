@@ -281,10 +281,10 @@ function resolveSingleWebToolConfiguration(
 /**
  * Web 系ツールの解決結果一覧を返す。
  * @param {string} currentWorkingDirectory 現在の作業ディレクトリを表す。
- * @param {{eslintConfig?: string, stylelintConfig?: string, htmlhintConfig?: string}} options CLI オプションを表す。
- * @param {{eslint: object, stylelint: object, htmlhint: object}} discoveredWebConfigurations 探索結果を表す。
+ * @param {{eslintConfig?: string, oxlintConfig?: string, stylelintConfig?: string, htmlhintConfig?: string, htmlValidateConfig?: string}} options CLI オプションを表す。
+ * @param {{eslint: object, oxlint: object, stylelint: object, htmlhint: object, 'html-validate': object}} discoveredWebConfigurations 探索結果を表す。
  * @param {{modules?: object[]}} buildDefinitions build-definition 抽出結果を表す。
- * @returns {{eslint: object, stylelint: object, htmlhint: object}} 解決結果を返す。
+ * @returns {{eslint: object, oxlint: object, stylelint: object, htmlhint: object, 'html-validate': object}} 解決結果を返す。
  */
 function buildWebResolution(
   currentWorkingDirectory,
@@ -302,6 +302,14 @@ function buildWebResolution(
       buildDefinitions,
       webDefaults && webDefaults.eslint ? webDefaults.eslint : undefined,
     ),
+    oxlint: resolveSingleWebToolConfiguration(
+      'oxlint',
+      currentWorkingDirectory,
+      options.oxlintConfig,
+      discoveredWebConfigurations.oxlint,
+      buildDefinitions,
+      webDefaults && webDefaults.oxlint ? webDefaults.oxlint : undefined,
+    ),
     stylelint: resolveSingleWebToolConfiguration(
       'stylelint',
       currentWorkingDirectory,
@@ -318,23 +326,37 @@ function buildWebResolution(
       buildDefinitions,
       webDefaults && webDefaults.htmlhint ? webDefaults.htmlhint : undefined,
     ),
+    'html-validate': resolveSingleWebToolConfiguration(
+      'html-validate',
+      currentWorkingDirectory,
+      options.htmlValidateConfig,
+      discoveredWebConfigurations['html-validate'],
+      buildDefinitions,
+      webDefaults && webDefaults['html-validate'] ? webDefaults['html-validate'] : undefined,
+    ),
   };
 }
 
 /**
  * workspace scope 向けの Web モジュール解決結果一覧を返す。
  * @param {string} currentWorkingDirectory 現在の作業ディレクトリを表す。
- * @param {{scope: string, eslintConfig?: string, stylelintConfig?: string, htmlhintConfig?: string}} options CLI オプションを表す。
+ * @param {{scope: string, eslintConfig?: string, oxlintConfig?: string, stylelintConfig?: string, htmlhintConfig?: string, htmlValidateConfig?: string}} options CLI オプションを表す。
  * @param {{web?: object}} defaults 既定設定を表す。
  * @param {{modules?: object[]}} buildDefinitions build-definition 抽出結果を表す。
- * @returns {Array<{moduleRoot: string, web: {eslint: object, stylelint: object, htmlhint: object}}>} モジュール解決結果を返す。
+ * @returns {Array<{moduleRoot: string, web: {eslint: object, oxlint: object, stylelint: object, htmlhint: object, 'html-validate': object}}>} モジュール解決結果を返す。
  */
 function resolveWorkspaceWebModules(currentWorkingDirectory, options, defaults, buildDefinitions) {
   if (options.scope !== 'workspace') {
     return [];
   }
 
-  if (options.eslintConfig || options.stylelintConfig || options.htmlhintConfig) {
+  if (
+    options.eslintConfig
+    || options.oxlintConfig
+    || options.stylelintConfig
+    || options.htmlhintConfig
+    || options.htmlValidateConfig
+  ) {
     return [{
       moduleRoot: currentWorkingDirectory,
       web: buildWebResolution(
@@ -342,8 +364,10 @@ function resolveWorkspaceWebModules(currentWorkingDirectory, options, defaults, 
         options,
         {
           eslint: { enabled: false, source: 'default', locationType: 'disabled' },
+          oxlint: { enabled: false, source: 'default', locationType: 'disabled' },
           stylelint: { enabled: false, source: 'default', locationType: 'disabled' },
           htmlhint: { enabled: false, source: 'default', locationType: 'disabled' },
+          'html-validate': { enabled: false, source: 'default', locationType: 'disabled' },
         },
         buildDefinitions,
         defaults.web || {},
@@ -370,7 +394,7 @@ function resolveWorkspaceWebModules(currentWorkingDirectory, options, defaults, 
 
 /**
  * CLI 向けの設定解決結果を返す。
- * @param {{cwd?: string, mode: string, scope: string, files?: string[], semgrepConfig?: string, semgrepRules?: string[], eslintConfig?: string, stylelintConfig?: string, htmlhintConfig?: string}} options CLI オプションを表す。
+ * @param {{cwd?: string, mode: string, scope: string, files?: string[], semgrepConfig?: string, semgrepRules?: string[], eslintConfig?: string, oxlintConfig?: string, stylelintConfig?: string, htmlhintConfig?: string, htmlValidateConfig?: string}} options CLI オプションを表す。
  * @returns {{cwd: string, mode: string, scope: string, files: string[], resolutionOrder: string[], semgrep: object, web: object}} 解決結果を返す。
  */
 function resolveRunConfiguration(options) {

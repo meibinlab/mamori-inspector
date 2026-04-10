@@ -15,11 +15,17 @@ const NODE_TOOL_PACKAGES = {
   eslint: {
     packageName: 'eslint',
   },
+  oxlint: {
+    packageName: 'oxlint',
+  },
   stylelint: {
     packageName: 'stylelint',
   },
   htmlhint: {
     packageName: 'htmlhint',
+  },
+  'html-validate': {
+    packageName: 'html-validate',
   },
 };
 

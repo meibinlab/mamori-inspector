@@ -15,16 +15,20 @@ const SUPPORTED_COMMAND_TOOLS = new Set([
   'spotbugs',
   'prettier',
   'eslint',
+  'oxlint',
   'stylelint',
   'htmlhint',
+  'html-validate',
 ]);
 
 // ツールごとの対象拡張子一覧を表す
 const TOOL_FILE_EXTENSIONS = {
   prettier: new Set(['.js', '.cjs', '.mjs', '.jsx', '.css', '.scss', '.sass', '.html', '.htm']),
   eslint: new Set(['.js', '.cjs', '.mjs', '.jsx', '.html', '.htm']),
+  oxlint: new Set(['.js', '.cjs', '.mjs', '.jsx', '.ts', '.cts', '.mts', '.tsx']),
   stylelint: new Set(['.css', '.scss', '.sass', '.html', '.htm']),
   htmlhint: new Set(['.html', '.htm']),
+  'html-validate': new Set(['.html', '.htm']),
 };
 
 // ESLint で TypeScript を扱うときの追加拡張子一覧を表す
@@ -225,7 +229,13 @@ function buildWebConfigArguments(toolName, toolResolution) {
     return [];
   }
 
-  if (toolName === 'eslint' || toolName === 'stylelint' || toolName === 'htmlhint') {
+  if (
+    toolName === 'eslint'
+    || toolName === 'oxlint'
+    || toolName === 'stylelint'
+    || toolName === 'htmlhint'
+    || toolName === 'html-validate'
+  ) {
     return ['--config', toolResolution.path];
   }
 
@@ -345,6 +355,17 @@ function buildWebCommandEntry(toolName, moduleDefinition, toolFiles, options) {
     };
   }
 
+  if (toolName === 'oxlint') {
+    return {
+      tool: 'oxlint',
+      enabled: true,
+      phase: 'check',
+      command: 'oxlint',
+      args: [...configArguments, '-f', 'json', ...filteredToolFiles],
+      cwd: moduleDefinition.moduleRoot,
+    };
+  }
+
   if (toolName === 'stylelint') {
     const directFiles = filteredToolFiles.filter((filePath) => !isHtmlFile(filePath));
     const inlineHtmlFiles = filteredToolFiles.filter((filePath) => isHtmlFile(filePath));
@@ -368,6 +389,17 @@ function buildWebCommandEntry(toolName, moduleDefinition, toolFiles, options) {
       phase: 'check',
       command: 'htmlhint',
       args: [...configArguments, '--format', 'json', ...filteredToolFiles],
+      cwd: moduleDefinition.moduleRoot,
+    };
+  }
+
+  if (toolName === 'html-validate') {
+    return {
+      tool: 'html-validate',
+      enabled: true,
+      phase: 'check',
+      command: 'html-validate',
+      args: [...configArguments, '--formatter', 'json', ...filteredToolFiles],
       cwd: moduleDefinition.moduleRoot,
     };
   }
@@ -537,8 +569,10 @@ function buildCommandEntry(toolEntry, moduleDefinition, semgrepResolution, modul
 
   if (toolEntry.tool === 'prettier'
     || toolEntry.tool === 'eslint'
+    || toolEntry.tool === 'oxlint'
     || toolEntry.tool === 'stylelint'
-    || toolEntry.tool === 'htmlhint') {
+    || toolEntry.tool === 'htmlhint'
+    || toolEntry.tool === 'html-validate') {
     let toolFiles = moduleFiles;
     if (toolEntry.tool === 'eslint' && toolEntry.phase === 'formatter') {
       toolFiles = filterEslintFormatterFiles(

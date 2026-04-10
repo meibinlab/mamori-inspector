@@ -252,8 +252,8 @@ function discoverWebToolConfigurationInDirectory(directoryPath, toolDefaults) {
 /**
  * ワークスペース配下の Web 設定モジュール一覧を探索する。
  * @param {string} workspaceRoot ワークスペースルートを表す。
- * @param {{eslint?: object, stylelint?: object, htmlhint?: object}} defaults Web 既定値を表す。
- * @returns {Array<{moduleRoot: string, web: {eslint: object, stylelint: object, htmlhint: object}}>} モジュール一覧を返す。
+ * @param {{eslint?: object, oxlint?: object, stylelint?: object, htmlhint?: object, 'html-validate'?: object}} defaults Web 既定値を表す。
+ * @returns {Array<{moduleRoot: string, web: {eslint: object, oxlint: object, stylelint: object, htmlhint: object, 'html-validate': object}}>} モジュール一覧を返す。
  */
 function discoverWorkspaceWebModules(workspaceRoot, defaults) {
   const modules = [];
@@ -270,8 +270,10 @@ function discoverWorkspaceWebModules(workspaceRoot, defaults) {
 
     const moduleResolution = {
       eslint: discoverWebToolConfigurationInDirectory(currentDirectory, defaults.eslint || {}),
+      oxlint: discoverWebToolConfigurationInDirectory(currentDirectory, defaults.oxlint || {}),
       stylelint: discoverWebToolConfigurationInDirectory(currentDirectory, defaults.stylelint || {}),
       htmlhint: discoverWebToolConfigurationInDirectory(currentDirectory, defaults.htmlhint || {}),
+      'html-validate': discoverWebToolConfigurationInDirectory(currentDirectory, defaults['html-validate'] || {}),
     };
     const hasEnabledTool = Object.values(moduleResolution).some((toolResolution) => toolResolution.enabled);
     if (hasEnabledTool) {
@@ -358,8 +360,8 @@ function discoverWebToolConfiguration(startDirectories, currentWorkingDirectory,
  * Web 系ツール設定の探索結果を返す。
  * @param {string[]} startDirectories 探索開始ディレクトリ一覧を表す。
  * @param {string} currentWorkingDirectory 現在の作業ディレクトリを表す。
- * @param {{eslint?: object, stylelint?: object, htmlhint?: object}} defaults Web 既定値を表す。
- * @returns {{eslint: object, stylelint: object, htmlhint: object}} 解決結果を返す。
+ * @param {{eslint?: object, oxlint?: object, stylelint?: object, htmlhint?: object, 'html-validate'?: object}} defaults Web 既定値を表す。
+ * @returns {{eslint: object, oxlint: object, stylelint: object, htmlhint: object, 'html-validate': object}} 解決結果を返す。
  */
 function discoverWebConfigurations(startDirectories, currentWorkingDirectory, defaults) {
   // ESLint の探索結果を表す
@@ -367,6 +369,12 @@ function discoverWebConfigurations(startDirectories, currentWorkingDirectory, de
     startDirectories,
     currentWorkingDirectory,
     defaults.eslint || {},
+  );
+  // Oxlint の探索結果を表す
+  const oxlint = discoverWebToolConfiguration(
+    startDirectories,
+    currentWorkingDirectory,
+    defaults.oxlint || {},
   );
   // Stylelint の探索結果を表す
   const stylelint = discoverWebToolConfiguration(
@@ -380,11 +388,19 @@ function discoverWebConfigurations(startDirectories, currentWorkingDirectory, de
     currentWorkingDirectory,
     defaults.htmlhint || {},
   );
+  // HTML-Validate の探索結果を表す
+  const htmlValidate = discoverWebToolConfiguration(
+    startDirectories,
+    currentWorkingDirectory,
+    defaults['html-validate'] || {},
+  );
 
   return {
     eslint,
+    oxlint,
     stylelint,
     htmlhint,
+    'html-validate': htmlValidate,
   };
 }
 

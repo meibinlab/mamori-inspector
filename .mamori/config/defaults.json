@@ -75,6 +75,43 @@
       ],
       "packageJsonKey": "eslintConfig"
     },
+    "oxlint": {
+      "fallbackConfig": "oxlint.default.json",
+      "configPatterns": [
+        {
+          "type": "exact",
+          "value": ".oxlintrc.json"
+        },
+        {
+          "type": "exact",
+          "value": ".oxlintrc.jsonc"
+        },
+        {
+          "type": "exact",
+          "value": "oxlint.config.js"
+        },
+        {
+          "type": "exact",
+          "value": "oxlint.config.mjs"
+        },
+        {
+          "type": "exact",
+          "value": "oxlint.config.cjs"
+        },
+        {
+          "type": "exact",
+          "value": "oxlint.config.ts"
+        },
+        {
+          "type": "exact",
+          "value": "oxlint.config.mts"
+        },
+        {
+          "type": "exact",
+          "value": "oxlint.config.cts"
+        }
+      ]
+    },
     "stylelint": {
       "fallbackConfig": "stylelint.default.json",
       "configPatterns": [
@@ -170,6 +207,39 @@
         }
       ],
       "packageJsonKey": "htmlhint"
+    },
+    "html-validate": {
+      "fallbackConfig": "htmlvalidate.default.json",
+      "configPatterns": [
+        {
+          "type": "exact",
+          "value": ".htmlvalidate.json"
+        },
+        {
+          "type": "exact",
+          "value": ".htmlvalidate.js"
+        },
+        {
+          "type": "exact",
+          "value": ".htmlvalidate.cjs"
+        },
+        {
+          "type": "exact",
+          "value": ".htmlvalidate.mjs"
+        },
+        {
+          "type": "exact",
+          "value": "htmlvalidate.config.js"
+        },
+        {
+          "type": "exact",
+          "value": "htmlvalidate.config.cjs"
+        },
+        {
+          "type": "exact",
+          "value": "htmlvalidate.config.mjs"
+        }
+      ]
     }
   }
 }

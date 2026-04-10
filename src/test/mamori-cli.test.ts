@@ -254,6 +254,14 @@ function createSpacedCommandBinDirectory(workingDirectory: string): string {
 function createNodeModulesBinDirectory(workingDirectory: string): string {
   const binDirectory = path.join(workingDirectory, 'node_modules', '.bin');
   fs.mkdirSync(binDirectory, { recursive: true });
+  writeWebCommandWrapper(binDirectory, 'oxlint', 'oxlint.log', {
+    stdout: JSON.stringify({ diagnostics: [] }),
+    exitCode: 0,
+  });
+  writeWebCommandWrapper(binDirectory, 'html-validate', 'html-validate.log', {
+    stdout: '[]',
+    exitCode: 0,
+  });
   return binDirectory;
 }
 
@@ -1688,27 +1696,35 @@ suite('Mamori CLI Test Suite', () => {
 
     assert.strictEqual(result.status, 0);
     assert.match(result.stdout, /formatters=eslint:enabled, prettier:enabled/u);
-    assert.match(result.stdout, /checks=eslint:enabled, stylelint:enabled, htmlhint:enabled/u);
+    assert.match(result.stdout, /checks=eslint:enabled, oxlint:enabled, stylelint:enabled, htmlhint:enabled, html-validate:enabled/u);
 
     const eslintFormatterLine = result.stdout.match(/eslint:eslint --config .* --fix[^,\n]*/u);
     const prettierLine = result.stdout.match(/prettier:prettier[^,\n]*/u);
     const eslintLine = result.stdout.match(/eslint:eslint --config .* --format json[^,\n]*/u);
+    const oxlintLine = result.stdout.match(/oxlint:oxlint[^,\n]*/u);
     const stylelintLine = result.stdout.match(/stylelint:stylelint[^,\n]*/u);
     const htmlhintLine = result.stdout.match(/htmlhint:htmlhint[^\n]*/u);
+    const htmlValidateLine = result.stdout.match(/html-validate:html-validate[^\n]*/u);
 
     assert.ok(eslintFormatterLine);
     assert.ok(prettierLine);
     assert.ok(eslintLine);
+    assert.ok(oxlintLine);
     assert.ok(stylelintLine);
     assert.ok(htmlhintLine);
+    assert.ok(htmlValidateLine);
     assert.match(eslintFormatterLine ? eslintFormatterLine[0] : '', /main\.js/u);
     assert.match(prettierLine ? prettierLine[0] : '', /site\.css/u);
     assert.match(prettierLine ? prettierLine[0] : '', /index\.html/u);
     assert.match(eslintLine ? eslintLine[0] : '', /main\.js/u);
+    assert.match(oxlintLine ? oxlintLine[0] : '', /main\.js/u);
+    assert.doesNotMatch(oxlintLine ? oxlintLine[0] : '', /site\.css|index\.html/u);
     assert.match(stylelintLine ? stylelintLine[0] : '', /site\.css/u);
     assert.doesNotMatch(stylelintLine ? stylelintLine[0] : '', /main\.js|index\.html/u);
     assert.match(htmlhintLine ? htmlhintLine[0] : '', /index\.html/u);
     assert.doesNotMatch(htmlhintLine ? htmlhintLine[0] : '', /main\.js|site\.css/u);
+    assert.match(htmlValidateLine ? htmlValidateLine[0] : '', /index\.html/u);
+    assert.doesNotMatch(htmlValidateLine ? htmlValidateLine[0] : '', /main\.js|site\.css/u);
   });
 
   /**
@@ -1982,6 +1998,130 @@ suite('Mamori CLI Test Suite', () => {
   });
 
   /**
+   * save/file で TypeScript ファイルの Oxlint finding を SARIF 化できること。
+   * @returns 返り値はない。
+   */
+  test('Reports direct TypeScript Oxlint findings during save checks', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src');
+    const typescriptFilePath = path.join(sourceDirectory, 'main.ts');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const oxlintLogPath = path.join(nodeBinDirectory, 'oxlint.log');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-typescript-oxlint-save.sarif');
+    const oxlintOutput = JSON.stringify({
+      diagnostics: [
+        {
+          message: 'TypeScript debugger statement is not allowed',
+          code: 'eslint(no-debugger)',
+          severity: 'error',
+          filename: typescriptFilePath,
+          labels: [
+            {
+              span: {
+                line: 1,
+                column: 1,
+              },
+            },
+          ],
+        },
+      ],
+    });
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.writeFileSync(typescriptFilePath, 'debugger;\n', 'utf8');
+    writeWebCommandWrapper(nodeBinDirectory, 'oxlint', 'oxlint.log', {
+      stdout: oxlintOutput,
+      exitCode: 1,
+    });
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'save',
+      '--scope',
+      'file',
+      '--files',
+      path.relative(temporaryDirectory, typescriptFilePath),
+      '--execute',
+      '--sarif-output',
+      path.relative(temporaryDirectory, sarifOutputPath),
+    ]);
+
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /oxlint:failed exitCode=1/u);
+    assert.match(result.stdout, /TypeScript debugger statement is not allowed/u);
+    assert.match(fs.readFileSync(oxlintLogPath, 'utf8'), /main\.ts/u);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /eslint\(no-debugger\)/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /main\.ts/u);
+  });
+
+  /**
+   * save/file で HTML-Validate finding を SARIF 化できること。
+   * @returns 返り値はない。
+   */
+  test('Reports direct HTML HTML-Validate findings during save checks', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const htmlDirectory = path.join(temporaryDirectory, 'public');
+    const htmlFilePath = path.join(htmlDirectory, 'index.html');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const prettierLogPath = path.join(nodeBinDirectory, 'prettier.log');
+    const htmlhintLogPath = path.join(nodeBinDirectory, 'htmlhint.log');
+    const htmlValidateLogPath = path.join(nodeBinDirectory, 'html-validate.log');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-html-html-validate-save.sarif');
+    const htmlValidateOutput = JSON.stringify([
+      {
+        filePath: htmlFilePath,
+        messages: [
+          {
+            ruleId: 'wcag/h37',
+            severity: 2,
+            message: '<img> is missing required "alt" attribute',
+            line: 2,
+            column: 1,
+          },
+        ],
+      },
+    ]);
+
+    fs.mkdirSync(htmlDirectory, { recursive: true });
+    fs.writeFileSync(htmlFilePath, '<!doctype html>\n<img src="logo.png">\n', 'utf8');
+    fs.writeFileSync(path.join(temporaryDirectory, '.htmlvalidate.json'), '{"extends": ["html-validate:recommended"]}\n', 'utf8');
+    writeWebCommandWrapper(nodeBinDirectory, 'prettier', 'prettier.log');
+    writeWebCommandWrapper(nodeBinDirectory, 'htmlhint', 'htmlhint.log', {
+      stdout: '[]',
+      exitCode: 0,
+    });
+    writeWebCommandWrapper(nodeBinDirectory, 'html-validate', 'html-validate.log', {
+      stdout: htmlValidateOutput,
+      exitCode: 1,
+    });
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'save',
+      '--scope',
+      'file',
+      '--files',
+      path.relative(temporaryDirectory, htmlFilePath),
+      '--execute',
+      '--sarif-output',
+      path.relative(temporaryDirectory, sarifOutputPath),
+    ]);
+
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /html-validate:failed exitCode=1/u);
+    assert.match(result.stdout, /missing required "alt" attribute/u);
+    assert.match(fs.readFileSync(prettierLogPath, 'utf8'), /index\.html/u);
+    assert.match(fs.readFileSync(htmlhintLogPath, 'utf8'), /index\.html/u);
+    assert.match(fs.readFileSync(htmlValidateLogPath, 'utf8'), /index\.html/u);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /wcag\/h37/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /index\.html/u);
+  });
+
+  /**
    * 明示指定がある場合は Semgrep の既定値より優先されること。
    * @returns 返り値はない。
    */
@@ -2114,14 +2254,20 @@ suite('Mamori CLI Test Suite', () => {
     assert.doesNotMatch(result.stdout, /mamori: execution-plan\n  - none/u);
     assert.doesNotMatch(result.stdout, /mamori: command-plan\n  - none/u);
     assert.match(result.stdout, /eslint: enabled \(source=default\)/u);
+    assert.match(result.stdout, /oxlint: enabled \(source=default\)/u);
     assert.match(result.stdout, /stylelint: enabled \(source=default\)/u);
     assert.match(result.stdout, /htmlhint: enabled \(source=default\)/u);
+    assert.match(result.stdout, /html-validate: enabled \(source=default\)/u);
     assert.match(result.stdout, /eslint:enabled/u);
+    assert.match(result.stdout, /oxlint:enabled/u);
     assert.match(result.stdout, /stylelint:enabled/u);
     assert.match(result.stdout, /htmlhint:enabled/u);
+    assert.match(result.stdout, /html-validate:enabled/u);
     assert.match(result.stdout, /eslint\.default\.json/u);
+    assert.match(result.stdout, /oxlint\.default\.json/u);
     assert.match(result.stdout, /stylelint\.default\.json/u);
     assert.match(result.stdout, /htmlhint\.default\.json/u);
+    assert.match(result.stdout, /htmlvalidate\.default\.json/u);
     assert.doesNotMatch(result.stdout, /config-not-detected/u);
   });
 
@@ -2136,8 +2282,10 @@ suite('Mamori CLI Test Suite', () => {
     const htmlDirectory = path.join(temporaryDirectory, 'public');
     const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
     const eslintLogPath = path.join(nodeBinDirectory, 'eslint.log');
+    const oxlintLogPath = path.join(nodeBinDirectory, 'oxlint.log');
     const stylelintLogPath = path.join(nodeBinDirectory, 'stylelint.log');
     const htmlhintLogPath = path.join(nodeBinDirectory, 'htmlhint.log');
+    const htmlValidateLogPath = path.join(nodeBinDirectory, 'html-validate.log');
 
     fs.mkdirSync(scriptDirectory, { recursive: true });
     fs.mkdirSync(styleDirectory, { recursive: true });
@@ -2164,19 +2312,23 @@ suite('Mamori CLI Test Suite', () => {
 
     assert.strictEqual(result.status, 0);
     assert.match(result.stdout, /eslint:ok exitCode=0/u);
+    assert.match(result.stdout, /oxlint:ok exitCode=0/u);
     assert.match(result.stdout, /stylelint:ok exitCode=0/u);
     assert.match(result.stdout, /htmlhint:ok exitCode=0/u);
+    assert.match(result.stdout, /html-validate:ok exitCode=0/u);
     assert.match(fs.readFileSync(eslintLogPath, 'utf8'), /--config .*eslint\.default\.json/u);
     assert.match(fs.readFileSync(eslintLogPath, 'utf8'), /ESLINT_USE_FLAT_CONFIG=false/u);
+    assert.match(fs.readFileSync(oxlintLogPath, 'utf8'), /--config .*oxlint\.default\.json/u);
     assert.match(fs.readFileSync(stylelintLogPath, 'utf8'), /--config .*stylelint\.default\.json/u);
     assert.match(fs.readFileSync(htmlhintLogPath, 'utf8'), /--config .*htmlhint\.default\.json/u);
+    assert.match(fs.readFileSync(htmlValidateLogPath, 'utf8'), /--config .*htmlvalidate\.default\.json/u);
   });
 
   /**
    * 設定未検出の TypeScript ファイルでは JS 向け ESLint fallback を適用しないこと。
    * @returns 返り値はない。
    */
-  test('Skips TypeScript ESLint checks when project configuration is not detected', () => {
+  test('Falls back to Oxlint for TypeScript files when project ESLint configuration is not detected', () => {
     const temporaryDirectory = createTemporaryDirectory();
     const sourceDirectory = path.join(temporaryDirectory, 'src');
     const targetFilePath = path.join(sourceDirectory, 'main.ts');
@@ -2196,8 +2348,10 @@ suite('Mamori CLI Test Suite', () => {
 
     assert.strictEqual(result.status, 0);
     assert.doesNotMatch(result.stdout, /commands=eslint:eslint/u);
-    assert.match(result.stdout, /mamori: execution-plan\n  - none/u);
-    assert.match(result.stdout, /mamori: command-plan\n  - none/u);
+    assert.match(result.stdout, /checks=eslint:disabled status=no-target-files, oxlint:enabled/u);
+    assert.match(result.stdout, /oxlint:oxlint --config .*oxlint\.default\.json -f json/u);
+    assert.doesNotMatch(result.stdout, /mamori: execution-plan\n  - none/u);
+    assert.doesNotMatch(result.stdout, /mamori: command-plan\n  - none/u);
   });
 
   /**
