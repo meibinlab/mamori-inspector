@@ -18,6 +18,9 @@ const NODE_TOOL_PACKAGES = {
   oxlint: {
     packageName: 'oxlint',
   },
+  tsc: {
+    packageName: 'typescript',
+  },
   stylelint: {
     packageName: 'stylelint',
   },

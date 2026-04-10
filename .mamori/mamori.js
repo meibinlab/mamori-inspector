@@ -55,6 +55,7 @@ const RUN_OPTION_NAMES = new Set([
   'semgrep-rule',
   'eslint-config',
   'oxlint-config',
+  'tsconfig',
   'stylelint-config',
   'htmlhint-config',
   'html-validate-config',
@@ -75,7 +76,7 @@ function printHelp() {
       '    [--execute]',
       '    [--sarif-output <path>]',
       '    [--semgrep-config <path>] [--semgrep-rule <rule>[,<rule>...]]',
-      '    [--eslint-config <path>] [--oxlint-config <path>] [--stylelint-config <path>] [--htmlhint-config <path>] [--html-validate-config <path>]',
+      '    [--eslint-config <path>] [--oxlint-config <path>] [--tsconfig <path>] [--stylelint-config <path>] [--htmlhint-config <path>] [--html-validate-config <path>]',
       '  mamori.js setup',
       '  mamori.js cache-clear',
       '  mamori.js hooks <install|uninstall>',
@@ -122,7 +123,7 @@ function expandValues(rawValues) {
 /**
  * run サブコマンドの引数を解析する。
  * @param {string[]} rawArguments run サブコマンド以降の引数一覧を表す。
- * @returns {{mode?: string, scope?: string, files: string[], semgrepConfig?: string, semgrepRules: string[], eslintConfig?: string, oxlintConfig?: string, stylelintConfig?: string, htmlhintConfig?: string, htmlValidateConfig?: string, unknownOptions: string[]}} 解析結果を返す。
+ * @returns {{mode?: string, scope?: string, files: string[], semgrepConfig?: string, semgrepRules: string[], eslintConfig?: string, oxlintConfig?: string, tsconfig?: string, stylelintConfig?: string, htmlhintConfig?: string, htmlValidateConfig?: string, unknownOptions: string[]}} 解析結果を返す。
  */
 function parseRunArguments(rawArguments) {
   // 値を複数保持するオプションを表す
@@ -184,6 +185,9 @@ function parseRunArguments(rawArguments) {
       : undefined,
     oxlintConfig: typeof collectedOptions['oxlint-config'] === 'string'
       ? collectedOptions['oxlint-config']
+      : undefined,
+    tsconfig: typeof collectedOptions.tsconfig === 'string'
+      ? collectedOptions.tsconfig
       : undefined,
     stylelintConfig: typeof collectedOptions['stylelint-config'] === 'string'
       ? collectedOptions['stylelint-config']
@@ -610,6 +614,7 @@ function printResolutionSummary(resolution) {
     ...formatToolSummary('semgrep', resolution.semgrep),
     ...formatToolSummary('eslint', resolution.web.eslint),
     ...formatToolSummary('oxlint', resolution.web.oxlint),
+    ...formatToolSummary('tsc', resolution.web.tsc),
     ...formatToolSummary('stylelint', resolution.web.stylelint),
     ...formatToolSummary('htmlhint', resolution.web.htmlhint),
     ...formatToolSummary('html-validate', resolution.web['html-validate']),
@@ -948,6 +953,7 @@ async function runMinimal() {
     semgrepRules: parsedArguments.semgrepRules,
     eslintConfig: parsedArguments.eslintConfig,
     oxlintConfig: parsedArguments.oxlintConfig,
+    tsconfig: parsedArguments.tsconfig,
     stylelintConfig: parsedArguments.stylelintConfig,
     htmlhintConfig: parsedArguments.htmlhintConfig,
     htmlValidateConfig: parsedArguments.htmlValidateConfig,

@@ -24,6 +24,8 @@ const spotbugsAdapter = require('../adapters/spotbugs');
 const stylelintAdapter = require('../adapters/stylelint');
 // Semgrep adapter を表す
 const semgrepAdapter = require('../adapters/semgrep');
+// TypeScript adapter を表す
+const tscAdapter = require('../adapters/tsc');
 // コマンド実行器を表す
 const { execCommand } = require('../tools/exec');
 // ツール自動導入器を表す
@@ -435,6 +437,13 @@ function extractIssues(commandResult) {
 
   if (commandResult.tool === 'oxlint') {
     return oxlintAdapter.parseOxlintJson(commandResult.stdout || '');
+  }
+
+  if (commandResult.tool === 'tsc') {
+    return tscAdapter.parseTscOutput(
+      `${commandResult.stdout || ''}${commandResult.stderr || ''}`,
+      commandResult.configPath,
+    );
   }
 
   if (commandResult.tool === 'stylelint') {
@@ -1196,6 +1205,7 @@ async function executeCommandEntry(workspaceRoot, moduleRoot, commandEntry, exec
       exitCode: result.exitCode,
       stdout: result.stdout,
       stderr: result.stderr,
+      configPath: commandEntry.configPath,
       filePathMappings: preparedCommand.filePathMappings,
       reportPaths: toolReportState ? toolReportState.reportPaths : undefined,
       reportSnapshots: toolReportState ? toolReportState.reportSnapshots : undefined,

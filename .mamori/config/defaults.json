@@ -112,6 +112,14 @@
         }
       ]
     },
+    "tsc": {
+      "configPatterns": [
+        {
+          "type": "exact",
+          "value": "tsconfig.json"
+        }
+      ]
+    },
     "stylelint": {
       "fallbackConfig": "stylelint.default.json",
       "configPatterns": [

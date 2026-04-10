@@ -37,6 +37,7 @@ const WEB_FILE_EXTENSIONS = {
   prettier: new Set([...JAVASCRIPT_FILE_EXTENSIONS, '.css', '.scss', '.sass', ...HTML_FILE_EXTENSIONS]),
   eslint: new Set([...JAVASCRIPT_FILE_EXTENSIONS, ...HTML_FILE_EXTENSIONS]),
   oxlint: OXLINT_FILE_EXTENSIONS,
+  tsc: new Set(TYPESCRIPT_FILE_EXTENSIONS),
   stylelint: new Set(['.css', '.scss', '.sass', '.html', '.htm']),
   htmlhint: new Set(HTML_FILE_EXTENSIONS),
   'html-validate': new Set(HTML_FILE_EXTENSIONS),
@@ -295,6 +296,40 @@ function resolveWebToolResolution(webResolution, toolName) {
 }
 
 /**
+ * TypeScript project check の対象モードか判定する。
+ * @param {string} modeScopeKey 実行モードとスコープの組み合わせを表す。
+ * @returns {boolean} 対象モードの場合は true を返す。
+ */
+function supportsTypeScriptProjectChecks(modeScopeKey) {
+  return modeScopeKey === 'prepush:workspace' || modeScopeKey === 'manual:workspace';
+}
+
+/**
+ * Web execution plan 向けの warning 一覧を返す。
+ * @param {{mode: string, scope: string, cwd: string}} options 計画生成条件を表す。
+ * @param {object|undefined} webResolution Web 設定解決結果を表す。
+ * @param {string[]} excludedDirectories 除外ディレクトリ一覧を表す。
+ * @returns {string[]} warning 一覧を返す。
+ */
+function buildWebWarnings(options, webResolution, excludedDirectories = []) {
+  const warnings = [];
+  const modeScopeKey = buildModeScopeKey(options.mode, options.scope);
+  const hasTypeScriptFiles = options.scope === 'workspace'
+    ? hasWorkspaceFilesExcluding(options.cwd, WEB_FILE_EXTENSIONS.tsc, excludedDirectories)
+    : filterWebFiles(options.files, 'tsc').length > 0;
+
+  if (
+    supportsTypeScriptProjectChecks(modeScopeKey)
+    && hasTypeScriptFiles
+    && !(resolveWebToolResolution(webResolution, 'tsc') && resolveWebToolResolution(webResolution, 'tsc').enabled)
+  ) {
+    warnings.push(`tsc was skipped because no tsconfig.json was detected in ${options.cwd}`);
+  }
+
+  return warnings;
+}
+
+/**
  * Web 専用 module の必要性を返す。
  * @param {{mode: string, scope: string, cwd: string, files?: string[], web?: object}} options 計画生成条件を表す。
  * @returns {boolean} 必要な場合は true を返す。
@@ -312,6 +347,10 @@ function shouldIncludeWebModule(options) {
     return hasWorkspaceFilesExcluding(
       options.cwd,
       WEB_FILE_EXTENSIONS.prettier,
+      options.webModules.map((moduleResolution) => moduleResolution.moduleRoot),
+    ) || hasWorkspaceFilesExcluding(
+      options.cwd,
+      WEB_FILE_EXTENSIONS.tsc,
       options.webModules.map((moduleResolution) => moduleResolution.moduleRoot),
     );
   }
@@ -332,6 +371,9 @@ function shouldIncludeWebModule(options) {
   if (web.oxlint && web.oxlint.enabled) {
     return true;
   }
+  if (web.tsc && web.tsc.enabled) {
+    return true;
+  }
   if (web.stylelint && web.stylelint.enabled) {
     return true;
   }
@@ -339,6 +381,10 @@ function shouldIncludeWebModule(options) {
     return true;
   }
   if (web['html-validate'] && web['html-validate'].enabled) {
+    return true;
+  }
+
+  if (hasWorkspaceFiles(options.cwd, WEB_FILE_EXTENSIONS.tsc)) {
     return true;
   }
 
@@ -454,6 +500,9 @@ function buildWebChecks(options, webResolution, excludedDirectories = []) {
   const hasOxlintFiles = options.scope === 'workspace'
     ? hasWorkspaceFilesExcluding(options.cwd, WEB_FILE_EXTENSIONS.oxlint, excludedDirectories)
     : filterWebFiles(options.files, 'oxlint').length > 0;
+  const hasTscFiles = options.scope === 'workspace'
+    ? hasWorkspaceFilesExcluding(options.cwd, WEB_FILE_EXTENSIONS.tsc, excludedDirectories)
+    : false;
   const hasStylelintFiles = options.scope === 'workspace'
     ? hasWorkspaceFilesExcluding(options.cwd, WEB_FILE_EXTENSIONS.stylelint, excludedDirectories)
     : filterWebFiles(options.files, 'stylelint').length > 0;
@@ -467,6 +516,9 @@ function buildWebChecks(options, webResolution, excludedDirectories = []) {
   return [
     buildWebCheckEntry('eslint', hasEslintFiles, Boolean(resolveWebToolResolution(webResolution, 'eslint') && resolveWebToolResolution(webResolution, 'eslint').enabled)),
     buildWebCheckEntry('oxlint', hasOxlintFiles, Boolean(resolveWebToolResolution(webResolution, 'oxlint') && resolveWebToolResolution(webResolution, 'oxlint').enabled)),
+    ...(supportsTypeScriptProjectChecks(modeScopeKey)
+      ? [buildWebCheckEntry('tsc', hasTscFiles, Boolean(resolveWebToolResolution(webResolution, 'tsc') && resolveWebToolResolution(webResolution, 'tsc').enabled))]
+      : []),
     buildWebCheckEntry('stylelint', hasStylelintFiles, Boolean(resolveWebToolResolution(webResolution, 'stylelint') && resolveWebToolResolution(webResolution, 'stylelint').enabled)),
     buildWebCheckEntry('htmlhint', hasHtmlhintFiles, Boolean(resolveWebToolResolution(webResolution, 'htmlhint') && resolveWebToolResolution(webResolution, 'htmlhint').enabled)),
     buildWebCheckEntry('html-validate', hasHtmlValidateFiles, Boolean(resolveWebToolResolution(webResolution, 'html-validate') && resolveWebToolResolution(webResolution, 'html-validate').enabled)),
@@ -502,7 +554,14 @@ function buildWebExecutionPlan(options, webModule, excludedDirectories = []) {
       excludedDirectories,
     ),
     formatters: buildWebFormatterPlan(options),
-    warnings: [],
+    warnings: buildWebWarnings(
+      {
+        ...options,
+        cwd: moduleRoot,
+      },
+      webResolution,
+      excludedDirectories,
+    ),
   };
 }
 

@@ -16,23 +16,25 @@ const SUPPORTED_COMMAND_TOOLS = new Set([
   'prettier',
   'eslint',
   'oxlint',
+  'tsc',
   'stylelint',
   'htmlhint',
   'html-validate',
 ]);
+
+// ESLint で TypeScript を扱うときの追加拡張子一覧を表す
+const TYPESCRIPT_ESLINT_EXTENSIONS = ['.ts', '.cts', '.mts', '.tsx'];
 
 // ツールごとの対象拡張子一覧を表す
 const TOOL_FILE_EXTENSIONS = {
   prettier: new Set(['.js', '.cjs', '.mjs', '.jsx', '.css', '.scss', '.sass', '.html', '.htm']),
   eslint: new Set(['.js', '.cjs', '.mjs', '.jsx', '.html', '.htm']),
   oxlint: new Set(['.js', '.cjs', '.mjs', '.jsx', '.ts', '.cts', '.mts', '.tsx']),
+  tsc: new Set(TYPESCRIPT_ESLINT_EXTENSIONS),
   stylelint: new Set(['.css', '.scss', '.sass', '.html', '.htm']),
   htmlhint: new Set(['.html', '.htm']),
   'html-validate': new Set(['.html', '.htm']),
 };
-
-// ESLint で TypeScript を扱うときの追加拡張子一覧を表す
-const TYPESCRIPT_ESLINT_EXTENSIONS = ['.ts', '.cts', '.mts', '.tsx'];
 
 // ESLint formatter へ委譲する direct file 拡張子一覧を表す
 const ESLINT_FORMATTER_FILE_EXTENSIONS = new Set([
@@ -239,6 +241,10 @@ function buildWebConfigArguments(toolName, toolResolution) {
     return ['--config', toolResolution.path];
   }
 
+  if (toolName === 'tsc') {
+    return ['-p', toolResolution.path];
+  }
+
   return [];
 }
 
@@ -363,6 +369,18 @@ function buildWebCommandEntry(toolName, moduleDefinition, toolFiles, options) {
       command: 'oxlint',
       args: [...configArguments, '-f', 'json', ...filteredToolFiles],
       cwd: moduleDefinition.moduleRoot,
+    };
+  }
+
+  if (toolName === 'tsc') {
+    return {
+      tool: 'tsc',
+      enabled: true,
+      phase: 'check',
+      command: 'tsc',
+      args: ['--pretty', 'false', '--noEmit', ...configArguments],
+      cwd: moduleDefinition.moduleRoot,
+      configPath: toolResolution && toolResolution.path ? toolResolution.path : undefined,
     };
   }
 
@@ -570,6 +588,7 @@ function buildCommandEntry(toolEntry, moduleDefinition, semgrepResolution, modul
   if (toolEntry.tool === 'prettier'
     || toolEntry.tool === 'eslint'
     || toolEntry.tool === 'oxlint'
+    || toolEntry.tool === 'tsc'
     || toolEntry.tool === 'stylelint'
     || toolEntry.tool === 'htmlhint'
     || toolEntry.tool === 'html-validate') {

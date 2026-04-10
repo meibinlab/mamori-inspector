@@ -258,6 +258,10 @@ function createNodeModulesBinDirectory(workingDirectory: string): string {
     stdout: JSON.stringify({ diagnostics: [] }),
     exitCode: 0,
   });
+  writeWebCommandWrapper(binDirectory, 'tsc', 'tsc.log', {
+    stdout: '',
+    exitCode: 0,
+  });
   writeWebCommandWrapper(binDirectory, 'html-validate', 'html-validate.log', {
     stdout: '[]',
     exitCode: 0,
@@ -2352,6 +2356,104 @@ suite('Mamori CLI Test Suite', () => {
     assert.match(result.stdout, /oxlint:oxlint --config .*oxlint\.default\.json -f json/u);
     assert.doesNotMatch(result.stdout, /mamori: execution-plan\n  - none/u);
     assert.doesNotMatch(result.stdout, /mamori: command-plan\n  - none/u);
+  });
+
+  /**
+   * tsconfig.json 検出時は workspace の tsc checker を計画へ含めること。
+   * @returns 返り値はない。
+   */
+  test('Plans tsc checks for TypeScript workspaces when tsconfig is detected', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src');
+    const tsconfigPath = path.join(temporaryDirectory, 'tsconfig.json');
+    const targetFilePath = path.join(sourceDirectory, 'main.ts');
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.writeFileSync(targetFilePath, 'const value: string = "sample";\n', 'utf8');
+    fs.writeFileSync(tsconfigPath, '{"compilerOptions":{"noEmit":true},"files":["src/main.ts"]}\n', 'utf8');
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'prepush',
+      '--scope',
+      'workspace',
+    ]);
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /tsc: enabled \(source=discovery\)/u);
+    assert.match(result.stdout, /path=.*tsconfig\.json/u);
+    assert.match(result.stdout, /tsc:enabled/u);
+    assert.match(result.stdout, /tsc:tsc --pretty false --noEmit -p .*tsconfig\.json/u);
+  });
+
+  /**
+   * TypeScript ファイルのみ存在し tsconfig.json が無い場合は warning を出して tsc を skip すること。
+   * @returns 返り値はない。
+   */
+  test('Warns and skips tsc when tsconfig is not detected for a TypeScript workspace', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src');
+    const targetFilePath = path.join(sourceDirectory, 'main.ts');
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.writeFileSync(targetFilePath, 'const value: string = "sample";\n', 'utf8');
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'prepush',
+      '--scope',
+      'workspace',
+    ]);
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /tsc: disabled \(source=default\)/u);
+    assert.match(result.stdout, /tsc was skipped because no tsconfig\.json was detected/u);
+    assert.match(result.stdout, /tsc:disabled status=config-not-detected/u);
+    assert.doesNotMatch(result.stdout, /tsc:tsc --pretty false --noEmit/u);
+  });
+
+  /**
+   * workspace の tsc finding を SARIF 化できること。
+   * @returns 返り値はない。
+   */
+  test('Reports TypeScript compiler findings during workspace checks', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src');
+    const targetFilePath = path.join(sourceDirectory, 'main.ts');
+    const tsconfigPath = path.join(temporaryDirectory, 'tsconfig.json');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const tscLogPath = path.join(nodeBinDirectory, 'tsc.log');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-tsc-prepush.sarif');
+    const tscOutput = `${targetFilePath}(1,7): error TS2322: Type 'number' is not assignable to type 'string'.\n`;
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.writeFileSync(targetFilePath, 'const value: string = 1;\n', 'utf8');
+    fs.writeFileSync(tsconfigPath, '{"compilerOptions":{"noEmit":true,"strict":true},"files":["src/main.ts"]}\n', 'utf8');
+    writeWebCommandWrapper(nodeBinDirectory, 'tsc', 'tsc.log', {
+      stdout: tscOutput,
+      exitCode: 1,
+    });
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'prepush',
+      '--scope',
+      'workspace',
+      '--execute',
+      '--sarif-output',
+      path.relative(temporaryDirectory, sarifOutputPath),
+    ]);
+
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /tsc:failed exitCode=1/u);
+    assert.match(result.stdout, /Type 'number' is not assignable to type 'string'\./u);
+    assert.match(fs.readFileSync(tscLogPath, 'utf8'), /--pretty false --noEmit -p .*tsconfig\.json/u);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /TS2322/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /main\.ts/u);
   });
 
   /**
