@@ -10,6 +10,8 @@ const checkstyleAdapter = require('../adapters/checkstyle');
 const cpdAdapter = require('../adapters/cpd');
 // ESLint adapter を表す
 const eslintAdapter = require('../adapters/eslint');
+// doiuse adapter を表す
+const doiuseAdapter = require('../adapters/doiuse');
 // HTML-Validate adapter を表す
 const htmlValidateAdapter = require('../adapters/html-validate');
 // htmlhint adapter を表す
@@ -446,6 +448,15 @@ function extractIssues(commandResult) {
     );
   }
 
+  if (commandResult.tool === 'doiuse') {
+    return doiuseAdapter.parseDoiuseJsonLines(
+      typeof commandResult.stdout === 'string' && commandResult.stdout.trim() !== ''
+        ? commandResult.stdout
+        : (commandResult.stderr || ''),
+      commandResult.filePathMappings,
+    );
+  }
+
   if (commandResult.tool === 'stylelint') {
     return stylelintAdapter.parseStylelintJson(
       typeof commandResult.stdout === 'string' && commandResult.stdout.trim() !== ''
@@ -786,6 +797,9 @@ function materializeInlineStyleFiles(inlineHtmlFiles, workspaceRoot) {
   };
 }
 
+// inline style 一時ファイルを利用するツール一覧を表す
+const INLINE_STYLE_TOOL_NAMES = new Set(['stylelint', 'doiuse']);
+
 /**
  * 実行前にコマンド引数と付帯情報を調整する。
  * @param {string} workspaceRoot ワークスペースルートを表す。
@@ -793,7 +807,7 @@ function materializeInlineStyleFiles(inlineHtmlFiles, workspaceRoot) {
  * @returns {{args: string[], filePathMappings?: Record<string, string>, tempDirectory?: string, skipReason?: string}} 実行準備結果を返す。
  */
 async function prepareCommandExecution(workspaceRoot, commandEntry) {
-  if (commandEntry.tool !== 'eslint' && commandEntry.tool !== 'stylelint') {
+  if (commandEntry.tool !== 'eslint' && !INLINE_STYLE_TOOL_NAMES.has(commandEntry.tool)) {
     return {
       args: Array.isArray(commandEntry.args) ? commandEntry.args : [],
     };
@@ -810,7 +824,11 @@ async function prepareCommandExecution(workspaceRoot, commandEntry) {
     ? (Array.isArray(commandEntry.args)
       ? commandEntry.args.slice(0, Math.max(commandEntry.args.length - directFiles.length, 0))
       : [])
-    : (Array.isArray(commandEntry.args) ? commandEntry.args : []);
+    : (commandEntry.tool === 'doiuse'
+      ? (Array.isArray(commandEntry.args)
+        ? commandEntry.args.slice(0, Math.max(commandEntry.args.length - directFiles.length, 0))
+        : [])
+      : (Array.isArray(commandEntry.args) ? commandEntry.args : []));
   const inlineArtifacts = commandEntry.tool === 'eslint'
     ? materializeInlineScriptFiles(inlineHtmlFiles, workspaceRoot)
     : materializeInlineStyleFiles(inlineHtmlFiles, workspaceRoot);
@@ -870,6 +888,15 @@ function collectPlanWarnings(commandPlan) {
   return modules.flatMap((modulePlan) => (
     Array.isArray(modulePlan.warnings) ? modulePlan.warnings : []
   ));
+}
+
+/**
+ * finding を理由に失敗へ昇格するツールか判定する。
+ * @param {string} toolName ツール名を表す。
+ * @returns {boolean} finding を失敗へ昇格する場合は true を返す。
+ */
+function shouldPromoteIssuesToFailure(toolName) {
+  return toolName === 'doiuse';
 }
 
 /**
@@ -1123,6 +1150,11 @@ async function executeCommandEntry(workspaceRoot, moduleRoot, commandEntry, exec
     ...process.env,
     ...(commandEntry.env || {}),
   };
+  if (Array.isArray(commandEntry.clearEnvironmentKeys)) {
+    for (const environmentKey of commandEntry.clearEnvironmentKeys) {
+      delete baseEnvironment[environmentKey];
+    }
+  }
   const toolReportState = captureToolReportState(commandEntry.cwd || moduleRoot, commandEntry.tool);
   let preparedCommand;
   let commandResult;
@@ -1279,7 +1311,20 @@ async function runResolvedConfiguration(resolution, options = {}) {
       }
 
       if (commandResult.status === 'ok' || commandResult.status === 'failed') {
-        result.issues.push(...extractIssues(commandResult));
+        const commandIssues = extractIssues(commandResult);
+        if (
+          commandResult.status === 'ok'
+          && commandIssues.length > 0
+          && shouldPromoteIssuesToFailure(commandResult.tool)
+        ) {
+          commandResult.status = 'failed';
+          commandResult.exitCode = Math.max(commandResult.exitCode || 0, 1);
+          result.exitCode = Math.max(result.exitCode, 1);
+          result.warnings.push(
+            `${commandResult.tool} exited with code ${commandResult.exitCode} in ${commandResult.moduleRoot}`,
+          );
+        }
+        result.issues.push(...commandIssues);
       }
     }
   }

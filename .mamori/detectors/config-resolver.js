@@ -281,10 +281,10 @@ function resolveSingleWebToolConfiguration(
 /**
  * Web 系ツールの解決結果一覧を返す。
  * @param {string} currentWorkingDirectory 現在の作業ディレクトリを表す。
- * @param {{eslintConfig?: string, oxlintConfig?: string, tsconfig?: string, stylelintConfig?: string, htmlhintConfig?: string, htmlValidateConfig?: string}} options CLI オプションを表す。
- * @param {{eslint: object, oxlint: object, tsc: object, stylelint: object, htmlhint: object, 'html-validate': object}} discoveredWebConfigurations 探索結果を表す。
+ * @param {{eslintConfig?: string, oxlintConfig?: string, tsconfig?: string, doiuseConfig?: string, stylelintConfig?: string, htmlhintConfig?: string, htmlValidateConfig?: string}} options CLI オプションを表す。
+ * @param {{eslint: object, oxlint: object, tsc: object, doiuse: object, stylelint: object, htmlhint: object, 'html-validate': object}} discoveredWebConfigurations 探索結果を表す。
  * @param {{modules?: object[]}} buildDefinitions build-definition 抽出結果を表す。
- * @returns {{eslint: object, oxlint: object, tsc: object, stylelint: object, htmlhint: object, 'html-validate': object}} 解決結果を返す。
+ * @returns {{eslint: object, oxlint: object, tsc: object, doiuse: object, stylelint: object, htmlhint: object, 'html-validate': object}} 解決結果を返す。
  */
 function buildWebResolution(
   currentWorkingDirectory,
@@ -318,6 +318,14 @@ function buildWebResolution(
       buildDefinitions,
       webDefaults && webDefaults.tsc ? webDefaults.tsc : undefined,
     ),
+    doiuse: resolveSingleWebToolConfiguration(
+      'doiuse',
+      currentWorkingDirectory,
+      options.doiuseConfig,
+      discoveredWebConfigurations.doiuse,
+      buildDefinitions,
+      webDefaults && webDefaults.doiuse ? webDefaults.doiuse : undefined,
+    ),
     stylelint: resolveSingleWebToolConfiguration(
       'stylelint',
       currentWorkingDirectory,
@@ -348,10 +356,10 @@ function buildWebResolution(
 /**
  * workspace scope 向けの Web モジュール解決結果一覧を返す。
  * @param {string} currentWorkingDirectory 現在の作業ディレクトリを表す。
- * @param {{scope: string, eslintConfig?: string, oxlintConfig?: string, tsconfig?: string, stylelintConfig?: string, htmlhintConfig?: string, htmlValidateConfig?: string}} options CLI オプションを表す。
+ * @param {{scope: string, eslintConfig?: string, oxlintConfig?: string, tsconfig?: string, doiuseConfig?: string, stylelintConfig?: string, htmlhintConfig?: string, htmlValidateConfig?: string}} options CLI オプションを表す。
  * @param {{web?: object}} defaults 既定設定を表す。
  * @param {{modules?: object[]}} buildDefinitions build-definition 抽出結果を表す。
- * @returns {Array<{moduleRoot: string, web: {eslint: object, oxlint: object, tsc: object, stylelint: object, htmlhint: object, 'html-validate': object}}>} モジュール解決結果を返す。
+ * @returns {Array<{moduleRoot: string, web: {eslint: object, oxlint: object, tsc: object, doiuse: object, stylelint: object, htmlhint: object, 'html-validate': object}}>} モジュール解決結果を返す。
  */
 function resolveWorkspaceWebModules(currentWorkingDirectory, options, defaults, buildDefinitions) {
   if (options.scope !== 'workspace') {
@@ -362,6 +370,7 @@ function resolveWorkspaceWebModules(currentWorkingDirectory, options, defaults, 
     options.eslintConfig
     || options.oxlintConfig
     || options.tsconfig
+    || options.doiuseConfig
     || options.stylelintConfig
     || options.htmlhintConfig
     || options.htmlValidateConfig
@@ -375,6 +384,7 @@ function resolveWorkspaceWebModules(currentWorkingDirectory, options, defaults, 
           eslint: { enabled: false, source: 'default', locationType: 'disabled' },
           oxlint: { enabled: false, source: 'default', locationType: 'disabled' },
           tsc: { enabled: false, source: 'default', locationType: 'disabled' },
+          doiuse: { enabled: false, source: 'default', locationType: 'disabled' },
           stylelint: { enabled: false, source: 'default', locationType: 'disabled' },
           htmlhint: { enabled: false, source: 'default', locationType: 'disabled' },
           'html-validate': { enabled: false, source: 'default', locationType: 'disabled' },
@@ -404,7 +414,7 @@ function resolveWorkspaceWebModules(currentWorkingDirectory, options, defaults, 
 
 /**
  * CLI 向けの設定解決結果を返す。
- * @param {{cwd?: string, mode: string, scope: string, files?: string[], semgrepConfig?: string, semgrepRules?: string[], eslintConfig?: string, oxlintConfig?: string, tsconfig?: string, stylelintConfig?: string, htmlhintConfig?: string, htmlValidateConfig?: string}} options CLI オプションを表す。
+ * @param {{cwd?: string, mode: string, scope: string, files?: string[], semgrepConfig?: string, semgrepRules?: string[], eslintConfig?: string, oxlintConfig?: string, tsconfig?: string, doiuseConfig?: string, stylelintConfig?: string, htmlhintConfig?: string, htmlValidateConfig?: string}} options CLI オプションを表す。
  * @returns {{cwd: string, mode: string, scope: string, files: string[], resolutionOrder: string[], semgrep: object, web: object}} 解決結果を返す。
  */
 function resolveRunConfiguration(options) {

@@ -17,6 +17,7 @@ const SUPPORTED_COMMAND_TOOLS = new Set([
   'eslint',
   'oxlint',
   'tsc',
+  'doiuse',
   'stylelint',
   'htmlhint',
   'html-validate',
@@ -31,6 +32,7 @@ const TOOL_FILE_EXTENSIONS = {
   eslint: new Set(['.js', '.cjs', '.mjs', '.jsx', '.html', '.htm']),
   oxlint: new Set(['.js', '.cjs', '.mjs', '.jsx', '.ts', '.cts', '.mts', '.tsx']),
   tsc: new Set(TYPESCRIPT_ESLINT_EXTENSIONS),
+  doiuse: new Set(['.css', '.scss', '.sass', '.html', '.htm']),
   stylelint: new Set(['.css', '.scss', '.sass', '.html', '.htm']),
   htmlhint: new Set(['.html', '.htm']),
   'html-validate': new Set(['.html', '.htm']),
@@ -261,7 +263,54 @@ function buildWebCommandEnvironment(toolName, toolResolution) {
     };
   }
 
+  if (toolName === 'doiuse' && toolResolution && toolResolution.path) {
+    const configFileName = path.basename(toolResolution.path).toLowerCase();
+    if (toolResolution.locationType === 'file' && configFileName !== 'package.json') {
+      return {
+        BROWSERSLIST_CONFIG: toolResolution.path,
+      };
+    }
+  }
+
   return undefined;
+}
+
+/**
+ * 実行前に除去する環境変数一覧を返す。
+ * @param {string} toolName ツール名を表す。
+ * @param {{path?: string, locationType?: string}|undefined} toolResolution 設定解決結果を表す。
+ * @returns {string[]|undefined} 除去対象の環境変数一覧を返す。
+ */
+function resolveWebCommandClearEnvironmentKeys(toolName, toolResolution) {
+  if (toolName !== 'doiuse') {
+    return undefined;
+  }
+
+  if (
+    toolResolution
+    && toolResolution.locationType === 'file'
+    && toolResolution.path
+    && path.basename(toolResolution.path).toLowerCase() !== 'package.json'
+  ) {
+    return undefined;
+  }
+
+  return ['BROWSERSLIST_CONFIG'];
+}
+
+/**
+ * Web ツールの実行 cwd を返す。
+ * @param {string} toolName ツール名を表す。
+ * @param {string} moduleRoot モジュールルートを表す。
+ * @param {{path?: string, locationType?: string}|undefined} toolResolution 設定解決結果を表す。
+ * @returns {string} 実行 cwd を返す。
+ */
+function resolveWebCommandCwd(toolName, moduleRoot, toolResolution) {
+  if (toolName === 'doiuse' && toolResolution && toolResolution.path) {
+    return path.dirname(toolResolution.path);
+  }
+
+  return moduleRoot;
 }
 
 /**
@@ -292,6 +341,8 @@ function buildWebCommandEntry(toolName, moduleDefinition, toolFiles, options) {
     ? options.web[toolName]
     : undefined;
   const commandEnvironment = buildWebCommandEnvironment(toolName, toolResolution);
+  const clearEnvironmentKeys = resolveWebCommandClearEnvironmentKeys(toolName, toolResolution);
+  const commandWorkingDirectory = resolveWebCommandCwd(toolName, moduleDefinition.moduleRoot, toolResolution);
   const excludedConfigPaths = new Set(resolveExcludedWebConfigPaths(options.web));
   const filteredToolFiles = toolFiles.filter((filePath) => !excludedConfigPaths.has(path.resolve(filePath)));
 
@@ -368,7 +419,7 @@ function buildWebCommandEntry(toolName, moduleDefinition, toolFiles, options) {
       phase: 'check',
       command: 'oxlint',
       args: [...configArguments, '-f', 'json', ...filteredToolFiles],
-      cwd: moduleDefinition.moduleRoot,
+      cwd: commandWorkingDirectory,
     };
   }
 
@@ -379,8 +430,26 @@ function buildWebCommandEntry(toolName, moduleDefinition, toolFiles, options) {
       phase: 'check',
       command: 'tsc',
       args: ['--pretty', 'false', '--noEmit', ...configArguments],
-      cwd: moduleDefinition.moduleRoot,
+      cwd: commandWorkingDirectory,
       configPath: toolResolution && toolResolution.path ? toolResolution.path : undefined,
+    };
+  }
+
+  if (toolName === 'doiuse') {
+    const directFiles = filteredToolFiles.filter((filePath) => !isHtmlFile(filePath));
+    const inlineHtmlFiles = filteredToolFiles.filter((filePath) => isHtmlFile(filePath));
+
+    return {
+      tool: 'doiuse',
+      enabled: true,
+      phase: 'check',
+      command: 'doiuse',
+      args: ['--json', ...directFiles],
+      cwd: commandWorkingDirectory,
+      env: commandEnvironment,
+      clearEnvironmentKeys,
+      directFiles,
+      inlineHtmlFiles,
     };
   }
 
@@ -394,7 +463,7 @@ function buildWebCommandEntry(toolName, moduleDefinition, toolFiles, options) {
       phase: 'check',
       command: 'stylelint',
       args: [...configArguments, '--formatter', 'json', '--allow-empty-input', ...directFiles],
-      cwd: moduleDefinition.moduleRoot,
+      cwd: commandWorkingDirectory,
       directFiles,
       inlineHtmlFiles,
     };
@@ -407,7 +476,7 @@ function buildWebCommandEntry(toolName, moduleDefinition, toolFiles, options) {
       phase: 'check',
       command: 'htmlhint',
       args: [...configArguments, '--format', 'json', ...filteredToolFiles],
-      cwd: moduleDefinition.moduleRoot,
+      cwd: commandWorkingDirectory,
     };
   }
 
@@ -418,7 +487,7 @@ function buildWebCommandEntry(toolName, moduleDefinition, toolFiles, options) {
       phase: 'check',
       command: 'html-validate',
       args: [...configArguments, '--formatter', 'json', ...filteredToolFiles],
-      cwd: moduleDefinition.moduleRoot,
+      cwd: commandWorkingDirectory,
     };
   }
 
@@ -589,6 +658,7 @@ function buildCommandEntry(toolEntry, moduleDefinition, semgrepResolution, modul
     || toolEntry.tool === 'eslint'
     || toolEntry.tool === 'oxlint'
     || toolEntry.tool === 'tsc'
+    || toolEntry.tool === 'doiuse'
     || toolEntry.tool === 'stylelint'
     || toolEntry.tool === 'htmlhint'
     || toolEntry.tool === 'html-validate') {

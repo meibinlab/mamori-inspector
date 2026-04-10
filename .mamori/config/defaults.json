@@ -120,6 +120,19 @@
         }
       ]
     },
+    "doiuse": {
+      "configPatterns": [
+        {
+          "type": "exact",
+          "value": ".browserslistrc"
+        },
+        {
+          "type": "exact",
+          "value": "browserslist"
+        }
+      ],
+      "packageJsonKey": "browserslist"
+    },
     "stylelint": {
       "fallbackConfig": "stylelint.default.json",
       "configPatterns": [

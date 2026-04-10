@@ -38,6 +38,7 @@ const WEB_FILE_EXTENSIONS = {
   eslint: new Set([...JAVASCRIPT_FILE_EXTENSIONS, ...HTML_FILE_EXTENSIONS]),
   oxlint: OXLINT_FILE_EXTENSIONS,
   tsc: new Set(TYPESCRIPT_FILE_EXTENSIONS),
+  doiuse: new Set(['.css', '.scss', '.sass', '.html', '.htm']),
   stylelint: new Set(['.css', '.scss', '.sass', '.html', '.htm']),
   htmlhint: new Set(HTML_FILE_EXTENSIONS),
   'html-validate': new Set(HTML_FILE_EXTENSIONS),
@@ -305,6 +306,15 @@ function supportsTypeScriptProjectChecks(modeScopeKey) {
 }
 
 /**
+ * doiuse check の対象モードか判定する。
+ * @param {string} modeScopeKey 実行モードとスコープの組み合わせを表す。
+ * @returns {boolean} 対象モードの場合は true を返す。
+ */
+function supportsDoiuseChecks(modeScopeKey) {
+  return modeScopeKey === 'prepush:workspace' || modeScopeKey === 'manual:workspace';
+}
+
+/**
  * Web execution plan 向けの warning 一覧を返す。
  * @param {{mode: string, scope: string, cwd: string}} options 計画生成条件を表す。
  * @param {object|undefined} webResolution Web 設定解決結果を表す。
@@ -317,6 +327,9 @@ function buildWebWarnings(options, webResolution, excludedDirectories = []) {
   const hasTypeScriptFiles = options.scope === 'workspace'
     ? hasWorkspaceFilesExcluding(options.cwd, WEB_FILE_EXTENSIONS.tsc, excludedDirectories)
     : filterWebFiles(options.files, 'tsc').length > 0;
+  const hasDoiuseFiles = options.scope === 'workspace'
+    ? hasWorkspaceFilesExcluding(options.cwd, WEB_FILE_EXTENSIONS.doiuse, excludedDirectories)
+    : filterWebFiles(options.files, 'doiuse').length > 0;
 
   if (
     supportsTypeScriptProjectChecks(modeScopeKey)
@@ -324,6 +337,14 @@ function buildWebWarnings(options, webResolution, excludedDirectories = []) {
     && !(resolveWebToolResolution(webResolution, 'tsc') && resolveWebToolResolution(webResolution, 'tsc').enabled)
   ) {
     warnings.push(`tsc was skipped because no tsconfig.json was detected in ${options.cwd}`);
+  }
+
+  if (
+    supportsDoiuseChecks(modeScopeKey)
+    && hasDoiuseFiles
+    && !(resolveWebToolResolution(webResolution, 'doiuse') && resolveWebToolResolution(webResolution, 'doiuse').enabled)
+  ) {
+    warnings.push(`doiuse was skipped because no browserslist configuration was detected in ${options.cwd}`);
   }
 
   return warnings;
@@ -374,6 +395,9 @@ function shouldIncludeWebModule(options) {
   if (web.tsc && web.tsc.enabled) {
     return true;
   }
+  if (web.doiuse && web.doiuse.enabled) {
+    return true;
+  }
   if (web.stylelint && web.stylelint.enabled) {
     return true;
   }
@@ -385,6 +409,10 @@ function shouldIncludeWebModule(options) {
   }
 
   if (hasWorkspaceFiles(options.cwd, WEB_FILE_EXTENSIONS.tsc)) {
+    return true;
+  }
+
+  if (hasWorkspaceFiles(options.cwd, WEB_FILE_EXTENSIONS.doiuse)) {
     return true;
   }
 
@@ -503,6 +531,9 @@ function buildWebChecks(options, webResolution, excludedDirectories = []) {
   const hasTscFiles = options.scope === 'workspace'
     ? hasWorkspaceFilesExcluding(options.cwd, WEB_FILE_EXTENSIONS.tsc, excludedDirectories)
     : false;
+  const hasDoiuseFiles = options.scope === 'workspace'
+    ? hasWorkspaceFilesExcluding(options.cwd, WEB_FILE_EXTENSIONS.doiuse, excludedDirectories)
+    : false;
   const hasStylelintFiles = options.scope === 'workspace'
     ? hasWorkspaceFilesExcluding(options.cwd, WEB_FILE_EXTENSIONS.stylelint, excludedDirectories)
     : filterWebFiles(options.files, 'stylelint').length > 0;
@@ -518,6 +549,9 @@ function buildWebChecks(options, webResolution, excludedDirectories = []) {
     buildWebCheckEntry('oxlint', hasOxlintFiles, Boolean(resolveWebToolResolution(webResolution, 'oxlint') && resolveWebToolResolution(webResolution, 'oxlint').enabled)),
     ...(supportsTypeScriptProjectChecks(modeScopeKey)
       ? [buildWebCheckEntry('tsc', hasTscFiles, Boolean(resolveWebToolResolution(webResolution, 'tsc') && resolveWebToolResolution(webResolution, 'tsc').enabled))]
+      : []),
+    ...(supportsDoiuseChecks(modeScopeKey)
+      ? [buildWebCheckEntry('doiuse', hasDoiuseFiles, Boolean(resolveWebToolResolution(webResolution, 'doiuse') && resolveWebToolResolution(webResolution, 'doiuse').enabled))]
       : []),
     buildWebCheckEntry('stylelint', hasStylelintFiles, Boolean(resolveWebToolResolution(webResolution, 'stylelint') && resolveWebToolResolution(webResolution, 'stylelint').enabled)),
     buildWebCheckEntry('htmlhint', hasHtmlhintFiles, Boolean(resolveWebToolResolution(webResolution, 'htmlhint') && resolveWebToolResolution(webResolution, 'htmlhint').enabled)),

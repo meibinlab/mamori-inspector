@@ -262,6 +262,10 @@ function createNodeModulesBinDirectory(workingDirectory: string): string {
     stdout: '',
     exitCode: 0,
   });
+  writeWebCommandWrapper(binDirectory, 'doiuse', 'doiuse.log', {
+    stdout: '',
+    exitCode: 0,
+  });
   writeWebCommandWrapper(binDirectory, 'html-validate', 'html-validate.log', {
     stdout: '[]',
     exitCode: 0,
@@ -913,6 +917,140 @@ function writeInlineHtmlStylelintWrapper(
       '} else {',
       '  process.stdout.write(JSON.stringify(results));',
       '}',
+      'process.exit(configuredExitCode);',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+
+  if (process.platform === 'win32') {
+    fs.writeFileSync(
+      wrapperPath,
+      `@echo off\r\nnode "${helperScriptPath}" "${outputPath}" %*\r\nexit /b %ERRORLEVEL%\r\n`,
+      'utf8',
+    );
+    return;
+  }
+
+  fs.writeFileSync(
+    wrapperPath,
+    `#!/bin/sh\nnode '${helperScriptPath}' '${outputPath}' "$@"\n`,
+    'utf8',
+  );
+  fs.chmodSync(wrapperPath, 0o755);
+}
+
+/**
+ * doiuse 向けコマンドラッパーを作成する。
+ * @param binDirectory ラッパーディレクトリを表す。
+ * @param outputFileName 出力ファイル名を表す。
+ * @param options ラッパー動作オプションを表す。
+ * @returns 返り値はない。
+ */
+function writeDoiuseWrapper(
+  binDirectory: string,
+  outputFileName: string,
+  options: {
+    expectedExtension?: string;
+    requiredPackageJsonKey?: string;
+    stdout?: string;
+    exitCode?: number;
+  } = {},
+): void {
+  const outputPath = path.join(binDirectory, outputFileName);
+  const helperScriptPath = path.join(binDirectory, 'doiuse-wrapper.js');
+  const wrapperPath = process.platform === 'win32'
+    ? path.join(binDirectory, 'doiuse.cmd')
+    : path.join(binDirectory, 'doiuse');
+  const stdout = typeof options.stdout === 'string' ? options.stdout : '';
+  const exitCode = typeof options.exitCode === 'number' ? options.exitCode : 0;
+
+  fs.writeFileSync(
+    helperScriptPath,
+    [
+      'const fs = require("fs");',
+      'const path = require("path");',
+      'const logPath = process.argv[2];',
+      `const expectedExtension = ${JSON.stringify(options.expectedExtension || '')};`,
+      `const requiredPackageJsonKey = ${JSON.stringify(options.requiredPackageJsonKey || '')};`,
+      `const configuredStdout = ${JSON.stringify(stdout)};`,
+      `const configuredExitCode = ${String(exitCode)};`,
+      'const args = process.argv.slice(3);',
+      'const targetFiles = [];',
+      'for (let index = 0; index < args.length; index += 1) {',
+      '  const argument = args[index];',
+      '  if (argument === "--json") {',
+      '    continue;',
+      '  }',
+      '  if (argument.startsWith("-")) {',
+      '    continue;',
+      '  }',
+      '  targetFiles.push(argument);',
+      '}',
+      'fs.appendFileSync(logPath, `${args.join(" ")}\\nCWD=${process.cwd()}\\nBROWSERSLIST_CONFIG=${process.env.BROWSERSLIST_CONFIG || ""}\\n${targetFiles.map((filePath) => `TARGET=${filePath}`).join("\\n")}\\n`, "utf8");',
+      'if (requiredPackageJsonKey) {',
+      '  let currentDirectory = process.cwd();',
+      '  let foundPackageJsonPath = "";',
+      '  while (true) {',
+      '    const packageJsonPath = path.join(currentDirectory, "package.json");',
+      '    if (fs.existsSync(packageJsonPath)) {',
+      '      const parsedPackageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));',
+      '      if (Object.prototype.hasOwnProperty.call(parsedPackageJson, requiredPackageJsonKey)) {',
+      '        foundPackageJsonPath = packageJsonPath;',
+      '        break;',
+      '      }',
+      '    }',
+      '    const parentDirectory = path.dirname(currentDirectory);',
+      '    if (parentDirectory === currentDirectory) {',
+      '      break;',
+      '    }',
+      '    currentDirectory = parentDirectory;',
+      '  }',
+      '  if (!foundPackageJsonPath) {',
+      '    process.stderr.write(`package.json key not found: ${requiredPackageJsonKey}`);',
+      '    process.exit(2);',
+      '  }',
+      '  fs.appendFileSync(logPath, `PACKAGE_JSON=${foundPackageJsonPath}\\n`, "utf8");',
+      '}',
+      'for (const filePath of targetFiles) {',
+      '  if (expectedExtension && path.extname(filePath) !== expectedExtension) {',
+      '    process.stderr.write(`unexpected extension: ${path.extname(filePath)}`);',
+      '    process.exit(2);',
+      '  }',
+      '}',
+      'if (configuredStdout) {',
+      '  process.stdout.write(configuredStdout);',
+      '  process.exit(configuredExitCode);',
+      '}',
+      'const results = [];',
+      'for (const filePath of targetFiles) {',
+      '  const text = fs.readFileSync(filePath, "utf8");',
+      '  let line = 1;',
+      '  let column = 1;',
+      '  for (const character of text) {',
+      '    if (/\\s/u.test(character)) {',
+      '      if (character === "\\n") {',
+      '        line += 1;',
+      '        column = 1;',
+      '      } else if (character !== "\\r") {',
+      '        column += 1;',
+      '      }',
+      '      continue;',
+      '    }',
+      '    break;',
+      '  }',
+      '  results.push(JSON.stringify({',
+      '    feature: "flexbox",',
+      '    usage: {',
+      '      source: {',
+      '        start: { line, column },',
+      '      },',
+      '      inputs: [{ file: filePath }],',
+      '    },',
+      '    message: `${filePath}:${line}:${column}: CSS Flexible Box Layout Module not supported by: IE (8) (flexbox)`,',
+      '  }));',
+      '}',
+      'process.stdout.write(results.join("\\n"));',
       'process.exit(configuredExitCode);',
       '',
     ].join('\n'),
@@ -2259,11 +2397,13 @@ suite('Mamori CLI Test Suite', () => {
     assert.doesNotMatch(result.stdout, /mamori: command-plan\n  - none/u);
     assert.match(result.stdout, /eslint: enabled \(source=default\)/u);
     assert.match(result.stdout, /oxlint: enabled \(source=default\)/u);
+    assert.match(result.stdout, /doiuse: disabled \(source=default\)/u);
     assert.match(result.stdout, /stylelint: enabled \(source=default\)/u);
     assert.match(result.stdout, /htmlhint: enabled \(source=default\)/u);
     assert.match(result.stdout, /html-validate: enabled \(source=default\)/u);
     assert.match(result.stdout, /eslint:enabled/u);
     assert.match(result.stdout, /oxlint:enabled/u);
+    assert.match(result.stdout, /doiuse:disabled status=config-not-detected/u);
     assert.match(result.stdout, /stylelint:enabled/u);
     assert.match(result.stdout, /htmlhint:enabled/u);
     assert.match(result.stdout, /html-validate:enabled/u);
@@ -2272,7 +2412,7 @@ suite('Mamori CLI Test Suite', () => {
     assert.match(result.stdout, /stylelint\.default\.json/u);
     assert.match(result.stdout, /htmlhint\.default\.json/u);
     assert.match(result.stdout, /htmlvalidate\.default\.json/u);
-    assert.doesNotMatch(result.stdout, /config-not-detected/u);
+    assert.match(result.stdout, /doiuse was skipped because no browserslist configuration was detected/u);
   });
 
   /**
@@ -2415,6 +2555,61 @@ suite('Mamori CLI Test Suite', () => {
   });
 
   /**
+   * browserslist 検出時は workspace の doiuse checker を計画へ含めること。
+   * @returns 返り値はない。
+   */
+  test('Plans doiuse checks for CSS workspaces when browserslist is detected', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const styleDirectory = path.join(temporaryDirectory, 'styles');
+    const targetFilePath = path.join(styleDirectory, 'site.css');
+
+    fs.mkdirSync(styleDirectory, { recursive: true });
+    fs.writeFileSync(targetFilePath, 'body { display: flex; }\n', 'utf8');
+    fs.writeFileSync(path.join(temporaryDirectory, '.browserslistrc'), 'ie 8\n', 'utf8');
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'prepush',
+      '--scope',
+      'workspace',
+    ]);
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /doiuse: enabled \(source=discovery\)/u);
+    assert.match(result.stdout, /path=.*\.browserslistrc/u);
+    assert.match(result.stdout, /doiuse:enabled/u);
+    assert.match(result.stdout, /doiuse:doiuse --json .*site\.css/u);
+  });
+
+  /**
+   * browserslist 未検出時は doiuse を warning 付きで skip すること。
+   * @returns 返り値はない。
+   */
+  test('Warns and skips doiuse when browserslist is not detected for CSS workspaces', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const styleDirectory = path.join(temporaryDirectory, 'styles');
+    const targetFilePath = path.join(styleDirectory, 'site.css');
+
+    fs.mkdirSync(styleDirectory, { recursive: true });
+    fs.writeFileSync(targetFilePath, 'body { display: flex; }\n', 'utf8');
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'prepush',
+      '--scope',
+      'workspace',
+    ]);
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /doiuse: disabled \(source=default\)/u);
+    assert.match(result.stdout, /doiuse was skipped because no browserslist configuration was detected/u);
+    assert.match(result.stdout, /doiuse:disabled status=config-not-detected/u);
+    assert.doesNotMatch(result.stdout, /doiuse:doiuse --json/u);
+  });
+
+  /**
    * workspace の tsc finding を SARIF 化できること。
    * @returns 返り値はない。
    */
@@ -2454,6 +2649,70 @@ suite('Mamori CLI Test Suite', () => {
     assert.ok(fs.existsSync(sarifOutputPath));
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /TS2322/u);
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /main\.ts/u);
+  });
+
+  /**
+   * manual/workspace の doiuse finding を SARIF 化し、終了コード 0 の upstream 実行でも失敗として扱うこと。
+   * @returns 返り値はない。
+   */
+  test('Reports doiuse findings during manual workspace checks', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const styleDirectory = path.join(temporaryDirectory, 'styles');
+    const targetFilePath = path.join(styleDirectory, 'site.css');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const doiuseLogPath = path.join(nodeBinDirectory, 'doiuse.log');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-doiuse-manual.sarif');
+    const doiuseOutput = JSON.stringify({
+      feature: 'flexbox',
+      usage: {
+        source: {
+          start: {
+            line: 1,
+            column: 1,
+          },
+        },
+        inputs: [
+          {
+            file: targetFilePath,
+          },
+        ],
+      },
+      message: `${targetFilePath}:1:1: CSS Flexible Box Layout Module not supported by: IE (8) (flexbox)`,
+    });
+
+    fs.mkdirSync(styleDirectory, { recursive: true });
+    fs.writeFileSync(targetFilePath, 'body { display: flex; }\n', 'utf8');
+    fs.writeFileSync(
+      path.join(temporaryDirectory, 'package.json'),
+      JSON.stringify({ name: 'sample', browserslist: ['ie 8'] }, null, 2),
+      'utf8',
+    );
+    writeWebCommandWrapper(nodeBinDirectory, 'stylelint', 'stylelint.log', { stdout: '[]', exitCode: 0 });
+    writeDoiuseWrapper(nodeBinDirectory, 'doiuse.log', {
+      requiredPackageJsonKey: 'browserslist',
+      stdout: doiuseOutput,
+      exitCode: 0,
+    });
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'manual',
+      '--scope',
+      'workspace',
+      '--execute',
+      '--sarif-output',
+      path.relative(temporaryDirectory, sarifOutputPath),
+    ]);
+
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /doiuse:failed exitCode=1/u);
+    assert.match(result.stdout, /flexbox/u);
+    assert.match(fs.readFileSync(doiuseLogPath, 'utf8'), /PACKAGE_JSON=.*package\.json/u);
+    assert.match(fs.readFileSync(doiuseLogPath, 'utf8'), new RegExp(`CWD=${temporaryDirectory.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}`, 'u'));
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /flexbox/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /site\.css/u);
   });
 
   /**
@@ -2834,6 +3093,66 @@ suite('Mamori CLI Test Suite', () => {
 
     const stylelintLog = fs.readFileSync(stylelintLogPath, 'utf8');
     const targetMatch = stylelintLog.match(/TARGET=(.+)\r?\n/u);
+    assert.ok(targetMatch);
+    const temporaryInlineStylePath = targetMatch ? targetMatch[1].trim() : '';
+    assert.notStrictEqual(temporaryInlineStylePath, '');
+    assert.doesNotMatch(temporaryInlineStylePath, /[\\/]\.mamori[\\/]/u);
+    assert.match(temporaryInlineStylePath, /[\\/]\.mamori-inline-tmp[\\/]/u);
+    assert.ok(!fs.existsSync(temporaryInlineStylePath));
+  });
+
+  /**
+   * pre-push で HTML inline style の doiuse 診断を元 HTML に逆写像し、一時ファイルを削除すること。
+   * @returns 返り値はない。
+   */
+  test('Maps inline HTML doiuse findings back to the source file and cleans temporary files', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const htmlDirectory = path.join(temporaryDirectory, 'public');
+    const htmlFilePath = path.join(htmlDirectory, 'index.html');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const doiuseLogPath = path.join(nodeBinDirectory, 'doiuse.log');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-inline-doiuse.sarif');
+
+    fs.mkdirSync(htmlDirectory, { recursive: true });
+    fs.writeFileSync(
+      htmlFilePath,
+      [
+        '<!doctype html>',
+        '<html>',
+        '<body>',
+        '<style>body { display: flex; }</style>',
+        '</body>',
+        '</html>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    fs.writeFileSync(path.join(temporaryDirectory, '.browserslistrc'), 'ie 8\n', 'utf8');
+    writeWebCommandWrapper(nodeBinDirectory, 'stylelint', 'stylelint.log', { stdout: '[]', exitCode: 0 });
+    writeWebCommandWrapper(nodeBinDirectory, 'htmlhint', 'htmlhint.log', { stdout: '[]', exitCode: 0 });
+    writeWebCommandWrapper(nodeBinDirectory, 'html-validate', 'html-validate.log', { stdout: '[]', exitCode: 0 });
+    writeDoiuseWrapper(nodeBinDirectory, 'doiuse.log');
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'prepush',
+      '--scope',
+      'workspace',
+      '--execute',
+      '--sarif-output',
+      path.relative(temporaryDirectory, sarifOutputPath),
+    ]);
+
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /flexbox/u);
+    assert.match(result.stdout, /index\.html:4/u);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /index\.html/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /"startLine": 4/u);
+
+    const doiuseLog = fs.readFileSync(doiuseLogPath, 'utf8');
+    const targetMatch = doiuseLog.match(/TARGET=(.+)\r?\n/u);
     assert.ok(targetMatch);
     const temporaryInlineStylePath = targetMatch ? targetMatch[1].trim() : '';
     assert.notStrictEqual(temporaryInlineStylePath, '');

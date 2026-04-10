@@ -19,7 +19,7 @@
 ## 3. 実行タイミング別の構成（確定）
 
 注記:
-- 以下で「追加予定」と明記する doiuse と Knip は、現行実装には未反映の追加予定仕様とする
+- 以下で「追加予定」と明記する Knip は、現行実装には未反映の追加予定仕様とする
 - 現行実装の挙動説明と追加予定仕様が同じ節に併記される場合、実装済みの挙動は「現行実装」または「確定」と明記した記述を正とする
 
 ### 3.1 保存時（on save, scope=file）
@@ -112,7 +112,7 @@ pre-commit の通知仕様（確定）:
 - JavaScript / TypeScript: Oxlint（デフォルト有効・設定でOFF可。save / pre-commit と同じ解決順で direct file を補完検査する）
 - TypeScript: `tsc --noEmit`（型整合性検査として扱い、明示設定 → discovery の順で tsconfig を解決できる場合のみ実行する。tsconfig 未検出時は warning を残してスキップする）
 - HTML: HTML-Validate（pre-commit と同じ設定解決でワークスペース単位に実行する）
-- CSS / SCSS / Sass / HTML 内 inline style: doiuse（追加予定。Browserslist を明示設定 → discovery → `package.json#browserslist` の順で解決できる場合のみ実行し、未検出時は warning を残してスキップする）
+- CSS / SCSS / Sass / HTML 内 inline style: doiuse（Browserslist を明示設定 → discovery → `package.json#browserslist` の順で解決できる場合のみ実行し、未検出時は warning を残してスキップする）
 
 SpotBugsの例外仕様（確定）:
 - class files（例: `target/classes` や `build/classes/java/main`）が見つからない場合は警告ログを出してスキップし、pushは継続する
@@ -128,15 +128,14 @@ pre-push の通知仕様（確定）:
 - Java: Checkstyle / PMD / Semgrep の軽量チェックを実行する
 - JavaScript / TypeScript: ESLint と Oxlint を実行する
 - TypeScript project: `tsc --noEmit` を実行する
-- CSS: Stylelint を実行する
-- HTML: htmlhint と HTML-Validate を実行し、inline script は ESLint、inline style は Stylelint で追加検査する
+- CSS: Stylelint と doiuse を実行する
+- HTML: htmlhint と HTML-Validate を実行し、inline script は ESLint、inline style は Stylelint と doiuse で追加検査する
 - Web 系ツールの設定解決と inline HTML の扱いは pre-push と同じとする
 - manual 実行開始時は、開始を知らせる短時間のトースト通知を表示する
 - 保存時と manual 実行の静的解析進捗表示はステータスバーへ統一する
 - 拡張の manual 実行が成功した場合、同一ワークスペースに対して反映済みの保存時 Diagnostics は、manual の最新結果で置き換える
 
 追加予定の実装方針:
-- CSS / SCSS / Sass / HTML 内 inline style: doiuse を実行する
 - JavaScript / TypeScript workspace: Knip を実行する
 - Knip は lint ではなく未使用 file / export / dependency の分析として扱い、manual を主配置とする
 - Knip は明示設定、Knip 設定ファイル、`package.json#knip`、`package.json` と `tsconfig` による auto-discovery の順で実行条件を解決し、設定ヒントは warning として扱う
@@ -154,7 +153,7 @@ pre-push の通知仕様（確定）:
 - JDepend
 
 ### 3.5 Web 拡張解析ツール
-Oxlint、`tsc --noEmit`、HTML-Validate は現行実装、doiuse と Knip は追加予定とする。
+Oxlint、`tsc --noEmit`、HTML-Validate、doiuse は現行実装、Knip は追加予定とする。
 
 | ツール | 主な実行タイミング | 主な対象 | 役割 | 設定未検出時の扱い |
 | ---- | ---- | ---- | ---- | ---- |
@@ -326,7 +325,7 @@ Git hooks コマンドの通知仕様（確定）:
 | JavaScript / TypeScript Knip | `package.json`、必要に応じて `knip.json`、`knip.jsonc`、`.knip.json`、`.knip.jsonc`、`knip.js`、`knip.ts`、および `tsconfig.json` | manual を主対象とする。設定未検出時は auto-discovery を試行し、設定ヒントは warning として扱う。 |
 
 ## 11. 今後の拡張
-- Web 向け追加解析ツール 2 種の実装（doiuse / Knip）
+- Web 向け追加解析ツール 1 種の実装（Knip）
 - 手動ツールの追加（Dependency-Check/Trivyの取り込み強化、結果の詳細ビュー）
 - Python等への拡張
 - Gradle Kotlin DSLの設定抽出精度向上（必要になった時点で対応）

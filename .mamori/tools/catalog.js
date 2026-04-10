@@ -21,6 +21,9 @@ const NODE_TOOL_PACKAGES = {
   tsc: {
     packageName: 'typescript',
   },
+  doiuse: {
+    packageName: 'doiuse',
+  },
   stylelint: {
     packageName: 'stylelint',
   },
