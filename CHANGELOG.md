@@ -4,7 +4,11 @@
 
 形式は Keep a Changelog を参考にしつつ、このリポジトリの実装状況に合わせて整理します。
 
-## [0.2.46] - 2026-04-11
+## [0.3.0] - 2026-04-11
+
+### Added
+- Web / TypeScript 系の管理対象ツールとして `Oxlint`、`HTML-Validate`、`doiuse`、`Knip` を追加しました。
+- TypeScript の検証で `tsc --noEmit` を実行できるようにし、型エラーを静的解析結果へ反映できるようにしました。
 
 ### Changed
 - `Setup Managed Tools` の進捗通知で秒数表示を行わず、導入中の管理ツール名だけを本文へ表示するようにしました。
