@@ -53,6 +53,65 @@ export function extractMaintenanceWarnings(action: 'setup' | 'cache-clear', stdo
 }
 
 /**
+ * setup 実行時の installing 出力からツール ID を抽出する。
+ * @param outputLine CLI の出力 1 行を表す。
+ * @returns ツール ID を返す。
+ */
+export function extractMaintenanceInstallingToolId(outputLine: string): string | undefined {
+  const setupInstallingPrefix = 'mamori: setup installing=';
+  const normalizedLine = outputLine.trim();
+
+  if (!normalizedLine.startsWith(setupInstallingPrefix)) {
+    return undefined;
+  }
+
+  const toolId = normalizedLine.slice(setupInstallingPrefix.length).trim();
+  return toolId === '' ? undefined : toolId;
+}
+
+/**
+ * setup 実行時のツール ID から表示名を返す。
+ * @param toolId CLI が出力したツール ID を表す。
+ * @returns 表示名を返す。
+ */
+export function getMaintenanceToolLabel(toolId: string): string {
+  const normalizedToolId = toolId.trim();
+  const labels: Record<string, string> = {
+    checkstyle: 'Checkstyle',
+    doiuse: 'doiuse',
+    eslint: 'ESLint',
+    gradle: 'Gradle',
+    htmlhint: 'htmlhint',
+    'html-validate': 'HTML-Validate',
+    knip: 'Knip',
+    maven: 'Maven',
+    oxlint: 'Oxlint',
+    pmd: 'PMD',
+    prettier: 'Prettier',
+    semgrep: 'Semgrep',
+    spotless: 'Spotless',
+    stylelint: 'Stylelint',
+    tsc: 'TypeScript',
+  };
+
+  return labels[normalizedToolId] || normalizedToolId;
+}
+
+/**
+ * setup 実行時の installing 出力を通知文言に変換する。
+ * @param outputLine CLI の出力 1 行を表す。
+ * @returns 表示文言を返す。
+ */
+export function getMaintenanceInstallingToolLabel(outputLine: string): string | undefined {
+  const toolId = extractMaintenanceInstallingToolId(outputLine);
+  if (!toolId) {
+    return undefined;
+  }
+
+  return getMaintenanceToolLabel(toolId);
+}
+
+/**
  * 保守コマンドの進捗報告を作成する。
  * @param progress 進捗報告先を表す。
  * @param messages 進捗文言を生成する関数群を表す。
@@ -65,7 +124,7 @@ export function createMaintenanceProgressReporter(
   },
   messages: {
     getBaseMessage: () => string;
-    getDetailMessage: (outputLine: string) => string;
+    getDetailMessage: (outputLine: string) => string | undefined;
     getHeartbeatMessage: (startedAtMilliseconds: number) => string;
   },
   heartbeatMilliseconds: number = 2000,
@@ -78,12 +137,16 @@ export function createMaintenanceProgressReporter(
   const startedAtMilliseconds = Date.now();
   progress.report({ message: messages.getBaseMessage() });
 
-  const heartbeatTimer = setInterval(() => {
-    const heartbeatMessage = messages.getHeartbeatMessage(startedAtMilliseconds);
-    progress.report({
-      message: heartbeatMessage,
-    });
-  }, heartbeatMilliseconds);
+  const heartbeatTimer = heartbeatMilliseconds > 0
+    ? setInterval(() => {
+      const heartbeatMessage = messages.getHeartbeatMessage(startedAtMilliseconds);
+      if (typeof heartbeatMessage === 'string' && heartbeatMessage !== '') {
+        progress.report({
+          message: heartbeatMessage,
+        });
+      }
+    }, heartbeatMilliseconds)
+    : undefined;
 
   return {
     onStdoutLine: (line: string) => {
@@ -93,6 +156,9 @@ export function createMaintenanceProgressReporter(
       }
 
       const detailMessage = messages.getDetailMessage(normalizedLine);
+      if (typeof detailMessage !== 'string' || detailMessage === '') {
+        return;
+      }
       progress.report({ message: detailMessage });
     },
     waitForMinimumVisibility: async() => {
@@ -105,7 +171,9 @@ export function createMaintenanceProgressReporter(
       }
     },
     dispose: () => {
-      clearInterval(heartbeatTimer);
+      if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+      }
     },
   };
 }

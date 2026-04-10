@@ -661,9 +661,10 @@ function findExecutableInTree(rootDirectory, relativePaths, maxDepth = 4) {
  * アーカイブ系ツールを導入して実行ファイルパスを返す。
  * @param {string} workspaceRoot ワークスペースルートを表す。
  * @param {{tool: string, version: string, archiveType: string, executableRelativePaths: string[], sourceUrl: string}} definition ツール定義を表す。
+ * @param {(toolName: string) => void=} onToolStart 導入開始通知先を表す。
  * @returns {Promise<string>} 実行ファイルパスを返す。
  */
-async function ensureArchiveTool(workspaceRoot, definition) {
+async function ensureArchiveTool(workspaceRoot, definition, onToolStart) {
   const directories = getManagedDirectories(workspaceRoot);
   const installDirectory = path.join(directories.toolsRoot, definition.tool, definition.version);
   const existingExecutablePath = findExecutableInTree(installDirectory, definition.executableRelativePaths);
@@ -678,6 +679,10 @@ async function ensureArchiveTool(workspaceRoot, definition) {
   removeDirectory(temporaryDirectory);
   removeDirectory(installDirectory);
   ensureDirectory(temporaryDirectory);
+
+  if (typeof onToolStart === 'function') {
+    onToolStart(definition.tool);
+  }
 
   try {
     await materializeSource(definition.sourceUrl, cachePath, temporaryDirectory, definition.archiveType);
@@ -859,9 +864,10 @@ function resolveProjectNodeToolPath(workspaceRoot, moduleRoot, toolName) {
  * Node 系ツール群を `.mamori/node` に導入する。
  * @param {string} workspaceRoot ワークスペースルートを表す。
  * @param {NodeJS.ProcessEnv=} env 環境変数を表す。
+ * @param {(toolName: string) => void=} onToolStart 導入開始通知先を表す。
  * @returns {void} 返り値はない。
  */
-function ensureManagedNodeTools(workspaceRoot, env = process.env) {
+function ensureManagedNodeTools(workspaceRoot, env = process.env, onToolStart) {
   const directories = getManagedDirectories(workspaceRoot);
   const missingTools = MANAGED_NODE_TOOL_NAMES.filter(
     (toolName) => !resolveManagedNodeToolPath(directories.nodeRoot, toolName),
@@ -873,6 +879,9 @@ function ensureManagedNodeTools(workspaceRoot, env = process.env) {
   ensureNodePackageManifest(directories.nodeRoot);
   const npmCommand = resolveNpmCommand(workspaceRoot, env);
   for (const toolName of missingTools) {
+    if (typeof onToolStart === 'function') {
+      onToolStart(toolName);
+    }
     const packageSpec = NODE_TOOL_PACKAGES[toolName].packageName;
     const result = runProcess(
       npmCommand,
@@ -908,15 +917,19 @@ function ensureManagedNodeTools(workspaceRoot, env = process.env) {
  * @param {string} workspaceRoot ワークスペースルートを表す。
  * @param {{tool: string, version: string, packageName: string}} definition Semgrep 定義を表す。
  * @param {NodeJS.ProcessEnv=} env 環境変数を表す。
+ * @param {(toolName: string) => void=} onToolStart 導入開始通知先を表す。
  * @returns {{command: string, prependArgs: string[], env: NodeJS.ProcessEnv}} 実行時情報を返す。
  */
-function ensureManagedSemgrep(workspaceRoot, definition, env = process.env) {
+function ensureManagedSemgrep(workspaceRoot, definition, env = process.env, onToolStart) {
   const directories = getManagedDirectories(workspaceRoot);
   const launcher = resolvePythonLauncher(workspaceRoot, env);
   const packageRoot = directories.pythonPackagesRoot;
   const packageDirectory = path.join(packageRoot, definition.packageName);
 
   if (!fs.existsSync(packageDirectory)) {
+    if (typeof onToolStart === 'function') {
+      onToolStart(definition.tool);
+    }
     ensureDirectory(packageRoot);
     const result = runProcess(
       launcher.command,
@@ -958,17 +971,26 @@ function ensureManagedSemgrep(workspaceRoot, definition, env = process.env) {
  * setup コマンド向けに管理対象ツールをすべて準備する。
  * @param {string} workspaceRoot ワークスペースルートを表す。
  * @param {NodeJS.ProcessEnv=} env 環境変数を表す。
+ * @param {{onToolStart?: (toolName: string) => void}=} options 導入通知オプションを表す。
  * @returns {Promise<Array<{tool: string, location: string}>>} 導入結果一覧を返す。
  */
-async function ensureWorkspaceTooling(workspaceRoot, env = process.env) {
+async function ensureWorkspaceTooling(workspaceRoot, env = process.env, options = {}) {
   const results = [];
-  const mavenExecutablePath = await ensureArchiveTool(workspaceRoot, getMavenDefinition(env));
+  const mavenExecutablePath = await ensureArchiveTool(
+    workspaceRoot,
+    getMavenDefinition(env),
+    options.onToolStart,
+  );
   results.push({ tool: 'maven', location: mavenExecutablePath });
 
-  const gradleExecutablePath = await ensureArchiveTool(workspaceRoot, getGradleDefinition(env));
+  const gradleExecutablePath = await ensureArchiveTool(
+    workspaceRoot,
+    getGradleDefinition(env),
+    options.onToolStart,
+  );
   results.push({ tool: 'gradle', location: gradleExecutablePath });
 
-  ensureManagedNodeTools(workspaceRoot, env);
+  ensureManagedNodeTools(workspaceRoot, env, options.onToolStart);
   for (const toolName of MANAGED_NODE_TOOL_NAMES) {
     const toolPath = resolveManagedNodeToolPath(getManagedDirectories(workspaceRoot).nodeRoot, toolName);
     if (toolPath) {
@@ -980,7 +1002,12 @@ async function ensureWorkspaceTooling(workspaceRoot, env = process.env) {
   if (semgrepOverride) {
     results.push({ tool: 'semgrep', location: semgrepOverride });
   } else {
-    const semgrepRuntime = ensureManagedSemgrep(workspaceRoot, getSemgrepDefinition(env), env);
+    const semgrepRuntime = ensureManagedSemgrep(
+      workspaceRoot,
+      getSemgrepDefinition(env),
+      env,
+      options.onToolStart,
+    );
     results.push({ tool: 'semgrep', location: semgrepRuntime.command });
   }
 

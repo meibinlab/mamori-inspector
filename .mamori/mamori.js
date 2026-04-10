@@ -997,7 +997,11 @@ async function runMinimal() {
  */
 async function runSetupCommand() {
   const gitExcludeResult = ensureMamoriGitExclude(process.cwd());
-  const results = await ensureWorkspaceTooling(process.cwd());
+  const results = await ensureWorkspaceTooling(process.cwd(), process.env, {
+    onToolStart: (toolName) => {
+      process.stdout.write(`mamori: setup installing=${toolName}\n`);
+    },
+  });
   process.stdout.write('mamori: setup completed\n');
   printCommandWarnings('setup', gitExcludeResult.warnings);
   process.stdout.write(

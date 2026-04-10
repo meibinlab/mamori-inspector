@@ -15,6 +15,7 @@ import { reportHooksCommandSuccess } from '../hooks-command-report';
 // 保守コマンド通知補助関数を表す
 import {
   createMaintenanceProgressReporter,
+  getMaintenanceInstallingToolLabel,
   reportMaintenanceCommandSuccess,
 } from '../maintenance-command-report';
 // SARIF 読み込み関数を表す
@@ -1387,8 +1388,7 @@ suite('Extension Utility Test Suite', () => {
       {
         getBaseMessage: () => 'Setting up managed tools',
         getDetailMessage: (outputLine: string) => {
-          const normalizedLine = outputLine.replace(/^mamori:\s+setup\s+/u, '');
-          return `Setting up managed tools: ${normalizedLine}`;
+          return getMaintenanceInstallingToolLabel(outputLine);
         },
         getHeartbeatMessage: (startedAtMilliseconds: number) => {
           const elapsedSeconds = Math.max(
@@ -1403,7 +1403,7 @@ suite('Extension Utility Test Suite', () => {
 
     try {
       await delay(120);
-      reporter.onStdoutLine('mamori: setup tools=eslint:C:/mamori/eslint.cmd');
+      reporter.onStdoutLine('mamori: setup installing=eslint');
       await delay(80);
     } finally {
       reporter.dispose();
@@ -1414,8 +1414,23 @@ suite('Extension Utility Test Suite', () => {
     assert.ok(progressMessages.some((message) => /\(1s\)$/u.test(message)));
     assert.ok(
       progressMessages.some((message) => (
-        message === 'Setting up managed tools: tools=eslint:C:/mamori/eslint.cmd'
+        message === 'ESLint'
       )),
+    );
+  });
+
+  /**
+   * setup の installing 出力がツール名表示に変換されること。
+   * @returns 返り値はない。
+   */
+  test('Formats setup installing output into human readable tool names', () => {
+    const progressMessage = getMaintenanceInstallingToolLabel(
+      'mamori: setup installing=html-validate',
+    );
+
+    assert.strictEqual(
+      progressMessage,
+      'HTML-Validate',
     );
   });
 

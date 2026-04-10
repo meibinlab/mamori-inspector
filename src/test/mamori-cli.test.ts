@@ -6071,6 +6071,9 @@ suite('Mamori CLI Test Suite', () => {
     );
 
     assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /mamori: setup installing=maven/u);
+    assert.match(result.stdout, /mamori: setup installing=gradle/u);
+    assert.match(result.stdout, /mamori: setup installing=eslint/u);
     assert.match(result.stdout, /mamori: setup completed/u);
     assert.ok(fs.existsSync(path.join(temporaryDirectory, '.mamori', 'tools', 'maven', '3.9.11', 'bin')));
     assert.ok(fs.existsSync(path.join(temporaryDirectory, '.mamori', 'tools', 'gradle', '8.14.4', 'bin')));

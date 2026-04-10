@@ -23,6 +23,7 @@ import {
 // 保守コマンドの warning 通知補助を表す
 import {
   createMaintenanceProgressReporter,
+  getMaintenanceInstallingToolLabel,
   reportMaintenanceCommandSuccess,
   type MaintenanceCommandMessages,
 } from './maintenance-command-report';
@@ -90,7 +91,7 @@ const CONFIGURATION_UPDATE_POLLING_MILLISECONDS = 100;
 // 非エラー通知を自動非表示にする時間を表す
 const TRANSIENT_NON_ERROR_NOTIFICATION_MILLISECONDS = 5000;
 // 保守コマンド進捗の心拍更新間隔を表す
-const MAINTENANCE_PROGRESS_HEARTBEAT_MILLISECONDS = 2000;
+const MAINTENANCE_PROGRESS_HEARTBEAT_MILLISECONDS = 0;
 // 保守コマンド進捗の最低表示時間を表す
 const MAINTENANCE_PROGRESS_MINIMUM_VISIBLE_MILLISECONDS = 1200;
 
@@ -244,10 +245,27 @@ function getMaintenanceProgressBaseMessage(action: MamoriMaintenanceAction): str
 function getMaintenanceProgressDetailMessage(
   action: MamoriMaintenanceAction,
   outputLine: string,
-): string {
+): string | undefined {
   const normalizedLine = outputLine.trim();
   if (normalizedLine === '') {
-    return getMaintenanceProgressBaseMessage(action);
+    return undefined;
+  }
+
+  if (action === 'setup') {
+    const installingToolLabel = getMaintenanceInstallingToolLabel(normalizedLine);
+    if (installingToolLabel) {
+      return installingToolLabel;
+    }
+    if (normalizedLine === 'mamori: setup completed') {
+      return undefined;
+    }
+    if (normalizedLine.startsWith('mamori: setup tools=')) {
+      return undefined;
+    }
+  }
+
+  if (action === 'cache-clear' && normalizedLine === 'mamori: cache-clear completed') {
+    return undefined;
   }
 
   const expectedPrefix = `mamori: ${action} `;
@@ -272,22 +290,20 @@ function getMaintenanceHeartbeatMessage(
   action: MamoriMaintenanceAction,
   startedAtMilliseconds: number,
 ): string {
+  if (action === 'setup') {
+    return '';
+  }
+
   const elapsedSeconds = Math.max(
     1,
     Math.ceil((Date.now() - startedAtMilliseconds) / 1000),
   );
 
-  return action === 'setup'
-    ? localize(
-      'Setting up managed tools ({0}s)',
-      'Heartbeat progress message shown while managed tools are being set up.',
-      [String(elapsedSeconds)],
-    )
-    : localize(
-      'Clearing cache ({0}s)',
-      'Heartbeat progress message shown while the extension cache is being cleared.',
-      [String(elapsedSeconds)],
-    );
+  return localize(
+    'Clearing cache ({0}s)',
+    'Heartbeat progress message shown while the extension cache is being cleared.',
+    [String(elapsedSeconds)],
+  );
 }
 
 /**
