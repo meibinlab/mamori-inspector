@@ -22,6 +22,7 @@ import {
 } from './save-check-notifications';
 // 保守コマンドの warning 通知補助を表す
 import {
+  createMaintenanceProgressReporter,
   reportMaintenanceCommandSuccess,
   type MaintenanceCommandMessages,
 } from './maintenance-command-report';
@@ -88,6 +89,8 @@ const CONFIGURATION_UPDATE_TIMEOUT_MILLISECONDS = 5000;
 const CONFIGURATION_UPDATE_POLLING_MILLISECONDS = 100;
 // 非エラー通知を自動非表示にする時間を表す
 const TRANSIENT_NON_ERROR_NOTIFICATION_MILLISECONDS = 5000;
+// 保守コマンド進捗の心拍更新間隔を表す
+const MAINTENANCE_PROGRESS_HEARTBEAT_MILLISECONDS = 2000;
 
 /** 一時トーストの自動非表示時間を表す。 */
 const TRANSIENT_NOTIFICATION_TOAST_MILLISECONDS = 3000;
@@ -210,6 +213,78 @@ function getMaintenanceProgressTitle(action: MamoriMaintenanceAction): string {
     : localize(
       'Clearing Mamori Inspector cache',
       'Progress notification title while the extension cache is being cleared.',
+    );
+}
+
+/**
+ * 保守コマンドの進捗基礎メッセージを返す。
+ * @param action 保守コマンド種別を表す。
+ * @returns 進捗基礎メッセージを返す。
+ */
+function getMaintenanceProgressBaseMessage(action: MamoriMaintenanceAction): string {
+  return action === 'setup'
+    ? localize(
+      'Setting up managed tools',
+      'Progress message shown while managed tools are being set up.',
+    )
+    : localize(
+      'Clearing cache',
+      'Progress message shown while the extension cache is being cleared.',
+    );
+}
+
+/**
+ * 保守コマンドの stdout 行から進捗メッセージを返す。
+ * @param action 保守コマンド種別を表す。
+ * @param outputLine CLI stdout の 1 行を表す。
+ * @returns 進捗メッセージを返す。
+ */
+function getMaintenanceProgressDetailMessage(
+  action: MamoriMaintenanceAction,
+  outputLine: string,
+): string {
+  const normalizedLine = outputLine.trim();
+  if (normalizedLine === '') {
+    return getMaintenanceProgressBaseMessage(action);
+  }
+
+  const expectedPrefix = `mamori: ${action} `;
+  const normalizedDetail = normalizedLine.startsWith(expectedPrefix)
+    ? normalizedLine.slice(expectedPrefix.length).trim()
+    : normalizedLine;
+
+  return localize(
+    '{0}: {1}',
+    'Progress message shown while managed tools are being set up or cache is being cleared.',
+    [getMaintenanceProgressBaseMessage(action), normalizedDetail],
+  );
+}
+
+/**
+ * 保守コマンドの心拍メッセージを返す。
+ * @param action 保守コマンド種別を表す。
+ * @param startedAtMilliseconds 実行開始時刻を表す。
+ * @returns 心拍メッセージを返す。
+ */
+function getMaintenanceHeartbeatMessage(
+  action: MamoriMaintenanceAction,
+  startedAtMilliseconds: number,
+): string {
+  const elapsedSeconds = Math.max(
+    1,
+    Math.ceil((Date.now() - startedAtMilliseconds) / 1000),
+  );
+
+  return action === 'setup'
+    ? localize(
+      'Setting up managed tools ({0}s)',
+      'Heartbeat progress message shown while managed tools are being set up.',
+      [String(elapsedSeconds)],
+    )
+    : localize(
+      'Clearing cache ({0}s)',
+      'Heartbeat progress message shown while the extension cache is being cleared.',
+      [String(elapsedSeconds)],
     );
 }
 
@@ -1384,15 +1459,35 @@ function createManageMaintenanceCommand(
           title: progressTitle,
           cancellable: false,
         },
-        async() => {
-          if (action === 'setup') {
-            synchronizeMamoriRuntimeToWorkspace(workspaceFolder, extensionRootPath);
-          }
-          commandResult = await runMamoriCliCommand(
-            workspaceFolder,
-            buildMamoriMaintenanceArguments(action),
-            extensionRootPath,
+        async(progress) => {
+          const progressReporter = createMaintenanceProgressReporter(
+            progress,
+            {
+              getBaseMessage: () => getMaintenanceProgressBaseMessage(action),
+              getDetailMessage: (outputLine: string) => (
+                getMaintenanceProgressDetailMessage(action, outputLine)
+              ),
+              getHeartbeatMessage: (startedAtMilliseconds: number) => (
+                getMaintenanceHeartbeatMessage(action, startedAtMilliseconds)
+              ),
+            },
+            MAINTENANCE_PROGRESS_HEARTBEAT_MILLISECONDS,
           );
+          try {
+            if (action === 'setup') {
+              synchronizeMamoriRuntimeToWorkspace(workspaceFolder, extensionRootPath);
+            }
+            commandResult = await runMamoriCliCommand(
+              workspaceFolder,
+              buildMamoriMaintenanceArguments(action),
+              extensionRootPath,
+              {
+                onStdoutLine: progressReporter.onStdoutLine,
+              },
+            );
+          } finally {
+            progressReporter.dispose();
+          }
         },
       );
 

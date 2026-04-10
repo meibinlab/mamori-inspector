@@ -53,6 +53,53 @@ export function extractMaintenanceWarnings(action: 'setup' | 'cache-clear', stdo
 }
 
 /**
+ * 保守コマンドの進捗報告を作成する。
+ * @param progress 進捗報告先を表す。
+ * @param messages 進捗文言を生成する関数群を表す。
+ * @param heartbeatMilliseconds 心拍更新間隔を表す。
+ * @returns stdout 行の受け取り先と破棄処理を返す。
+ */
+export function createMaintenanceProgressReporter(
+  progress: {
+    report(update: { message?: string; increment?: number }): void;
+  },
+  messages: {
+    getBaseMessage: () => string;
+    getDetailMessage: (outputLine: string) => string;
+    getHeartbeatMessage: (startedAtMilliseconds: number) => string;
+  },
+  heartbeatMilliseconds: number = 2000,
+): {
+  onStdoutLine: (line: string) => void;
+  dispose: () => void;
+} {
+  const startedAtMilliseconds = Date.now();
+  progress.report({ message: messages.getBaseMessage() });
+
+  const heartbeatTimer = setInterval(() => {
+    progress.report({
+      message: messages.getHeartbeatMessage(startedAtMilliseconds),
+    });
+  }, heartbeatMilliseconds);
+
+  return {
+    onStdoutLine: (line: string) => {
+      const normalizedLine = line.trim();
+      if (normalizedLine === '') {
+        return;
+      }
+
+      progress.report({
+        message: messages.getDetailMessage(normalizedLine),
+      });
+    },
+    dispose: () => {
+      clearInterval(heartbeatTimer);
+    },
+  };
+}
+
+/**
  * 保守コマンド成功時の通知を行う。
  * @param action 保守コマンド種別を表す。
  * @param stdout CLI 標準出力を表す。
