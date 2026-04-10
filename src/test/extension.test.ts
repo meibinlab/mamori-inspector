@@ -13,7 +13,10 @@ import * as path from 'path';
 // hooks 通知補助関数を表す
 import { reportHooksCommandSuccess } from '../hooks-command-report';
 // 保守コマンド通知補助関数を表す
-import { reportMaintenanceCommandSuccess } from '../maintenance-command-report';
+import {
+  createMaintenanceProgressReporter,
+  reportMaintenanceCommandSuccess,
+} from '../maintenance-command-report';
 // SARIF 読み込み関数を表す
 import { loadSarifFindings } from '../sarif-diagnostics';
 
@@ -1365,6 +1368,55 @@ suite('Extension Utility Test Suite', () => {
     assert.deepStrictEqual(informationMessages, [
       'Mamori Inspector: Set up managed tools.',
     ]);
+  });
+
+  /**
+   * 保守コマンド進捗が stdout と心拍で更新されること。
+   * @returns 返り値はない。
+   */
+  test('Reports maintenance progress updates from stdout and heartbeat', async() => {
+    const progressMessages: string[] = [];
+    const reporter = createMaintenanceProgressReporter(
+      {
+        report: (update: { message?: string }) => {
+          if (typeof update.message === 'string') {
+            progressMessages.push(update.message);
+          }
+        },
+      },
+      {
+        getBaseMessage: () => 'Setting up managed tools',
+        getDetailMessage: (outputLine: string) => {
+          const normalizedLine = outputLine.replace(/^mamori:\s+setup\s+/u, '');
+          return `Setting up managed tools: ${normalizedLine}`;
+        },
+        getHeartbeatMessage: (startedAtMilliseconds: number) => {
+          const elapsedSeconds = Math.max(
+            1,
+            Math.ceil((Date.now() - startedAtMilliseconds) / 1000),
+          );
+          return `Setting up managed tools (${String(elapsedSeconds)}s)`;
+        },
+      },
+      50,
+    );
+
+    try {
+      await delay(120);
+      reporter.onStdoutLine('mamori: setup tools=eslint:C:/mamori/eslint.cmd');
+      await delay(80);
+    } finally {
+      reporter.dispose();
+    }
+
+    assert.ok(progressMessages.length >= 3);
+    assert.strictEqual(progressMessages[0], 'Setting up managed tools');
+    assert.ok(progressMessages.some((message) => /\(1s\)$/u.test(message)));
+    assert.ok(
+      progressMessages.some((message) => (
+        message === 'Setting up managed tools: tools=eslint:C:/mamori/eslint.cmd'
+      )),
+    );
   });
 
   /**
