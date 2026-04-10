@@ -1420,6 +1420,43 @@ suite('Extension Utility Test Suite', () => {
   });
 
   /**
+   * 最低表示時間の待機が動作すること。
+   * @returns 返り値はない。
+   */
+  test('Waits for the minimum visibility duration before closing progress', async() => {
+    const reporter = createMaintenanceProgressReporter(
+      {
+        report: (_update: { message?: string }) => {
+          // noop
+        },
+      },
+      {
+        getBaseMessage: () => 'Setting up managed tools',
+        getDetailMessage: (outputLine: string) => outputLine,
+        getHeartbeatMessage: (startedAtMilliseconds: number) => {
+          const elapsedSeconds = Math.max(
+            1,
+            Math.ceil((Date.now() - startedAtMilliseconds) / 1000),
+          );
+          return `Setting up managed tools (${String(elapsedSeconds)}s)`;
+        },
+      },
+      1000,
+      150,
+    );
+
+    const startedAtMilliseconds = Date.now();
+    try {
+      await reporter.waitForMinimumVisibility();
+    } finally {
+      reporter.dispose();
+    }
+
+    const elapsedMilliseconds = Date.now() - startedAtMilliseconds;
+    assert.ok(elapsedMilliseconds >= 120);
+  });
+
+  /**
    * 保存時ツール開始行から個別ツール通知を組み立てられること。
    * @returns 返り値はない。
    */

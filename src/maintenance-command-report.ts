@@ -69,16 +69,19 @@ export function createMaintenanceProgressReporter(
     getHeartbeatMessage: (startedAtMilliseconds: number) => string;
   },
   heartbeatMilliseconds: number = 2000,
+  minimumVisibleMilliseconds: number = 1200,
 ): {
   onStdoutLine: (line: string) => void;
+  waitForMinimumVisibility: () => Promise<void>;
   dispose: () => void;
 } {
   const startedAtMilliseconds = Date.now();
   progress.report({ message: messages.getBaseMessage() });
 
   const heartbeatTimer = setInterval(() => {
+    const heartbeatMessage = messages.getHeartbeatMessage(startedAtMilliseconds);
     progress.report({
-      message: messages.getHeartbeatMessage(startedAtMilliseconds),
+      message: heartbeatMessage,
     });
   }, heartbeatMilliseconds);
 
@@ -89,9 +92,17 @@ export function createMaintenanceProgressReporter(
         return;
       }
 
-      progress.report({
-        message: messages.getDetailMessage(normalizedLine),
-      });
+      const detailMessage = messages.getDetailMessage(normalizedLine);
+      progress.report({ message: detailMessage });
+    },
+    waitForMinimumVisibility: async() => {
+      const elapsedMilliseconds = Date.now() - startedAtMilliseconds;
+      const remainingMilliseconds = Math.max(0, minimumVisibleMilliseconds - elapsedMilliseconds);
+      if (remainingMilliseconds > 0) {
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, remainingMilliseconds);
+        });
+      }
     },
     dispose: () => {
       clearInterval(heartbeatTimer);

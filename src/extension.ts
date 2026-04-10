@@ -91,6 +91,8 @@ const CONFIGURATION_UPDATE_POLLING_MILLISECONDS = 100;
 const TRANSIENT_NON_ERROR_NOTIFICATION_MILLISECONDS = 5000;
 // 保守コマンド進捗の心拍更新間隔を表す
 const MAINTENANCE_PROGRESS_HEARTBEAT_MILLISECONDS = 2000;
+// 保守コマンド進捗の最低表示時間を表す
+const MAINTENANCE_PROGRESS_MINIMUM_VISIBLE_MILLISECONDS = 1200;
 
 /** 一時トーストの自動非表示時間を表す。 */
 const TRANSIENT_NOTIFICATION_TOAST_MILLISECONDS = 3000;
@@ -1472,6 +1474,7 @@ function createManageMaintenanceCommand(
               ),
             },
             MAINTENANCE_PROGRESS_HEARTBEAT_MILLISECONDS,
+            MAINTENANCE_PROGRESS_MINIMUM_VISIBLE_MILLISECONDS,
           );
           try {
             if (action === 'setup') {
@@ -1485,6 +1488,7 @@ function createManageMaintenanceCommand(
                 onStdoutLine: progressReporter.onStdoutLine,
               },
             );
+            await progressReporter.waitForMinimumVisibility();
           } finally {
             progressReporter.dispose();
           }
