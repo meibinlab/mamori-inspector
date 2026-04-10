@@ -279,12 +279,99 @@ function resolveSingleWebToolConfiguration(
 }
 
 /**
+ * Knip の auto-discovery 解決結果を返す。
+ * @param {string} currentWorkingDirectory 現在の作業ディレクトリを表す。
+ * @param {{modules?: object[]}} buildDefinitions build-definition 抽出結果を表す。
+ * @returns {{enabled: boolean, source: string, locationType: string, path?: string, tsconfigPath?: string, buildDefinition: object}} 解決結果を返す。
+ */
+function resolveKnipAutoDiscoveryConfiguration(currentWorkingDirectory, buildDefinitions) {
+  const packageJsonPath = path.join(currentWorkingDirectory, 'package.json');
+  if (!fs.existsSync(packageJsonPath) || !fs.statSync(packageJsonPath).isFile()) {
+    return {
+      enabled: false,
+      source: 'default',
+      locationType: 'disabled',
+      buildDefinition: buildToolDefinitionStatus('knip', buildDefinitions),
+    };
+  }
+
+  const tsconfigPath = path.join(currentWorkingDirectory, 'tsconfig.json');
+  return {
+    enabled: true,
+    source: 'auto-discovery',
+    locationType: 'packageJson',
+    path: packageJsonPath,
+    tsconfigPath: fs.existsSync(tsconfigPath) && fs.statSync(tsconfigPath).isFile()
+      ? tsconfigPath
+      : undefined,
+    buildDefinition: buildToolDefinitionStatus('knip', buildDefinitions),
+  };
+}
+
+/**
+ * Knip の設定解決結果を返す。
+ * @param {string} currentWorkingDirectory 現在の作業ディレクトリを表す。
+ * @param {string|undefined} explicitConfig 明示指定の設定パスを表す。
+ * @param {object} discoveredConfiguration 探索結果を表す。
+ * @param {{modules?: object[]}} buildDefinitions build-definition 抽出結果を表す。
+ * @returns {{enabled: boolean, source: string, locationType: string, path?: string, packageJsonKey?: string, tsconfigPath?: string, buildDefinition: object}} 解決結果を返す。
+ */
+function resolveKnipConfiguration(
+  currentWorkingDirectory,
+  explicitConfig,
+  discoveredConfiguration,
+  buildDefinitions,
+) {
+  const explicitConfigPath = normalizeExplicitPath(
+    currentWorkingDirectory,
+    explicitConfig,
+  );
+  const buildDefinition = buildDefinitionStatus('knip', false);
+
+  if (explicitConfigPath) {
+    return {
+      enabled: true,
+      source: 'explicit',
+      locationType: path.basename(explicitConfigPath).toLowerCase() === 'package.json'
+        ? 'packageJson'
+        : 'file',
+      path: explicitConfigPath,
+      tsconfigPath: (() => {
+        const tsconfigPath = path.join(path.dirname(explicitConfigPath), 'tsconfig.json');
+        return fs.existsSync(tsconfigPath) && fs.statSync(tsconfigPath).isFile()
+          ? tsconfigPath
+          : undefined;
+      })(),
+      buildDefinition,
+    };
+  }
+
+  if (discoveredConfiguration && discoveredConfiguration.enabled) {
+    const resolvedPath = typeof discoveredConfiguration.path === 'string'
+      ? discoveredConfiguration.path
+      : undefined;
+    const discoveredTsconfigPath = resolvedPath
+      ? path.join(path.dirname(resolvedPath), 'tsconfig.json')
+      : undefined;
+    return {
+      ...discoveredConfiguration,
+      tsconfigPath: discoveredTsconfigPath && fs.existsSync(discoveredTsconfigPath) && fs.statSync(discoveredTsconfigPath).isFile()
+        ? discoveredTsconfigPath
+        : undefined,
+      buildDefinition: buildToolDefinitionStatus('knip', buildDefinitions),
+    };
+  }
+
+  return resolveKnipAutoDiscoveryConfiguration(currentWorkingDirectory, buildDefinitions);
+}
+
+/**
  * Web 系ツールの解決結果一覧を返す。
  * @param {string} currentWorkingDirectory 現在の作業ディレクトリを表す。
- * @param {{eslintConfig?: string, oxlintConfig?: string, tsconfig?: string, doiuseConfig?: string, stylelintConfig?: string, htmlhintConfig?: string, htmlValidateConfig?: string}} options CLI オプションを表す。
- * @param {{eslint: object, oxlint: object, tsc: object, doiuse: object, stylelint: object, htmlhint: object, 'html-validate': object}} discoveredWebConfigurations 探索結果を表す。
+ * @param {{eslintConfig?: string, oxlintConfig?: string, tsconfig?: string, doiuseConfig?: string, knipConfig?: string, stylelintConfig?: string, htmlhintConfig?: string, htmlValidateConfig?: string}} options CLI オプションを表す。
+ * @param {{eslint: object, oxlint: object, tsc: object, doiuse: object, knip: object, stylelint: object, htmlhint: object, 'html-validate': object}} discoveredWebConfigurations 探索結果を表す。
  * @param {{modules?: object[]}} buildDefinitions build-definition 抽出結果を表す。
- * @returns {{eslint: object, oxlint: object, tsc: object, doiuse: object, stylelint: object, htmlhint: object, 'html-validate': object}} 解決結果を返す。
+ * @returns {{eslint: object, oxlint: object, tsc: object, doiuse: object, knip: object, stylelint: object, htmlhint: object, 'html-validate': object}} 解決結果を返す。
  */
 function buildWebResolution(
   currentWorkingDirectory,
@@ -326,6 +413,12 @@ function buildWebResolution(
       buildDefinitions,
       webDefaults && webDefaults.doiuse ? webDefaults.doiuse : undefined,
     ),
+    knip: resolveKnipConfiguration(
+      currentWorkingDirectory,
+      options.knipConfig,
+      discoveredWebConfigurations.knip,
+      buildDefinitions,
+    ),
     stylelint: resolveSingleWebToolConfiguration(
       'stylelint',
       currentWorkingDirectory,
@@ -356,10 +449,10 @@ function buildWebResolution(
 /**
  * workspace scope 向けの Web モジュール解決結果一覧を返す。
  * @param {string} currentWorkingDirectory 現在の作業ディレクトリを表す。
- * @param {{scope: string, eslintConfig?: string, oxlintConfig?: string, tsconfig?: string, doiuseConfig?: string, stylelintConfig?: string, htmlhintConfig?: string, htmlValidateConfig?: string}} options CLI オプションを表す。
+ * @param {{scope: string, eslintConfig?: string, oxlintConfig?: string, tsconfig?: string, doiuseConfig?: string, knipConfig?: string, stylelintConfig?: string, htmlhintConfig?: string, htmlValidateConfig?: string}} options CLI オプションを表す。
  * @param {{web?: object}} defaults 既定設定を表す。
  * @param {{modules?: object[]}} buildDefinitions build-definition 抽出結果を表す。
- * @returns {Array<{moduleRoot: string, web: {eslint: object, oxlint: object, tsc: object, doiuse: object, stylelint: object, htmlhint: object, 'html-validate': object}}>} モジュール解決結果を返す。
+ * @returns {Array<{moduleRoot: string, web: {eslint: object, oxlint: object, tsc: object, doiuse: object, knip: object, stylelint: object, htmlhint: object, 'html-validate': object}}>} モジュール解決結果を返す。
  */
 function resolveWorkspaceWebModules(currentWorkingDirectory, options, defaults, buildDefinitions) {
   if (options.scope !== 'workspace') {
@@ -371,6 +464,7 @@ function resolveWorkspaceWebModules(currentWorkingDirectory, options, defaults, 
     || options.oxlintConfig
     || options.tsconfig
     || options.doiuseConfig
+    || options.knipConfig
     || options.stylelintConfig
     || options.htmlhintConfig
     || options.htmlValidateConfig
@@ -385,6 +479,7 @@ function resolveWorkspaceWebModules(currentWorkingDirectory, options, defaults, 
           oxlint: { enabled: false, source: 'default', locationType: 'disabled' },
           tsc: { enabled: false, source: 'default', locationType: 'disabled' },
           doiuse: { enabled: false, source: 'default', locationType: 'disabled' },
+          knip: { enabled: false, source: 'default', locationType: 'disabled' },
           stylelint: { enabled: false, source: 'default', locationType: 'disabled' },
           htmlhint: { enabled: false, source: 'default', locationType: 'disabled' },
           'html-validate': { enabled: false, source: 'default', locationType: 'disabled' },
@@ -414,7 +509,7 @@ function resolveWorkspaceWebModules(currentWorkingDirectory, options, defaults, 
 
 /**
  * CLI 向けの設定解決結果を返す。
- * @param {{cwd?: string, mode: string, scope: string, files?: string[], semgrepConfig?: string, semgrepRules?: string[], eslintConfig?: string, oxlintConfig?: string, tsconfig?: string, doiuseConfig?: string, stylelintConfig?: string, htmlhintConfig?: string, htmlValidateConfig?: string}} options CLI オプションを表す。
+ * @param {{cwd?: string, mode: string, scope: string, files?: string[], semgrepConfig?: string, semgrepRules?: string[], eslintConfig?: string, oxlintConfig?: string, tsconfig?: string, doiuseConfig?: string, knipConfig?: string, stylelintConfig?: string, htmlhintConfig?: string, htmlValidateConfig?: string}} options CLI オプションを表す。
  * @returns {{cwd: string, mode: string, scope: string, files: string[], resolutionOrder: string[], semgrep: object, web: object}} 解決結果を返す。
  */
 function resolveRunConfiguration(options) {

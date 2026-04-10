@@ -39,6 +39,7 @@ const WEB_FILE_EXTENSIONS = {
   oxlint: OXLINT_FILE_EXTENSIONS,
   tsc: new Set(TYPESCRIPT_FILE_EXTENSIONS),
   doiuse: new Set(['.css', '.scss', '.sass', '.html', '.htm']),
+  knip: new Set([...JAVASCRIPT_FILE_EXTENSIONS, ...TYPESCRIPT_FILE_EXTENSIONS]),
   stylelint: new Set(['.css', '.scss', '.sass', '.html', '.htm']),
   htmlhint: new Set(HTML_FILE_EXTENSIONS),
   'html-validate': new Set(HTML_FILE_EXTENSIONS),
@@ -315,6 +316,15 @@ function supportsDoiuseChecks(modeScopeKey) {
 }
 
 /**
+ * Knip check の対象モードか判定する。
+ * @param {string} modeScopeKey 実行モードとスコープの組み合わせを表す。
+ * @returns {boolean} 対象モードの場合は true を返す。
+ */
+function supportsKnipChecks(modeScopeKey) {
+  return modeScopeKey === 'manual:workspace';
+}
+
+/**
  * Web execution plan 向けの warning 一覧を返す。
  * @param {{mode: string, scope: string, cwd: string}} options 計画生成条件を表す。
  * @param {object|undefined} webResolution Web 設定解決結果を表す。
@@ -330,6 +340,9 @@ function buildWebWarnings(options, webResolution, excludedDirectories = []) {
   const hasDoiuseFiles = options.scope === 'workspace'
     ? hasWorkspaceFilesExcluding(options.cwd, WEB_FILE_EXTENSIONS.doiuse, excludedDirectories)
     : filterWebFiles(options.files, 'doiuse').length > 0;
+  const hasKnipFiles = options.scope === 'workspace'
+    ? hasWorkspaceFilesExcluding(options.cwd, WEB_FILE_EXTENSIONS.knip, excludedDirectories)
+    : filterWebFiles(options.files, 'knip').length > 0;
 
   if (
     supportsTypeScriptProjectChecks(modeScopeKey)
@@ -345,6 +358,14 @@ function buildWebWarnings(options, webResolution, excludedDirectories = []) {
     && !(resolveWebToolResolution(webResolution, 'doiuse') && resolveWebToolResolution(webResolution, 'doiuse').enabled)
   ) {
     warnings.push(`doiuse was skipped because no browserslist configuration was detected in ${options.cwd}`);
+  }
+
+  if (
+    supportsKnipChecks(modeScopeKey)
+    && hasKnipFiles
+    && !(resolveWebToolResolution(webResolution, 'knip') && resolveWebToolResolution(webResolution, 'knip').enabled)
+  ) {
+    warnings.push(`knip was skipped because no package.json was detected in ${options.cwd}`);
   }
 
   return warnings;
@@ -398,6 +419,9 @@ function shouldIncludeWebModule(options) {
   if (web.doiuse && web.doiuse.enabled) {
     return true;
   }
+  if (web.knip && web.knip.enabled) {
+    return true;
+  }
   if (web.stylelint && web.stylelint.enabled) {
     return true;
   }
@@ -413,6 +437,10 @@ function shouldIncludeWebModule(options) {
   }
 
   if (hasWorkspaceFiles(options.cwd, WEB_FILE_EXTENSIONS.doiuse)) {
+    return true;
+  }
+
+  if (hasWorkspaceFiles(options.cwd, WEB_FILE_EXTENSIONS.knip)) {
     return true;
   }
 
@@ -534,6 +562,9 @@ function buildWebChecks(options, webResolution, excludedDirectories = []) {
   const hasDoiuseFiles = options.scope === 'workspace'
     ? hasWorkspaceFilesExcluding(options.cwd, WEB_FILE_EXTENSIONS.doiuse, excludedDirectories)
     : false;
+  const hasKnipFiles = options.scope === 'workspace'
+    ? hasWorkspaceFilesExcluding(options.cwd, WEB_FILE_EXTENSIONS.knip, excludedDirectories)
+    : false;
   const hasStylelintFiles = options.scope === 'workspace'
     ? hasWorkspaceFilesExcluding(options.cwd, WEB_FILE_EXTENSIONS.stylelint, excludedDirectories)
     : filterWebFiles(options.files, 'stylelint').length > 0;
@@ -552,6 +583,9 @@ function buildWebChecks(options, webResolution, excludedDirectories = []) {
       : []),
     ...(supportsDoiuseChecks(modeScopeKey)
       ? [buildWebCheckEntry('doiuse', hasDoiuseFiles, Boolean(resolveWebToolResolution(webResolution, 'doiuse') && resolveWebToolResolution(webResolution, 'doiuse').enabled))]
+      : []),
+    ...(supportsKnipChecks(modeScopeKey)
+      ? [buildWebCheckEntry('knip', hasKnipFiles, Boolean(resolveWebToolResolution(webResolution, 'knip') && resolveWebToolResolution(webResolution, 'knip').enabled))]
       : []),
     buildWebCheckEntry('stylelint', hasStylelintFiles, Boolean(resolveWebToolResolution(webResolution, 'stylelint') && resolveWebToolResolution(webResolution, 'stylelint').enabled)),
     buildWebCheckEntry('htmlhint', hasHtmlhintFiles, Boolean(resolveWebToolResolution(webResolution, 'htmlhint') && resolveWebToolResolution(webResolution, 'htmlhint').enabled)),

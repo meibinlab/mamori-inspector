@@ -18,6 +18,7 @@ const SUPPORTED_COMMAND_TOOLS = new Set([
   'oxlint',
   'tsc',
   'doiuse',
+  'knip',
   'stylelint',
   'htmlhint',
   'html-validate',
@@ -33,6 +34,7 @@ const TOOL_FILE_EXTENSIONS = {
   oxlint: new Set(['.js', '.cjs', '.mjs', '.jsx', '.ts', '.cts', '.mts', '.tsx']),
   tsc: new Set(TYPESCRIPT_ESLINT_EXTENSIONS),
   doiuse: new Set(['.css', '.scss', '.sass', '.html', '.htm']),
+  knip: new Set(['.js', '.cjs', '.mjs', '.jsx', '.ts', '.cts', '.mts', '.tsx']),
   stylelint: new Set(['.css', '.scss', '.sass', '.html', '.htm']),
   htmlhint: new Set(['.html', '.htm']),
   'html-validate': new Set(['.html', '.htm']),
@@ -247,6 +249,15 @@ function buildWebConfigArguments(toolName, toolResolution) {
     return ['-p', toolResolution.path];
   }
 
+  if (
+    toolName === 'knip'
+    && toolResolution
+    && toolResolution.path
+    && path.basename(toolResolution.path).toLowerCase() !== 'package.json'
+  ) {
+    return ['--config', toolResolution.path];
+  }
+
   return [];
 }
 
@@ -306,7 +317,7 @@ function resolveWebCommandClearEnvironmentKeys(toolName, toolResolution) {
  * @returns {string} 実行 cwd を返す。
  */
 function resolveWebCommandCwd(toolName, moduleRoot, toolResolution) {
-  if (toolName === 'doiuse' && toolResolution && toolResolution.path) {
+  if ((toolName === 'doiuse' || toolName === 'knip') && toolResolution && toolResolution.path) {
     return path.dirname(toolResolution.path);
   }
 
@@ -450,6 +461,22 @@ function buildWebCommandEntry(toolName, moduleDefinition, toolFiles, options) {
       clearEnvironmentKeys,
       directFiles,
       inlineHtmlFiles,
+    };
+  }
+
+  if (toolName === 'knip') {
+    const knipArguments = ['--reporter', 'json', '--no-progress', ...configArguments];
+    if (toolResolution && toolResolution.tsconfigPath) {
+      knipArguments.push('--tsConfig', toolResolution.tsconfigPath);
+    }
+
+    return {
+      tool: 'knip',
+      enabled: true,
+      phase: 'check',
+      command: 'knip',
+      args: knipArguments,
+      cwd: commandWorkingDirectory,
     };
   }
 
@@ -659,6 +686,7 @@ function buildCommandEntry(toolEntry, moduleDefinition, semgrepResolution, modul
     || toolEntry.tool === 'oxlint'
     || toolEntry.tool === 'tsc'
     || toolEntry.tool === 'doiuse'
+    || toolEntry.tool === 'knip'
     || toolEntry.tool === 'stylelint'
     || toolEntry.tool === 'htmlhint'
     || toolEntry.tool === 'html-validate') {

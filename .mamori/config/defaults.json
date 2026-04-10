@@ -133,6 +133,35 @@
       ],
       "packageJsonKey": "browserslist"
     },
+    "knip": {
+      "configPatterns": [
+        {
+          "type": "exact",
+          "value": "knip.json"
+        },
+        {
+          "type": "exact",
+          "value": "knip.jsonc"
+        },
+        {
+          "type": "exact",
+          "value": ".knip.json"
+        },
+        {
+          "type": "exact",
+          "value": ".knip.jsonc"
+        },
+        {
+          "type": "exact",
+          "value": "knip.js"
+        },
+        {
+          "type": "exact",
+          "value": "knip.ts"
+        }
+      ],
+      "packageJsonKey": "knip"
+    },
     "stylelint": {
       "fallbackConfig": "stylelint.default.json",
       "configPatterns": [

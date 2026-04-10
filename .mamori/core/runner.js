@@ -12,6 +12,8 @@ const cpdAdapter = require('../adapters/cpd');
 const eslintAdapter = require('../adapters/eslint');
 // doiuse adapter を表す
 const doiuseAdapter = require('../adapters/doiuse');
+// Knip adapter を表す
+const knipAdapter = require('../adapters/knip');
 // HTML-Validate adapter を表す
 const htmlValidateAdapter = require('../adapters/html-validate');
 // htmlhint adapter を表す
@@ -454,6 +456,13 @@ function extractIssues(commandResult) {
         ? commandResult.stdout
         : (commandResult.stderr || ''),
       commandResult.filePathMappings,
+    );
+  }
+
+  if (commandResult.tool === 'knip') {
+    return knipAdapter.parseKnipJson(
+      commandResult.stdout || '',
+      commandResult.cwd || commandResult.moduleRoot,
     );
   }
 
@@ -1237,6 +1246,7 @@ async function executeCommandEntry(workspaceRoot, moduleRoot, commandEntry, exec
       exitCode: result.exitCode,
       stdout: result.stdout,
       stderr: result.stderr,
+      cwd: commandEntry.cwd,
       configPath: commandEntry.configPath,
       filePathMappings: preparedCommand.filePathMappings,
       reportPaths: toolReportState ? toolReportState.reportPaths : undefined,

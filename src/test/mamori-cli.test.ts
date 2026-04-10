@@ -266,6 +266,10 @@ function createNodeModulesBinDirectory(workingDirectory: string): string {
     stdout: '',
     exitCode: 0,
   });
+  writeWebCommandWrapper(binDirectory, 'knip', 'knip.log', {
+    stdout: '{"issues":[]}',
+    exitCode: 0,
+  });
   writeWebCommandWrapper(binDirectory, 'html-validate', 'html-validate.log', {
     stdout: '[]',
     exitCode: 0,
@@ -1051,6 +1055,77 @@ function writeDoiuseWrapper(
       '  }));',
       '}',
       'process.stdout.write(results.join("\\n"));',
+      'process.exit(configuredExitCode);',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+
+  if (process.platform === 'win32') {
+    fs.writeFileSync(
+      wrapperPath,
+      `@echo off\r\nnode "${helperScriptPath}" "${outputPath}" %*\r\nexit /b %ERRORLEVEL%\r\n`,
+      'utf8',
+    );
+    return;
+  }
+
+  fs.writeFileSync(
+    wrapperPath,
+    `#!/bin/sh\nnode '${helperScriptPath}' '${outputPath}' "$@"\n`,
+    'utf8',
+  );
+  fs.chmodSync(wrapperPath, 0o755);
+}
+
+/**
+ * Knip 向けコマンドラッパーを作成する。
+ * @param binDirectory ラッパーディレクトリを表す。
+ * @param outputFileName 出力ファイル名を表す。
+ * @param options ラッパー動作オプションを表す。
+ * @returns 返り値はない。
+ */
+function writeKnipWrapper(
+  binDirectory: string,
+  outputFileName: string,
+  options: {
+    requirePackageJson?: boolean;
+    stdout?: string;
+    exitCode?: number;
+  } = {},
+): void {
+  const outputPath = path.join(binDirectory, outputFileName);
+  const helperScriptPath = path.join(binDirectory, 'knip-wrapper.js');
+  const wrapperPath = process.platform === 'win32'
+    ? path.join(binDirectory, 'knip.cmd')
+    : path.join(binDirectory, 'knip');
+  const stdout = typeof options.stdout === 'string' ? options.stdout : '';
+  const exitCode = typeof options.exitCode === 'number' ? options.exitCode : 0;
+
+  fs.writeFileSync(
+    helperScriptPath,
+    [
+      'const fs = require("fs");',
+      'const path = require("path");',
+      'const logPath = process.argv[2];',
+      `const requirePackageJson = ${options.requirePackageJson === true ? 'true' : 'false'};`,
+      `const configuredStdout = ${JSON.stringify(stdout)};`,
+      `const configuredExitCode = ${String(exitCode)};`,
+      'const args = process.argv.slice(3);',
+      'fs.appendFileSync(logPath, `${args.join(" ")}\\nCWD=${process.cwd()}\\n`, "utf8");',
+      'const packageJsonPath = path.join(process.cwd(), "package.json");',
+      'if (requirePackageJson) {',
+      '  if (!fs.existsSync(packageJsonPath)) {',
+      '    process.stderr.write("package.json not found");',
+      '    process.exit(2);',
+      '  }',
+      '  fs.appendFileSync(logPath, `PACKAGE_JSON=${packageJsonPath}\\n`, "utf8");',
+      '}',
+      'if (configuredStdout) {',
+      '  process.stdout.write(configuredStdout);',
+      '  process.exit(configuredExitCode);',
+      '}',
+      'process.stdout.write(JSON.stringify({ issues: [] }));',
       'process.exit(configuredExitCode);',
       '',
     ].join('\n'),
@@ -2713,6 +2788,182 @@ suite('Mamori CLI Test Suite', () => {
     assert.ok(fs.existsSync(sarifOutputPath));
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /flexbox/u);
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /site\.css/u);
+  });
+
+  /**
+   * package.json と tsconfig.json がある場合は manual/workspace の Knip checker を計画へ含めること。
+   * @returns 返り値はない。
+   */
+  test('Plans Knip checks for JavaScript workspaces when auto-discovery is available', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src');
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.writeFileSync(path.join(sourceDirectory, 'main.js'), 'module.exports = 1;\n', 'utf8');
+    fs.writeFileSync(path.join(temporaryDirectory, 'package.json'), '{"name":"sample","version":"1.0.0"}\n', 'utf8');
+    fs.writeFileSync(path.join(temporaryDirectory, 'tsconfig.json'), '{"compilerOptions":{"allowJs":true}}\n', 'utf8');
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'manual',
+      '--scope',
+      'workspace',
+    ]);
+
+    assert.strictEqual(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /knip: enabled \(source=auto-discovery\)/u);
+    assert.match(result.stdout, /path=.*package\.json/u);
+    assert.match(result.stdout, /locationType=packageJson/u);
+    assert.match(result.stdout, /knip:enabled/u);
+    assert.match(result.stdout, /knip:knip --reporter json --no-progress --tsConfig .*tsconfig\.json/u);
+  });
+
+  /**
+   * package.json#knip がある場合は auto-discovery より discovery を優先すること。
+   * @returns 返り値はない。
+   */
+  test('Prefers package.json Knip configuration over auto-discovery', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src');
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.writeFileSync(path.join(sourceDirectory, 'main.js'), 'module.exports = 1;\n', 'utf8');
+    fs.writeFileSync(
+      path.join(temporaryDirectory, 'package.json'),
+      JSON.stringify({
+        name: 'sample',
+        version: '1.0.0',
+        knip: {
+          entry: ['src/main.js'],
+        },
+      }, null, 2),
+      'utf8',
+    );
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'manual',
+      '--scope',
+      'workspace',
+    ]);
+
+    assert.strictEqual(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /knip: enabled \(source=discovery\)/u);
+    assert.match(result.stdout, /packageJsonKey=knip/u);
+  });
+
+  /**
+   * package.json 未検出時は Knip を warning 付きで skip すること。
+   * @returns 返り値はない。
+   */
+  test('Warns and skips Knip when package.json is not detected for JavaScript workspaces', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src');
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.writeFileSync(path.join(sourceDirectory, 'main.js'), 'module.exports = 1;\n', 'utf8');
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'manual',
+      '--scope',
+      'workspace',
+    ]);
+
+    assert.strictEqual(result.status, 0, result.stderr || result.stdout);
+    assert.match(result.stdout, /knip: disabled \(source=default\)/u);
+    assert.match(result.stdout, /knip was skipped because no package\.json was detected/u);
+    assert.match(result.stdout, /knip:disabled status=config-not-detected/u);
+    assert.doesNotMatch(result.stdout, /knip:knip --reporter json --no-progress/u);
+  });
+
+  /**
+   * manual/workspace の Knip finding を SARIF 化できること。
+   * @returns 返り値はない。
+   */
+  test('Reports Knip findings during manual workspace checks', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src');
+    const nodeBinDirectory = createNodeModulesBinDirectory(temporaryDirectory);
+    const knipLogPath = path.join(nodeBinDirectory, 'knip.log');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-knip-manual.sarif');
+    const knipOutput = JSON.stringify({
+      issues: [
+        {
+          file: 'package.json',
+          binaries: [],
+          catalog: [],
+          dependencies: [{ name: 'lodash', line: 6, col: 6 }],
+          devDependencies: [],
+          duplicates: [],
+          enumMembers: [],
+          exports: [],
+          files: [],
+          namespaceMembers: [],
+          optionalPeerDependencies: [],
+          types: [],
+          unlisted: [],
+          unresolved: [],
+        },
+        {
+          file: 'src/main.js',
+          binaries: [],
+          catalog: [],
+          dependencies: [],
+          devDependencies: [],
+          duplicates: [],
+          enumMembers: [],
+          exports: [{ name: 'unused', line: 1, col: 9 }],
+          files: [{ path: 'src/unused.js' }],
+          namespaceMembers: [],
+          optionalPeerDependencies: [],
+          types: [],
+          unlisted: [],
+          unresolved: [],
+        },
+      ],
+    });
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.writeFileSync(path.join(sourceDirectory, 'main.js'), 'exports.unused = 1;\n', 'utf8');
+    fs.writeFileSync(path.join(temporaryDirectory, 'package.json'), '{"name":"sample","version":"1.0.0"}\n', 'utf8');
+    writeWebCommandWrapper(nodeBinDirectory, 'eslint', 'eslint.log', {
+      stdout: '[]',
+      exitCode: 0,
+      loggedEnvironmentKeys: ['ESLINT_USE_FLAT_CONFIG'],
+    });
+    writeKnipWrapper(nodeBinDirectory, 'knip.log', {
+      requirePackageJson: true,
+      stdout: knipOutput,
+      exitCode: 1,
+    });
+
+    const result = runMamoriCli(temporaryDirectory, [
+      'run',
+      '--mode',
+      'manual',
+      '--scope',
+      'workspace',
+      '--execute',
+      '--sarif-output',
+      path.relative(temporaryDirectory, sarifOutputPath),
+    ]);
+
+    assert.strictEqual(result.status, 1, result.stderr || result.stdout);
+    assert.match(result.stdout, /knip:failed exitCode=1/u);
+    assert.match(result.stdout, /Knip reported dependencies: lodash/u);
+    assert.match(result.stdout, /Knip reported exports: unused/u);
+    assert.match(fs.readFileSync(knipLogPath, 'utf8'), /CWD=.*mamori-cli/u);
+    assert.match(fs.readFileSync(knipLogPath, 'utf8'), /PACKAGE_JSON=.*package\.json/u);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /knip\/dependencies/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /knip\/exports/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /knip\/files/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /package\.json/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /unused\.js/u);
   });
 
   /**

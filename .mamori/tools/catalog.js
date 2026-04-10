@@ -21,6 +21,9 @@ const NODE_TOOL_PACKAGES = {
   tsc: {
     packageName: 'typescript',
   },
+  knip: {
+    packageName: 'knip',
+  },
   doiuse: {
     packageName: 'doiuse',
   },
