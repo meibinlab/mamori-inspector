@@ -1303,6 +1303,55 @@ function writeMavenExistingPmdReportFailureWrapper(binDirectory: string, outputF
 }
 
 /**
+ * 既存 Checkstyle レポートを残したまま checkstyle:check を失敗終了させるテスト用 Maven ラッパーを作成する。
+ * @param binDirectory ラッパーディレクトリを表す。
+ * @param outputFileName 出力ファイル名を表す。
+ * @returns 返り値はない。
+ */
+function writeMavenExistingCheckstyleReportFailureWrapper(binDirectory: string, outputFileName: string): void {
+  const outputPath = path.join(binDirectory, outputFileName);
+  const checkstyleXml = '<?xml version="1.0"?><checkstyle version="10.0"><file name="src/main/java/App.java"><error line="2" column="5" severity="warning" message="Stale Checkstyle finding" source="com.example.StaleCheckstyleRule"/></file></checkstyle>';
+  const wrapperPath = process.platform === 'win32'
+    ? path.join(path.dirname(binDirectory), 'mvnw.cmd')
+    : path.join(path.dirname(binDirectory), 'mvnw');
+  const checkstyleReportPath = path.join(path.dirname(binDirectory), 'target', 'checkstyle-result.xml');
+
+  fs.mkdirSync(path.dirname(checkstyleReportPath), { recursive: true });
+  fs.writeFileSync(checkstyleReportPath, checkstyleXml, 'utf8');
+
+  if (process.platform === 'win32') {
+    fs.writeFileSync(
+      wrapperPath,
+      [
+        '@echo off',
+        `echo %*>>"${outputPath}"`,
+        'echo %* | findstr /C:"checkstyle:check" >nul',
+        'if not errorlevel 1 exit /b 1',
+        'exit /b 0',
+        '',
+      ].join('\r\n'),
+      'utf8',
+    );
+    return;
+  }
+
+  fs.writeFileSync(
+    wrapperPath,
+    [
+      '#!/bin/sh',
+      `printf '%s\n' "$*" >> "${outputPath}"`,
+      'case "$*" in',
+      '  *"checkstyle:check"*) exit 1 ;;',
+      'esac',
+      'exit 0',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+  fs.chmodSync(wrapperPath, 0o755);
+}
+
+/**
  * Checkstyle を既定レポートファイルへ出力するテスト用 Maven ラッパーを作成する。
  * @param binDirectory ラッパーディレクトリを表す。
  * @param outputFileName 出力ファイル名を表す。
@@ -5056,10 +5105,79 @@ suite('Mamori CLI Test Suite', () => {
   });
 
   /**
+   * save で Checkstyle が失敗し fresh output が無い場合は stale report を再利用しないこと。
+   * @returns 返り値はない。
+   */
+  test('Ignores stale Checkstyle report files during save checks when no fresh output is available', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src', 'main', 'java');
+    const targetFilePath = path.join(sourceDirectory, 'App.java');
+    const pomFilePath = path.join(temporaryDirectory, 'pom.xml');
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const checkstyleReportPath = path.join(temporaryDirectory, 'target', 'checkstyle-result.xml');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-checkstyle-stale-ignored.sarif');
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.writeFileSync(targetFilePath, 'class App {}\n', 'utf8');
+    fs.writeFileSync(
+      pomFilePath,
+      [
+        '<project>',
+        '  <build>',
+        '    <plugins>',
+        '      <plugin><artifactId>maven-checkstyle-plugin</artifactId></plugin>',
+        '      <plugin><artifactId>maven-pmd-plugin</artifactId></plugin>',
+        '    </plugins>',
+        '  </build>',
+        '</project>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    writeMavenExistingCheckstyleReportFailureWrapper(binDirectory, 'mvn-checkstyle-stale-ignored.log');
+    writeSemgrepSarifWrapper(binDirectory, 'semgrep-checkstyle-stale-ignored.log');
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      [
+        'run',
+        '--mode',
+        'save',
+        '--scope',
+        'file',
+        '--files',
+        path.relative(temporaryDirectory, targetFilePath),
+        '--execute',
+        '--sarif-output',
+        path.relative(temporaryDirectory, sarifOutputPath),
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(binDirectory),
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, /checkstyle:failed exitCode=1/u);
+    assert.doesNotMatch(result.stdout, /Stale Checkstyle finding/u);
+    assert.ok(fs.existsSync(checkstyleReportPath));
+    const regeneratedCheckstyleReport = fs.readFileSync(checkstyleReportPath, 'utf8');
+    assert.match(regeneratedCheckstyleReport, /<checkstyle version="13\.0\.0">/u);
+    assert.doesNotMatch(regeneratedCheckstyleReport, /Stale Checkstyle finding/u);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    const sarifContent = fs.readFileSync(sarifOutputPath, 'utf8');
+    assert.doesNotMatch(sarifContent, /Stale Checkstyle finding/u);
+    assert.doesNotMatch(sarifContent, /com\.example\.StaleCheckstyleRule/u);
+    assert.match(sarifContent, /Potential issue/u);
+  });
+
+  /**
    * manual/workspace で既存 PMD レポートだけが残っている場合でも finding を SARIF 化できること。
    * @returns 返り値はない。
    */
-  test('Loads PMD findings from an existing Maven report file during manual workspace checks', () => {
+  test('Ignores stale PMD findings from an existing Maven report file during manual workspace checks when no fresh output is available', () => {
     const temporaryDirectory = createTemporaryDirectory();
     const sourceDirectory = path.join(temporaryDirectory, 'src', 'main', 'java');
     const targetFilePath = path.join(sourceDirectory, 'App.java');
@@ -5109,11 +5227,12 @@ suite('Mamori CLI Test Suite', () => {
 
     assert.strictEqual(result.status, 1);
     assert.match(result.stdout, /pmd:failed exitCode=1/u);
-    assert.match(result.stdout, /Unused local variable/u);
+    assert.doesNotMatch(result.stdout, /Unused local variable/u);
     assert.match(fs.readFileSync(semgrepLogPath, 'utf8'), /scan --sarif --config p\/java/u);
     assert.ok(fs.existsSync(path.join(temporaryDirectory, 'target', 'pmd.xml')));
     assert.ok(fs.existsSync(sarifOutputPath));
-    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Unused local variable/u);
+    assert.doesNotMatch(fs.readFileSync(sarifOutputPath, 'utf8'), /Unused local variable/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Potential issue/u);
   });
 
   /**

@@ -346,37 +346,6 @@ function loadUpdatedToolReport(commandResult) {
 }
 
 /**
- * 実行時点で存在する最新レポート本文を返す。
- * @param {{reportPaths?: string[]}} commandResult 実行結果を表す。
- * @returns {string} レポート本文を返す。
- */
-function loadLatestExistingToolReport(commandResult) {
-  const reportPaths = Array.isArray(commandResult.reportPaths)
-    ? commandResult.reportPaths
-    : [];
-  let selectedReportPath;
-  let selectedReportMtime = -1;
-
-  for (const reportPath of reportPaths) {
-    const currentSnapshot = captureFileSnapshot(reportPath);
-    if (!currentSnapshot.exists) {
-      continue;
-    }
-
-    if (currentSnapshot.mtimeMs > selectedReportMtime) {
-      selectedReportMtime = currentSnapshot.mtimeMs;
-      selectedReportPath = reportPath;
-    }
-  }
-
-  if (!selectedReportPath) {
-    return '';
-  }
-
-  return fs.readFileSync(selectedReportPath, 'utf8');
-}
-
-/**
  * 標準出力または生成レポートから Issue 一覧を抽出する。
  * @param {{stdout?: string, reportPaths?: string[], reportSnapshots?: Record<string, {exists: boolean, mtimeMs: number, size: number}>}} commandResult 実行結果を表す。
  * @param {(rawReport: string) => Array<object>} parser レポート解析関数を表す。
@@ -391,10 +360,6 @@ function extractIssuesFromStandardOutputOrReport(commandResult, parser) {
   const updatedReportIssues = parser(loadUpdatedToolReport(commandResult));
   if (updatedReportIssues.length > 0) {
     return updatedReportIssues;
-  }
-
-  if (commandResult.status === 'failed') {
-    return parser(loadLatestExistingToolReport(commandResult));
   }
 
   return [];
