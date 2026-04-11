@@ -1573,6 +1573,42 @@ function buildDiagnosticsByUri(
 }
 
 /**
+ * 観測結果生成後に変更されたファイルの Diagnostics を除外する。
+ * @param diagnosticsByUri URI ごとの Diagnostics を表す。
+ * @param observedAtIsoString 観測結果の生成時刻を表す。
+ * @returns stale 除外後の Diagnostics を返す。
+ */
+function filterDiagnosticsByObservedResultFreshness(
+  diagnosticsByUri: Map<string, DiagnosticsByUriEntry>,
+  observedAtIsoString: string,
+): Map<string, DiagnosticsByUriEntry> {
+  const observedAtMilliseconds = Date.parse(observedAtIsoString);
+  if (Number.isNaN(observedAtMilliseconds)) {
+    return diagnosticsByUri;
+  }
+
+  const filteredDiagnosticsByUri = new Map<string, DiagnosticsByUriEntry>();
+
+  for (const [uriKey, entry] of diagnosticsByUri.entries()) {
+    if (entry.uri.scheme !== 'file') {
+      filteredDiagnosticsByUri.set(uriKey, entry);
+      continue;
+    }
+
+    try {
+      const stats = fs.statSync(entry.uri.fsPath);
+      if (stats.mtimeMs <= observedAtMilliseconds) {
+        filteredDiagnosticsByUri.set(uriKey, entry);
+      }
+    } catch {
+      // ファイルが存在しない、または stat できない診断は stale とみなして復元しない。
+    }
+  }
+
+  return filteredDiagnosticsByUri;
+}
+
+/**
  * URI ごとの Diagnostics を集約する。
  * @param target 集約先を表す。
  * @param source 集約元を表す。
@@ -1966,6 +2002,7 @@ function processObservedPrePushResultForWorkspace(
   diagnosticCollection: vscode.DiagnosticCollection,
   outputChannel: vscode.OutputChannel,
   handledRunIdsByWorkspace: Map<string, string>,
+  notifyFailure: boolean,
 ): void {
   const observedResult = loadObservedPrePushResult(workspaceFolder, outputChannel);
   if (!observedResult) {
@@ -1992,18 +2029,30 @@ function processObservedPrePushResultForWorkspace(
   const prePushDiagnosticsByUri = observedResult.sarifOutputPath
     ? buildDiagnosticsByUri(workspaceFolder, observedResult.sarifOutputPath)
     : new Map<string, DiagnosticsByUriEntry>();
+  const freshPrePushDiagnosticsByUri = filterDiagnosticsByObservedResultFreshness(
+    prePushDiagnosticsByUri,
+    observedResult.createdAt,
+  );
   replaceWorkspaceDiagnosticsByUri(
     diagnosticsState.prePushDiagnosticsByUri,
     workspaceFolder,
-    prePushDiagnosticsByUri,
+    freshPrePushDiagnosticsByUri,
   );
   publishTrackedDiagnostics(diagnosticCollection, diagnosticsState);
 
-  const diagnosticsCount = countDiagnosticsByUri(prePushDiagnosticsByUri);
+  const diagnosticsCount = countDiagnosticsByUri(freshPrePushDiagnosticsByUri);
+  if (diagnosticsCount === 0 && countDiagnosticsByUri(prePushDiagnosticsByUri) > 0) {
+    outputChannel.appendLine(
+      `Mamori Inspector ignored stale observed pre-push diagnostics for ${workspaceFolder.uri.fsPath}: createdAt=${observedResult.createdAt}.`,
+    );
+    return;
+  }
   outputChannel.appendLine(
     `Mamori Inspector observed failed pre-push result for ${workspaceFolder.uri.fsPath}: exitCode=${String(observedResult.exitCode)} diagnostics=${String(diagnosticsCount)}.`,
   );
-  void showObservedPrePushFailureNotification(observedResult, diagnosticsCount);
+  if (notifyFailure) {
+    void showObservedPrePushFailureNotification(observedResult, diagnosticsCount);
+  }
 }
 
 /**
@@ -2021,6 +2070,7 @@ function processObservedPrePushResultForWorkspaceFolders(
   diagnosticCollection: vscode.DiagnosticCollection,
   outputChannel: vscode.OutputChannel,
   handledRunIdsByWorkspace: Map<string, string>,
+  notifyFailure: boolean,
 ): void {
   for (const workspaceFolder of workspaceFolders) {
     processObservedPrePushResultForWorkspace(
@@ -2029,6 +2079,7 @@ function processObservedPrePushResultForWorkspaceFolders(
       diagnosticCollection,
       outputChannel,
       handledRunIdsByWorkspace,
+      notifyFailure,
     );
   }
 }
@@ -2044,6 +2095,7 @@ function processObservedPreCommitResultForWorkspace(
   workspaceFolder: vscode.WorkspaceFolder,
   outputChannel: vscode.OutputChannel,
   handledRunIdsByWorkspace: Map<string, string>,
+  notifyFailure: boolean,
 ): void {
   const observedResult = loadObservedPreCommitResult(workspaceFolder, outputChannel);
   if (!observedResult) {
@@ -2066,7 +2118,9 @@ function processObservedPreCommitResultForWorkspace(
   outputChannel.appendLine(
     `Mamori Inspector observed failed pre-commit result for ${workspaceFolder.uri.fsPath}: exitCode=${String(observedResult.exitCode)} findings=${String(observedResult.issueCount)}.`,
   );
-  void showObservedPreCommitFailureNotification(observedResult, outputChannel);
+  if (notifyFailure) {
+    void showObservedPreCommitFailureNotification(observedResult, outputChannel);
+  }
 }
 
 /**
@@ -2080,12 +2134,14 @@ function processObservedPreCommitResultForWorkspaceFolders(
   workspaceFolders: readonly vscode.WorkspaceFolder[],
   outputChannel: vscode.OutputChannel,
   handledRunIdsByWorkspace: Map<string, string>,
+  notifyFailure: boolean,
 ): void {
   for (const workspaceFolder of workspaceFolders) {
     processObservedPreCommitResultForWorkspace(
       workspaceFolder,
       outputChannel,
       handledRunIdsByWorkspace,
+      notifyFailure,
     );
   }
 }
@@ -2606,11 +2662,13 @@ export function activate(context: vscode.ExtensionContext): void {
     diagnosticCollection,
     outputChannel,
     handledPrePushRunIdsByWorkspace,
+    false,
   );
   processObservedPreCommitResultForWorkspaceFolders(
     vscode.workspace.workspaceFolders || [],
     outputChannel,
     handledPreCommitRunIdsByWorkspace,
+    false,
   );
   const preCommitResultWatcher = vscode.workspace.createFileSystemWatcher(PRE_COMMIT_RESULT_GLOB);
   context.subscriptions.push(preCommitResultWatcher);
@@ -2624,6 +2682,7 @@ export function activate(context: vscode.ExtensionContext): void {
         workspaceFolder,
         outputChannel,
         handledPreCommitRunIdsByWorkspace,
+        true,
       );
     }),
   );
@@ -2637,6 +2696,7 @@ export function activate(context: vscode.ExtensionContext): void {
         workspaceFolder,
         outputChannel,
         handledPreCommitRunIdsByWorkspace,
+        true,
       );
     }),
   );
@@ -2654,6 +2714,7 @@ export function activate(context: vscode.ExtensionContext): void {
         diagnosticCollection,
         outputChannel,
         handledPrePushRunIdsByWorkspace,
+        true,
       );
     }),
   );
@@ -2669,6 +2730,7 @@ export function activate(context: vscode.ExtensionContext): void {
         diagnosticCollection,
         outputChannel,
         handledPrePushRunIdsByWorkspace,
+        true,
       );
     }),
   );
@@ -2732,11 +2794,13 @@ export function activate(context: vscode.ExtensionContext): void {
         diagnosticCollection,
         outputChannel,
         handledPrePushRunIdsByWorkspace,
+        false,
       );
       processObservedPreCommitResultForWorkspaceFolders(
         event.added,
         outputChannel,
         handledPreCommitRunIdsByWorkspace,
+        false,
       );
     }),
   );

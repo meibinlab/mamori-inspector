@@ -3719,6 +3719,189 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
   });
 
   /**
+   * 再起動相当の activate 時に、結果生成後へ更新されたファイルの stale な pre-push Diagnostics を復元しないこと。
+   * @returns 実行完了を待つ Promise を返す。
+   */
+  test('Does not restore stale observed pre-push diagnostics on activate when the file was modified after the result', async function() {
+    this.timeout(20000);
+
+    const activeVscodeApi = vscodeApi;
+    const workspaceRoot = activeVscodeApi.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceRoot) {
+      throw new Error('Workspace root was not found');
+    }
+
+    const prePushResultPath = path.join(workspaceRoot, '.mamori', 'out', 'latest-prepush-result.json');
+    const prePushSarifPath = path.join(workspaceRoot, '.mamori', 'out', 'observed-prepush-stale-on-activate.sarif');
+    const targetFilePath = path.join(workspaceRoot, 'src', 'extension.ts');
+    const targetUri = activeVscodeApi.Uri.file(targetFilePath);
+    const restorePrePushResult = createRestoreAction(prePushResultPath);
+    const restorePrePushSarif = createRestoreAction(prePushSarifPath);
+    const restoreTargetFile = createRestoreAction(targetFilePath);
+    const messageCapture = captureWindowMessages(activeVscodeApi);
+
+    try {
+      fs.rmSync(prePushResultPath, { force: true });
+      fs.rmSync(prePushSarifPath, { force: true });
+
+      fs.mkdirSync(path.dirname(prePushResultPath), { recursive: true });
+      fs.writeFileSync(
+        prePushSarifPath,
+        JSON.stringify({
+          version: '2.1.0',
+          runs: [
+            {
+              results: [
+                {
+                  ruleId: 'prepush-rule',
+                  level: 'warning',
+                  message: {
+                    text: 'Observed pre-push stale finding.',
+                  },
+                  locations: [
+                    {
+                      physicalLocation: {
+                        artifactLocation: {
+                          uri: targetFilePath,
+                        },
+                        region: {
+                          startLine: 1,
+                          startColumn: 1,
+                        },
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        }),
+        'utf8',
+      );
+      fs.writeFileSync(
+        prePushResultPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: `test-prepush-stale-activate-${Date.now()}`,
+          createdAt: '2000-01-01T00:00:00.000Z',
+          mode: 'prepush',
+          scope: 'workspace',
+          exitCode: 1,
+          issueCount: 1,
+          warnings: [],
+          sarifOutputPath: prePushSarifPath,
+        }, null, 2),
+        'utf8',
+      );
+
+      fs.writeFileSync(targetFilePath, fs.readFileSync(targetFilePath, 'utf8'), 'utf8');
+
+      await getMamoriExtension(activeVscodeApi).activate();
+      await delay(500);
+
+      assert.deepStrictEqual(activeVscodeApi.languages.getDiagnostics(targetUri), []);
+      assert.strictEqual(messageCapture.warningMessages.length, 0);
+    } finally {
+      messageCapture.restore();
+      restoreTargetFile();
+      restorePrePushResult();
+      restorePrePushSarif();
+    }
+  });
+
+  /**
+   * activate 時に既存 pre-push 結果は Problems へ反映しても通知しないこと。
+   * @returns 実行完了を待つ Promise を返す。
+   */
+  test('Does not show a notification when observed pre-push failures are restored on activate', async function() {
+    this.timeout(20000);
+
+    const activeVscodeApi = vscodeApi;
+    const workspaceRoot = activeVscodeApi.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceRoot) {
+      throw new Error('Workspace root was not found');
+    }
+
+    const prePushResultPath = path.join(workspaceRoot, '.mamori', 'out', 'latest-prepush-result.json');
+    const prePushSarifPath = path.join(workspaceRoot, '.mamori', 'out', 'observed-prepush-activate.sarif');
+    const targetFilePath = path.join(workspaceRoot, 'src', 'extension.ts');
+    const targetUri = activeVscodeApi.Uri.file(targetFilePath);
+    const restorePrePushResult = createRestoreAction(prePushResultPath);
+    const restorePrePushSarif = createRestoreAction(prePushSarifPath);
+    const messageCapture = captureWindowMessages(activeVscodeApi);
+
+    try {
+      fs.rmSync(prePushResultPath, { force: true });
+      fs.rmSync(prePushSarifPath, { force: true });
+
+      fs.mkdirSync(path.dirname(prePushResultPath), { recursive: true });
+      fs.writeFileSync(
+        prePushSarifPath,
+        JSON.stringify({
+          version: '2.1.0',
+          runs: [
+            {
+              results: [
+                {
+                  ruleId: 'prepush-rule',
+                  level: 'warning',
+                  message: {
+                    text: 'Observed pre-push activate finding.',
+                  },
+                  locations: [
+                    {
+                      physicalLocation: {
+                        artifactLocation: {
+                          uri: targetFilePath,
+                        },
+                        region: {
+                          startLine: 1,
+                          startColumn: 1,
+                        },
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        }),
+        'utf8',
+      );
+      fs.writeFileSync(
+        prePushResultPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: `test-prepush-activate-${Date.now()}`,
+          createdAt: new Date().toISOString(),
+          mode: 'prepush',
+          scope: 'workspace',
+          exitCode: 1,
+          issueCount: 1,
+          warnings: [],
+          sarifOutputPath: prePushSarifPath,
+        }, null, 2),
+        'utf8',
+      );
+
+      await getMamoriExtension(activeVscodeApi).activate();
+      await waitFor(
+        () => activeVscodeApi.languages.getDiagnostics(targetUri).some(
+          (diagnostic) => diagnostic.message === 'Observed pre-push activate finding.',
+        ),
+        20000,
+      );
+
+      assert.strictEqual(messageCapture.warningMessages.length, 0);
+      assert.strictEqual(messageCapture.errorMessages.length, 0);
+    } finally {
+      messageCapture.restore();
+      restorePrePushResult();
+      restorePrePushSarif();
+    }
+  });
+
+  /**
    * 観測した pre-commit 検出結果で継続前提の選択肢付き通知を表示できること。
    * @returns 実行完了を待つ Promise を返す。
    */
@@ -3805,6 +3988,53 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
         writable: true,
         value: originalExecuteCommand,
       });
+      messageCapture.restore();
+      restorePreCommitResult();
+    }
+  });
+
+  /**
+   * activate 時に既存 pre-commit 結果があっても通知しないこと。
+   * @returns 実行完了を待つ Promise を返す。
+   */
+  test('Does not show a notification when observed pre-commit findings are restored on activate', async function() {
+    this.timeout(20000);
+
+    const activeVscodeApi = vscodeApi;
+    const workspaceRoot = activeVscodeApi.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!workspaceRoot) {
+      throw new Error('Workspace root was not found');
+    }
+
+    const preCommitResultPath = path.join(workspaceRoot, '.mamori', 'out', 'latest-precommit-result.json');
+    const restorePreCommitResult = createRestoreAction(preCommitResultPath);
+    const messageCapture = captureWindowMessages(activeVscodeApi);
+
+    try {
+      fs.rmSync(preCommitResultPath, { force: true });
+
+      fs.mkdirSync(path.dirname(preCommitResultPath), { recursive: true });
+      fs.writeFileSync(
+        preCommitResultPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: `test-precommit-activate-${Date.now()}`,
+          createdAt: new Date().toISOString(),
+          mode: 'precommit',
+          scope: 'staged',
+          exitCode: 1,
+          issueCount: 2,
+          warnings: [],
+        }, null, 2),
+        'utf8',
+      );
+
+      await getMamoriExtension(activeVscodeApi).activate();
+      await delay(500);
+
+      assert.strictEqual(messageCapture.warningMessages.length, 0);
+      assert.strictEqual(messageCapture.errorMessages.length, 0);
+    } finally {
       messageCapture.restore();
       restorePreCommitResult();
     }

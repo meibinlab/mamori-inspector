@@ -4,6 +4,13 @@
 
 形式は Keep a Changelog を参考にしつつ、このリポジトリの実装状況に合わせて整理します。
 
+## [0.3.2] - 2026-04-11
+
+### Fixed
+- VS Code の再起動や workspace 追加直後に、過去の managed pre-commit / pre-push 結果から不要な失敗通知トーストが再表示される問題を修正しました。
+- 観測済み pre-push 結果より後に編集されたファイルについて、stale な Diagnostics を activate 時に復元しないよう修正しました。
+- 起動時の stale pre-push 復元抑止と通知抑止を確認する拡張回帰テストを追加しました。
+
 ## [0.3.1] - 2026-04-11
 
 ### Fixed
