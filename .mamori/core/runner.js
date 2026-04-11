@@ -401,6 +401,192 @@ function extractIssuesFromStandardOutputOrReport(commandResult, parser) {
 }
 
 /**
+ * XML テキスト用に文字列をエスケープする。
+ * @param {string|undefined} value エスケープ対象文字列を表す。
+ * @returns {string} エスケープ済み文字列を返す。
+ */
+function escapeXmlText(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  return value
+    .replace(/&/gu, '&amp;')
+    .replace(/</gu, '&lt;')
+    .replace(/>/gu, '&gt;')
+    .replace(/"/gu, '&quot;')
+    .replace(/'/gu, '&apos;');
+}
+
+/**
+ * Checkstyle Issue 一覧を XML 文字列へ変換する。
+ * @param {Array<object>} issues Checkstyle Issue 一覧を表す。
+ * @returns {string} Checkstyle XML 文字列を返す。
+ */
+function serializeCheckstyleXml(issues) {
+  const issuesByFilePath = new Map();
+
+  for (const issue of Array.isArray(issues) ? issues : []) {
+    if (!issue || typeof issue.filePath !== 'string' || issue.filePath.trim() === '') {
+      continue;
+    }
+
+    const fileIssues = issuesByFilePath.get(issue.filePath) || [];
+    fileIssues.push(issue);
+    issuesByFilePath.set(issue.filePath, fileIssues);
+  }
+
+  const fileEntries = [];
+  for (const [filePath, fileIssues] of issuesByFilePath.entries()) {
+    const errorEntries = fileIssues.map((issue) => {
+      const line = typeof issue.line === 'number' && issue.line > 0 ? issue.line : 1;
+      const column = typeof issue.column === 'number' && issue.column > 0 ? issue.column : 1;
+      const severity = typeof issue.severity === 'string' && issue.severity.trim() !== ''
+        ? issue.severity
+        : 'warning';
+      const message = typeof issue.message === 'string' && issue.message.trim() !== ''
+        ? issue.message
+        : 'checkstyle finding';
+      const source = typeof issue.ruleId === 'string' && issue.ruleId.trim() !== ''
+        ? ` source="${escapeXmlText(issue.ruleId)}"`
+        : '';
+
+      return `    <error line="${String(line)}" column="${String(column)}" severity="${escapeXmlText(severity)}" message="${escapeXmlText(message)}"${source}/>`;
+    });
+
+    fileEntries.push(`  <file name="${escapeXmlText(filePath)}">\n${errorEntries.join('\n')}\n  </file>`);
+  }
+
+  return [
+    '<?xml version="1.0" encoding="UTF-8"?>',
+    '<checkstyle version="13.0.0">',
+    ...fileEntries,
+    '</checkstyle>',
+    '',
+  ].join('\n');
+}
+
+/**
+ * Checkstyle report の書き込み先を選択する。
+ * @param {{command?: string, reportPaths?: string[], reportSnapshots?: Record<string, {exists: boolean, mtimeMs: number, size: number}>}} commandResult 実行結果を表す。
+ * @returns {string|undefined} 書き込み先レポートパスを返す。
+ */
+function selectCheckstyleReportPath(commandResult) {
+  const reportPaths = Array.isArray(commandResult.reportPaths)
+    ? commandResult.reportPaths
+    : [];
+  if (reportPaths.length === 0) {
+    return undefined;
+  }
+
+  let selectedReportPath;
+  let selectedReportMtime = -1;
+  const reportSnapshots = commandResult.reportSnapshots || {};
+
+  for (const reportPath of reportPaths) {
+    const currentSnapshot = captureFileSnapshot(reportPath);
+    if (!currentSnapshot.exists) {
+      continue;
+    }
+
+    if (currentSnapshot.mtimeMs > selectedReportMtime) {
+      selectedReportMtime = currentSnapshot.mtimeMs;
+      selectedReportPath = reportPath;
+    }
+  }
+
+  if (selectedReportPath) {
+    return selectedReportPath;
+  }
+
+  for (const reportPath of reportPaths) {
+    if (reportSnapshots[reportPath]) {
+      return reportPath;
+    }
+  }
+
+  return reportPaths[0];
+}
+
+/**
+ * Checkstyle Issue 一覧を既定レポートへ書き戻す。
+ * @param {{command?: string, reportPaths?: string[], reportSnapshots?: Record<string, {exists: boolean, mtimeMs: number, size: number}>}} commandResult 実行結果を表す。
+ * @param {Array<object>} issues Checkstyle Issue 一覧を表す。
+ * @returns {void} 返り値はない。
+ */
+function writeCheckstyleReport(commandResult, issues) {
+  const reportPath = selectCheckstyleReportPath(commandResult);
+  if (!reportPath) {
+    return;
+  }
+
+  fs.mkdirSync(path.dirname(reportPath), { recursive: true });
+  fs.writeFileSync(reportPath, serializeCheckstyleXml(issues), 'utf8');
+}
+
+/**
+ * XML ベースの report を stdout から既定ファイルへ書き戻す。
+ * @param {{tool: string, stdout?: string, reportPaths?: string[], reportSnapshots?: Record<string, {exists: boolean, mtimeMs: number, size: number}>}} commandResult 実行結果を表す。
+ * @returns {void} 返り値はない。
+ */
+function writeXmlReportFromStdout(commandResult) {
+  const stdout = typeof commandResult.stdout === 'string' ? commandResult.stdout : '';
+  if (stdout.trim() === '') {
+    return;
+  }
+
+  const reportPath = selectReportPath(commandResult);
+  if (!reportPath) {
+    return;
+  }
+
+  fs.mkdirSync(path.dirname(reportPath), { recursive: true });
+  fs.writeFileSync(reportPath, stdout, 'utf8');
+}
+
+/**
+ * XML ベースの report の書き込み先を選択する。
+ * @param {{reportPaths?: string[], reportSnapshots?: Record<string, {exists: boolean, mtimeMs: number, size: number}>}} commandResult 実行結果を表す。
+ * @returns {string|undefined} 書き込み先レポートパスを返す。
+ */
+function selectReportPath(commandResult) {
+  const reportPaths = Array.isArray(commandResult.reportPaths)
+    ? commandResult.reportPaths
+    : [];
+  if (reportPaths.length === 0) {
+    return undefined;
+  }
+
+  let selectedReportPath;
+  let selectedReportMtime = -1;
+  const reportSnapshots = commandResult.reportSnapshots || {};
+
+  for (const reportPath of reportPaths) {
+    const currentSnapshot = captureFileSnapshot(reportPath);
+    if (!currentSnapshot.exists) {
+      continue;
+    }
+
+    if (currentSnapshot.mtimeMs > selectedReportMtime) {
+      selectedReportMtime = currentSnapshot.mtimeMs;
+      selectedReportPath = reportPath;
+    }
+  }
+
+  if (selectedReportPath) {
+    return selectedReportPath;
+  }
+
+  for (const reportPath of reportPaths) {
+    if (reportSnapshots[reportPath]) {
+      return reportPath;
+    }
+  }
+
+  return reportPaths[0];
+}
+
+/**
  * ツール実行結果から Issue 一覧を抽出する。
  * @param {{tool: string, stdout?: string, reportPaths?: string[], reportSnapshots?: Record<string, {exists: boolean, mtimeMs: number, size: number}>}} commandResult 実行結果を表す。
  * @returns {Array<object>} Issue 一覧を返す。
@@ -1322,6 +1508,11 @@ async function runResolvedConfiguration(resolution, options = {}) {
 
       if (commandResult.status === 'ok' || commandResult.status === 'failed') {
         const commandIssues = extractIssues(commandResult);
+        if (commandResult.tool === 'checkstyle') {
+          writeCheckstyleReport(commandResult, commandIssues);
+        } else if (commandResult.tool === 'pmd' || commandResult.tool === 'cpd' || commandResult.tool === 'spotbugs') {
+          writeXmlReportFromStdout(commandResult);
+        }
         if (
           commandResult.status === 'ok'
           && commandIssues.length > 0

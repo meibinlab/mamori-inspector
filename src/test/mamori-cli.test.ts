@@ -4845,6 +4845,78 @@ suite('Mamori CLI Test Suite', () => {
   });
 
   /**
+   * save で PMD が stdout のみを返しても既存レポートを再生成できること。
+   * @returns 返り値はない。
+   */
+  test('Regenerates PMD report files during save checks when only stdout is available', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src', 'main', 'java');
+    const targetFilePath = path.join(sourceDirectory, 'App.java');
+    const pomFilePath = path.join(temporaryDirectory, 'pom.xml');
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const pmdReportPath = path.join(temporaryDirectory, 'target', 'pmd.xml');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-pmd-regenerated.sarif');
+    const outputLogPath = path.join(binDirectory, 'mvn-pmd-regenerated.log');
+    const semgrepLogPath = path.join(binDirectory, 'semgrep-pmd-regenerated.log');
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.mkdirSync(path.dirname(pmdReportPath), { recursive: true });
+    fs.writeFileSync(targetFilePath, 'class App {}\n', 'utf8');
+    fs.writeFileSync(pmdReportPath, '<?xml version="1.0"?><pmd version="7.0.0"><file name="src/main/java/App.java"><violation beginline="8" begincolumn="1" priority="3" rule="StaleRule">Stale PMD finding</violation></file></pmd>', 'utf8');
+    fs.writeFileSync(
+      pomFilePath,
+      [
+        '<project>',
+        '  <build>',
+        '    <plugins>',
+        '      <plugin><artifactId>maven-checkstyle-plugin</artifactId></plugin>',
+        '      <plugin><artifactId>maven-pmd-plugin</artifactId></plugin>',
+        '    </plugins>',
+        '  </build>',
+        '</project>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    writeMavenIssueWrapper(binDirectory, 'mvn-pmd-regenerated.log');
+    writeSemgrepSarifWrapper(binDirectory, 'semgrep-pmd-regenerated.log');
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      [
+        'run',
+        '--mode',
+        'save',
+        '--scope',
+        'file',
+        '--files',
+        path.relative(temporaryDirectory, targetFilePath),
+        '--execute',
+        '--sarif-output',
+        path.relative(temporaryDirectory, sarifOutputPath),
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(binDirectory),
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /pmd:ok exitCode=0/u);
+    assert.match(result.stdout, /Unused local variable/u);
+    assert.ok(fs.existsSync(pmdReportPath));
+    const regeneratedPmdXml = fs.readFileSync(pmdReportPath, 'utf8');
+    assert.match(regeneratedPmdXml, /Unused local variable/u);
+    assert.doesNotMatch(regeneratedPmdXml, /Stale PMD finding/u);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Unused local variable/u);
+    assert.match(fs.readFileSync(outputLogPath, 'utf8'), /pmd:check/u);
+    assert.match(fs.readFileSync(semgrepLogPath, 'utf8'), /App\.java/u);
+  });
+
+  /**
    * save で生成された Checkstyle 既定レポートから finding を SARIF 化できること。
    * @returns 返り値はない。
    */
@@ -4911,6 +4983,76 @@ suite('Mamori CLI Test Suite', () => {
     assert.ok(fs.existsSync(path.join(temporaryDirectory, 'target', 'checkstyle-result.xml')));
     assert.ok(fs.existsSync(sarifOutputPath));
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Missing Javadoc/u);
+  });
+
+  /**
+   * save で Checkstyle が stdout のみを返しても既存レポートを再生成できること。
+   * @returns 返り値はない。
+   */
+  test('Regenerates Checkstyle report files during save checks when only stdout is available', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src', 'main', 'java');
+    const targetFilePath = path.join(sourceDirectory, 'App.java');
+    const pomFilePath = path.join(temporaryDirectory, 'pom.xml');
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const checkstyleReportPath = path.join(temporaryDirectory, 'target', 'checkstyle-result.xml');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-checkstyle-regenerated.sarif');
+    const semgrepLogPath = path.join(binDirectory, 'semgrep-checkstyle-regenerated.log');
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.mkdirSync(path.dirname(checkstyleReportPath), { recursive: true });
+    fs.writeFileSync(targetFilePath, 'class App {}\n', 'utf8');
+    fs.writeFileSync(checkstyleReportPath, '<?xml version="1.0"?><checkstyle version="10.0"><file name="src/main/java/App.java"><error line="9" column="1" severity="warning" message="Stale finding" source="com.example.StaleCheck"/></file></checkstyle>', 'utf8');
+    fs.writeFileSync(
+      pomFilePath,
+      [
+        '<project>',
+        '  <build>',
+        '    <plugins>',
+        '      <plugin><artifactId>maven-checkstyle-plugin</artifactId></plugin>',
+        '      <plugin><artifactId>maven-pmd-plugin</artifactId></plugin>',
+        '    </plugins>',
+        '  </build>',
+        '</project>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    writeMavenIssueWrapper(binDirectory, 'mvn-checkstyle-regenerated.log');
+    writeSemgrepSarifWrapper(binDirectory, 'semgrep-checkstyle-regenerated.log');
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      [
+        'run',
+        '--mode',
+        'save',
+        '--scope',
+        'file',
+        '--files',
+        path.relative(temporaryDirectory, targetFilePath),
+        '--execute',
+        '--sarif-output',
+        path.relative(temporaryDirectory, sarifOutputPath),
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(binDirectory),
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /checkstyle:ok exitCode=0/u);
+    assert.match(result.stdout, /Missing Javadoc/u);
+    assert.ok(fs.existsSync(checkstyleReportPath));
+    const regeneratedCheckstyleXml = fs.readFileSync(checkstyleReportPath, 'utf8');
+    assert.match(regeneratedCheckstyleXml, /Missing Javadoc/u);
+    assert.doesNotMatch(regeneratedCheckstyleXml, /Stale finding/u);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Missing Javadoc/u);
+    assert.match(fs.readFileSync(semgrepLogPath, 'utf8'), /App\.java/u);
   });
 
   /**
@@ -5745,6 +5887,164 @@ suite('Mamori CLI Test Suite', () => {
   });
 
   /**
+   * save で Gradle の PMD が stdout のみを返しても既存 report を再生成できること。
+   * @returns 返り値はない。
+   */
+  test('Regenerates Gradle PMD report files during save checks when only stdout is available', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src', 'main', 'java');
+    const targetFilePath = path.join(sourceDirectory, 'App.java');
+    const buildFilePath = path.join(temporaryDirectory, 'build.gradle');
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const pmdReportPath = path.join(temporaryDirectory, 'build', 'reports', 'pmd', 'main.xml');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-gradle-pmd-regenerated.sarif');
+    const gradleLogPath = path.join(binDirectory, 'gradle-pmd-regenerated.log');
+    const semgrepLogPath = path.join(binDirectory, 'semgrep-gradle-pmd-regenerated.log');
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.mkdirSync(path.dirname(pmdReportPath), { recursive: true });
+    fs.writeFileSync(targetFilePath, 'class App {}\n', 'utf8');
+    fs.writeFileSync(pmdReportPath, '<?xml version="1.0"?><pmd version="7.0.0"><file name="src/main/java/App.java"><violation beginline="8" begincolumn="1" priority="3" rule="StaleRule">Stale Gradle PMD finding</violation></file></pmd>', 'utf8');
+    fs.writeFileSync(
+      buildFilePath,
+      [
+        'plugins {',
+        '  id "checkstyle"',
+        '  id "pmd"',
+        '}',
+        '',
+        'checkstyle {',
+        '  configFile = file("config/checkstyle/checkstyle.xml")',
+        '}',
+        '',
+        'pmd {',
+        '  ruleSetFiles = files("config/pmd/ruleset.xml")',
+        '}',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    writeGradleIssueWrapper(binDirectory, 'gradle-pmd-regenerated.log');
+    writeSemgrepSarifWrapper(binDirectory, 'semgrep-gradle-pmd-regenerated.log');
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      [
+        'run',
+        '--mode',
+        'save',
+        '--scope',
+        'file',
+        '--files',
+        path.relative(temporaryDirectory, targetFilePath),
+        '--execute',
+        '--sarif-output',
+        path.relative(temporaryDirectory, sarifOutputPath),
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(binDirectory),
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /pmd:ok exitCode=0/u);
+    assert.match(result.stdout, /Gradle PMD finding/u);
+    assert.ok(fs.existsSync(pmdReportPath));
+    const regeneratedPmdXml = fs.readFileSync(pmdReportPath, 'utf8');
+    assert.match(regeneratedPmdXml, /Gradle PMD finding/u);
+    assert.doesNotMatch(regeneratedPmdXml, /Stale Gradle PMD finding/u);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Gradle PMD finding/u);
+    assert.match(fs.readFileSync(gradleLogPath, 'utf8'), /pmdMain/u);
+    assert.match(fs.readFileSync(semgrepLogPath, 'utf8'), /scan --sarif/u);
+  });
+
+  /**
+   * save で Gradle の Checkstyle が stdout のみを返しても既存レポートを再生成できること。
+   * @returns 返り値はない。
+   */
+  test('Regenerates Gradle Checkstyle report files during save checks when only stdout is available', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src', 'main', 'java');
+    const targetFilePath = path.join(sourceDirectory, 'App.java');
+    const buildFilePath = path.join(temporaryDirectory, 'build.gradle');
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const checkstyleReportPath = path.join(
+      temporaryDirectory,
+      'build',
+      'reports',
+      'checkstyle',
+      'main.xml',
+    );
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-gradle-checkstyle-regenerated.sarif');
+    const gradleLogPath = path.join(binDirectory, 'gradle-checkstyle-regenerated.log');
+    const semgrepLogPath = path.join(binDirectory, 'semgrep-gradle-checkstyle-regenerated.log');
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.mkdirSync(path.dirname(checkstyleReportPath), { recursive: true });
+    fs.writeFileSync(targetFilePath, 'class App {}\n', 'utf8');
+    fs.writeFileSync(checkstyleReportPath, '<?xml version="1.0"?><checkstyle version="10.0"><file name="src/main/java/App.java"><error line="9" column="1" severity="warning" message="Stale Gradle finding" source="com.example.StaleCheck"/></file></checkstyle>', 'utf8');
+    fs.writeFileSync(
+      buildFilePath,
+      [
+        'plugins {',
+        '  id "checkstyle"',
+        '  id "pmd"',
+        '}',
+        '',
+        'checkstyle {',
+        '  configFile = file("config/checkstyle/checkstyle.xml")',
+        '}',
+        '',
+        'pmd {',
+        '  ruleSetFiles = files("config/pmd/ruleset.xml")',
+        '}',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    writeGradleIssueWrapper(binDirectory, 'gradle-checkstyle-regenerated.log');
+    writeSemgrepSarifWrapper(binDirectory, 'semgrep-gradle-checkstyle-regenerated.log');
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      [
+        'run',
+        '--mode',
+        'save',
+        '--scope',
+        'file',
+        '--files',
+        path.relative(temporaryDirectory, targetFilePath),
+        '--execute',
+        '--sarif-output',
+        path.relative(temporaryDirectory, sarifOutputPath),
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(binDirectory),
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /checkstyle:ok exitCode=0/u);
+    assert.match(result.stdout, /Gradle Checkstyle finding/u);
+    assert.ok(fs.existsSync(checkstyleReportPath));
+    const regeneratedCheckstyleXml = fs.readFileSync(checkstyleReportPath, 'utf8');
+    assert.match(regeneratedCheckstyleXml, /Gradle Checkstyle finding/u);
+    assert.doesNotMatch(regeneratedCheckstyleXml, /Stale Gradle finding/u);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Gradle Checkstyle finding/u);
+    assert.match(fs.readFileSync(gradleLogPath, 'utf8'), /checkstyleMain/u);
+    assert.match(fs.readFileSync(semgrepLogPath, 'utf8'), /App\.java/u);
+  });
+
+  /**
    * pre-push 実行で CPD と SpotBugs を Issue 化できること。
    * @returns 返り値はない。
    */
@@ -5811,6 +6111,96 @@ suite('Mamori CLI Test Suite', () => {
     assert.ok(fs.existsSync(sarifOutputPath));
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Duplicated block detected/u);
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Possible null pointer dereference/u);
+  });
+
+  /**
+   * pre-push で Gradle の CPD と SpotBugs が stdout のみでも既存 report を再生成できること。
+   * @returns 返り値はない。
+   */
+  test('Regenerates Gradle CPD and SpotBugs report files during prepush checks when only stdout is available', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src', 'main', 'java');
+    const classDirectory = path.join(temporaryDirectory, 'build', 'classes', 'java', 'main');
+    const buildFilePath = path.join(temporaryDirectory, 'build.gradle');
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const cpdReportPath = path.join(temporaryDirectory, 'target', 'cpd.xml');
+    const spotbugsReportPath = path.join(temporaryDirectory, 'build', 'reports', 'spotbugs', 'main.xml');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-gradle-prepush-regenerated.sarif');
+    const gradleLogPath = path.join(binDirectory, 'gradle-prepush-regenerated.log');
+    const semgrepLogPath = path.join(binDirectory, 'semgrep-gradle-prepush-regenerated.log');
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.mkdirSync(classDirectory, { recursive: true });
+    fs.mkdirSync(path.dirname(cpdReportPath), { recursive: true });
+    fs.mkdirSync(path.dirname(spotbugsReportPath), { recursive: true });
+    fs.writeFileSync(path.join(sourceDirectory, 'App.java'), 'class App {}\n', 'utf8');
+    fs.writeFileSync(path.join(sourceDirectory, 'Other.java'), 'class Other {}\n', 'utf8');
+    fs.writeFileSync(path.join(classDirectory, 'App.class'), 'compiled', 'utf8');
+    fs.writeFileSync(cpdReportPath, '<?xml version="1.0"?><pmd-cpd><duplication lines="3" tokens="18"><file path="src/main/java/App.java" line="1"/></duplication></pmd-cpd>', 'utf8');
+    fs.writeFileSync(spotbugsReportPath, '<?xml version="1.0"?><BugCollection><BugInstance type="OLD_BUG" priority="3"><LongMessage>Stale Gradle SpotBugs finding</LongMessage><Class classname="App"/><SourceLine classname="App" sourcepath="src/main/java/App.java" start="1"/></BugInstance></BugCollection>', 'utf8');
+    fs.writeFileSync(
+      buildFilePath,
+      [
+        'plugins {',
+        '  id "checkstyle"',
+        '  id "pmd"',
+        '  id "com.github.spotbugs" version "5.0.0"',
+        '}',
+        '',
+        'checkstyle {',
+        '  configFile = file("config/checkstyle/checkstyle.xml")',
+        '}',
+        '',
+        'pmd {',
+        '  ruleSetFiles = files("config/pmd/ruleset.xml")',
+        '}',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    writeGradlePrepushWrapper(binDirectory, 'gradle-prepush-regenerated.log');
+    writeSemgrepSarifWrapper(binDirectory, 'semgrep-gradle-prepush-regenerated.log');
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      [
+        'run',
+        '--mode',
+        'prepush',
+        '--scope',
+        'workspace',
+        '--execute',
+        '--sarif-output',
+        path.relative(temporaryDirectory, sarifOutputPath),
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(binDirectory),
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /cpd:ok exitCode=0/u);
+    assert.match(result.stdout, /spotbugs:ok exitCode=0/u);
+    assert.match(result.stdout, /Duplicated block detected/u);
+    assert.match(result.stdout, /Dead store to local variable/u);
+    assert.ok(fs.existsSync(cpdReportPath));
+    assert.ok(fs.existsSync(spotbugsReportPath));
+    const regeneratedCpdXml = fs.readFileSync(cpdReportPath, 'utf8');
+    const regeneratedSpotbugsXml = fs.readFileSync(spotbugsReportPath, 'utf8');
+    assert.match(regeneratedCpdXml, /lines="8"/u);
+    assert.match(regeneratedCpdXml, /line="10"/u);
+    assert.doesNotMatch(regeneratedCpdXml, /lines="3"/u);
+    assert.match(regeneratedSpotbugsXml, /Dead store to local variable/u);
+    assert.doesNotMatch(regeneratedSpotbugsXml, /Stale Gradle SpotBugs finding/u);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Duplicated block detected/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Dead store to local variable/u);
+    assert.match(fs.readFileSync(gradleLogPath, 'utf8'), /cpdCheck/u);
+    assert.match(fs.readFileSync(gradleLogPath, 'utf8'), /spotbugsMain/u);
+    assert.match(fs.readFileSync(semgrepLogPath, 'utf8'), /scan --sarif/u);
   });
 
   /**
@@ -5946,6 +6336,91 @@ suite('Mamori CLI Test Suite', () => {
     assert.ok(fs.existsSync(sarifOutputPath));
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Duplicated block detected/u);
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Possible null pointer dereference/u);
+  });
+
+  /**
+   * pre-push で CPD と SpotBugs が stdout のみでも既存レポートを再生成できること。
+   * @returns 返り値はない。
+   */
+  test('Regenerates CPD and SpotBugs report files during prepush checks when only stdout is available', () => {
+    const temporaryDirectory = createTemporaryDirectory();
+    const sourceDirectory = path.join(temporaryDirectory, 'src', 'main', 'java');
+    const classDirectory = path.join(temporaryDirectory, 'target', 'classes');
+    const pomFilePath = path.join(temporaryDirectory, 'pom.xml');
+    const binDirectory = createCommandBinDirectory(temporaryDirectory);
+    const cpdReportPath = path.join(temporaryDirectory, 'target', 'cpd.xml');
+    const spotbugsReportPath = path.join(temporaryDirectory, 'target', 'spotbugsXml.xml');
+    const sarifOutputPath = path.join(temporaryDirectory, '.mamori', 'out', 'combined-prepush-regenerated.sarif');
+    const outputLogPath = path.join(binDirectory, 'mvn-prepush-regenerated.log');
+    const semgrepLogPath = path.join(binDirectory, 'semgrep-prepush-regenerated.log');
+
+    fs.mkdirSync(sourceDirectory, { recursive: true });
+    fs.mkdirSync(classDirectory, { recursive: true });
+    fs.mkdirSync(path.dirname(cpdReportPath), { recursive: true });
+    fs.writeFileSync(path.join(sourceDirectory, 'App.java'), 'class App {}\n', 'utf8');
+    fs.writeFileSync(path.join(sourceDirectory, 'Other.java'), 'class Other {}\n', 'utf8');
+    fs.writeFileSync(path.join(classDirectory, 'App.class'), 'compiled', 'utf8');
+    fs.writeFileSync(cpdReportPath, '<?xml version="1.0"?><pmd-cpd><duplication lines="3" tokens="18"><file path="src/main/java/App.java" line="1"/></duplication></pmd-cpd>', 'utf8');
+    fs.writeFileSync(spotbugsReportPath, '<?xml version="1.0"?><BugCollection><BugInstance type="OLD_BUG" priority="3"><LongMessage>Stale SpotBugs finding</LongMessage><Class classname="App"/><SourceLine classname="App" sourcepath="src/main/java/App.java" start="1"/></BugInstance></BugCollection>', 'utf8');
+    fs.writeFileSync(
+      pomFilePath,
+      [
+        '<project>',
+        '  <build>',
+        '    <plugins>',
+        '      <plugin><artifactId>maven-checkstyle-plugin</artifactId></plugin>',
+        '      <plugin><artifactId>maven-pmd-plugin</artifactId></plugin>',
+        '      <plugin><artifactId>spotbugs-maven-plugin</artifactId></plugin>',
+        '    </plugins>',
+        '  </build>',
+        '</project>',
+        '',
+      ].join('\n'),
+      'utf8',
+    );
+    writeMavenPrepushCheckstyleWrapper(binDirectory, 'mvn-prepush-regenerated.log');
+    writeSemgrepSarifWrapper(binDirectory, 'semgrep-prepush-regenerated.log');
+
+    const result = runMamoriCli(
+      temporaryDirectory,
+      [
+        'run',
+        '--mode',
+        'prepush',
+        '--scope',
+        'workspace',
+        '--execute',
+        '--sarif-output',
+        path.relative(temporaryDirectory, sarifOutputPath),
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: buildTestPath(binDirectory),
+        },
+      },
+    );
+
+    assert.strictEqual(result.status, 0);
+    assert.match(result.stdout, /cpd:ok exitCode=0/u);
+    assert.match(result.stdout, /spotbugs:ok exitCode=0/u);
+    assert.match(result.stdout, /Duplicated block detected/u);
+    assert.match(result.stdout, /Possible null pointer dereference/u);
+    assert.ok(fs.existsSync(cpdReportPath));
+    assert.ok(fs.existsSync(spotbugsReportPath));
+    const regeneratedCpdXml = fs.readFileSync(cpdReportPath, 'utf8');
+    const regeneratedSpotbugsXml = fs.readFileSync(spotbugsReportPath, 'utf8');
+    assert.match(regeneratedCpdXml, /lines="6"/u);
+    assert.match(regeneratedCpdXml, /line="8"/u);
+    assert.doesNotMatch(regeneratedCpdXml, /lines="3"/u);
+    assert.match(regeneratedSpotbugsXml, /Possible null pointer dereference/u);
+    assert.doesNotMatch(regeneratedSpotbugsXml, /Stale SpotBugs finding/u);
+    assert.ok(fs.existsSync(sarifOutputPath));
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Duplicated block detected/u);
+    assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Possible null pointer dereference/u);
+    assert.match(fs.readFileSync(outputLogPath, 'utf8'), /pmd:cpd-check/u);
+    assert.match(fs.readFileSync(outputLogPath, 'utf8'), /spotbugs:check/u);
+    assert.match(fs.readFileSync(semgrepLogPath, 'utf8'), /scan --sarif/u);
   });
 
   /**
