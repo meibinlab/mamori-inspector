@@ -4,6 +4,16 @@
 
 形式は Keep a Changelog を参考にしつつ、このリポジトリの実装状況に合わせて整理します。
 
+## [0.3.3] - 2026-04-13
+
+### Changed
+- Maven の Checkstyle 実行で test source も含めるようにし、`src/test/java` の指摘も manual / workspace check で Problems に反映できるようにしました。
+
+### Fixed
+- 手動の workspace check で一部ワークスペースが失敗しても、成功したワークスペースの diagnostics を引き続き Problems へ反映するようにしました。
+- manual workspace check 実行前に、既存 `.mamori` runtime を再同期して古い runner で止まらないようにしました。
+- Checkstyle / PMD / SpotBugs の Gradle 実行で test source も含めるようにし、workspace check と hook の検出結果を広げました。
+
 ## [0.3.2] - 2026-04-11
 
 ### Fixed
