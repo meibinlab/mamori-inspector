@@ -530,6 +530,23 @@ function getWorkspaceCheckFailureMessage(details: string): string {
 }
 
 /**
+ * 手動実行の一部失敗通知文言を返す。
+ * @param failedWorkspaceCount 失敗したワークスペース数を表す。
+ * @param details 失敗詳細を表す。
+ * @returns エラー通知文言を返す。
+ */
+function getWorkspaceCheckPartialFailureMessage(
+  failedWorkspaceCount: number,
+  details: string,
+): string {
+  return localize(
+    'Mamori Inspector: Reflected available diagnostics, but {0} workspace checks failed. {1}',
+    'Error message shown when a manual workspace check partially succeeds and partially fails.',
+    [failedWorkspaceCount, details],
+  );
+}
+
+/**
  * Problems 表示アクション文言を返す。
  * @returns アクション文言を返す。
  */
@@ -2518,6 +2535,19 @@ function createRunWorkspaceCheckCommand(
       return;
     }
 
+    let runningWorkspaceCheck:
+      | {
+        workspaceName: string;
+        workspacePath: string;
+        sarifPath: string;
+      }
+      | undefined;
+    const failedWorkspaceChecks: Array<{
+      workspaceFolder: vscode.WorkspaceFolder;
+      sarifPath: string;
+      details: string;
+    }> = [];
+
     try {
       const sarifOutputs = existingWorkspaceFolders.map((workspaceFolder) => ({
         workspaceFolder,
@@ -2526,15 +2556,42 @@ function createRunWorkspaceCheckCommand(
       showTransientNotificationToast(getWorkspaceCheckStartedMessage());
       const manualRunPromise = (async() => {
         for (const [index, sarifOutput] of sarifOutputs.entries()) {
+          runningWorkspaceCheck = {
+            workspaceName: sarifOutput.workspaceFolder.name,
+            workspacePath: sarifOutput.workspaceFolder.uri.fsPath,
+            sarifPath: sarifOutput.sarifPath,
+          };
+          synchronizeExistingMamoriRuntimeIfPresent(
+            sarifOutput.workspaceFolder,
+            extensionRootPath,
+            outputChannel,
+          );
           fs.rmSync(sarifOutput.sarifPath, { force: true });
           outputChannel.appendLine(
             `Mamori Inspector workspace check running for ${sarifOutput.workspaceFolder.name} (${String(index + 1)}/${String(sarifOutputs.length)}).`,
           );
-          await runMamoriCli(sarifOutput.workspaceFolder, {
-            mode: 'manual',
-            scope: 'workspace',
-            sarifOutputPath: sarifOutput.sarifPath,
-          }, extensionRootPath);
+          try {
+            await runMamoriCli(sarifOutput.workspaceFolder, {
+              mode: 'manual',
+              scope: 'workspace',
+              sarifOutputPath: sarifOutput.sarifPath,
+            }, extensionRootPath);
+          } catch (error) {
+            const details = error instanceof Error ? error.message : String(error);
+            failedWorkspaceChecks.push({
+              workspaceFolder: sarifOutput.workspaceFolder,
+              sarifPath: sarifOutput.sarifPath,
+              details,
+            });
+            outputChannel.appendLine(
+              `Mamori Inspector workspace check failed while running ${sarifOutput.workspaceFolder.name} (${sarifOutput.workspaceFolder.uri.fsPath}) with SARIF ${sarifOutput.sarifPath}.`,
+            );
+            outputChannel.appendLine(
+              `Mamori Inspector workspace check failure details for ${sarifOutput.workspaceFolder.name}: ${details}`,
+            );
+          } finally {
+            runningWorkspaceCheck = undefined;
+          }
         }
       })();
       void vscode.window.setStatusBarMessage(
@@ -2544,14 +2601,33 @@ function createRunWorkspaceCheckCommand(
       await manualRunPromise;
 
       const diagnosticsByUri = new Map<string, DiagnosticsByUriEntry>();
+      const workspacesWithFreshManualResult = new Set<string>();
       for (const sarifOutput of sarifOutputs) {
+        const failedWorkspaceCheck = failedWorkspaceChecks.find(
+          (workspaceCheck) => workspaceCheck.workspaceFolder.uri.toString() === sarifOutput.workspaceFolder.uri.toString(),
+        );
+        const sarifExists = fs.existsSync(sarifOutput.sarifPath);
+        const workspaceDiagnosticsByUri = buildDiagnosticsByUri(
+          sarifOutput.workspaceFolder,
+          sarifOutput.sarifPath,
+        );
+        const workspaceDiagnosticsCount = countDiagnosticsByUri(workspaceDiagnosticsByUri);
+        outputChannel.appendLine(
+          `Mamori Inspector workspace check loaded ${String(workspaceDiagnosticsCount)} diagnostics from ${sarifExists ? 'existing' : 'missing'} SARIF for ${sarifOutput.workspaceFolder.name}: ${sarifOutput.sarifPath}`,
+        );
+        if (!failedWorkspaceCheck || sarifExists) {
+          workspacesWithFreshManualResult.add(sarifOutput.workspaceFolder.uri.toString());
+        }
         mergeDiagnosticsByUri(
           diagnosticsByUri,
-          buildDiagnosticsByUri(sarifOutput.workspaceFolder, sarifOutput.sarifPath),
+          workspaceDiagnosticsByUri,
         );
       }
 
       for (const sarifOutput of sarifOutputs) {
+        if (!workspacesWithFreshManualResult.has(sarifOutput.workspaceFolder.uri.toString())) {
+          continue;
+        }
         clearWorkspaceDiagnosticsByUri(
           diagnosticsState.saveDiagnosticsByUri,
           sarifOutput.workspaceFolder,
@@ -2560,18 +2636,44 @@ function createRunWorkspaceCheckCommand(
           diagnosticsState.prePushDiagnosticsByUri,
           sarifOutput.workspaceFolder,
         );
+        clearWorkspaceDiagnosticsByUri(
+          diagnosticsState.manualDiagnosticsByUri,
+          sarifOutput.workspaceFolder,
+        );
       }
-      diagnosticsState.manualDiagnosticsByUri.clear();
       mergeDiagnosticsByUri(diagnosticsState.manualDiagnosticsByUri, diagnosticsByUri);
-      publishTrackedDiagnostics(diagnosticCollection, diagnosticsState);
+      const publishedDiagnosticsCount = publishTrackedDiagnostics(diagnosticCollection, diagnosticsState);
       const diagnosticsCount = countDiagnosticsByUri(diagnosticsByUri);
+      outputChannel.appendLine(
+        `Mamori Inspector workspace check merged ${String(diagnosticsCount)} manual diagnostics and published ${String(publishedDiagnosticsCount)} total diagnostics.`,
+      );
+      if (failedWorkspaceChecks.length > 0) {
+        const firstFailure = failedWorkspaceChecks[0];
+        const failureSummary = firstFailure ? firstFailure.details : 'Unknown workspace check failure';
+        outputChannel.appendLine(
+          `Mamori Inspector workspace check completed with ${String(failedWorkspaceChecks.length)} failed workspaces and published ${String(publishedDiagnosticsCount)} total diagnostics.`,
+        );
+        if (failedWorkspaceChecks.length === sarifOutputs.length && diagnosticsCount === 0) {
+          void vscode.window.showErrorMessage(getWorkspaceCheckFailureMessage(failureSummary));
+          return;
+        }
+        void vscode.window.showErrorMessage(
+          getWorkspaceCheckPartialFailureMessage(failedWorkspaceChecks.length, failureSummary),
+        );
+        return;
+      }
       showTransientNonErrorMessage(getWorkspaceCheckSuccessMessage(diagnosticsCount));
     } catch (error) {
       const details = error instanceof Error ? error.message : String(error);
       diagnosticsState.manualDiagnosticsByUri.clear();
-      publishTrackedDiagnostics(diagnosticCollection, diagnosticsState);
+      const publishedDiagnosticsCount = publishTrackedDiagnostics(diagnosticCollection, diagnosticsState);
+      if (runningWorkspaceCheck) {
+        outputChannel.appendLine(
+          `Mamori Inspector workspace check failed while running ${runningWorkspaceCheck.workspaceName} (${runningWorkspaceCheck.workspacePath}) with SARIF ${runningWorkspaceCheck.sarifPath}.`,
+        );
+      }
       outputChannel.appendLine(
-        `Mamori Inspector workspace check failed: ${details}`,
+        `Mamori Inspector workspace check failed: ${details} (published diagnostics after failure: ${String(publishedDiagnosticsCount)})`,
       );
       void vscode.window.showErrorMessage(getWorkspaceCheckFailureMessage(details));
     }

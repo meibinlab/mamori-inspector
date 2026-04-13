@@ -604,7 +604,7 @@ function buildSemgrepArguments(semgrepResolution, moduleRoot, moduleFiles) {
  */
 function buildMavenArguments(toolName, moduleDefinition) {
   if (toolName === 'checkstyle') {
-    const args = ['-q', 'checkstyle:check'];
+    const args = ['-q', 'checkstyle:check', '-Dcheckstyle.includeTestSourceDirectory=true'];
     if (moduleDefinition.checkstyle && moduleDefinition.checkstyle.configLocation) {
       args.push(`-Dcheckstyle.config.location=${moduleDefinition.checkstyle.configLocation}`);
     }
@@ -637,11 +637,11 @@ function buildMavenArguments(toolName, moduleDefinition) {
  */
 function buildGradleArguments(toolName) {
   if (toolName === 'checkstyle') {
-    return ['checkstyleMain'];
+    return ['checkstyleMain', 'checkstyleTest'];
   }
 
   if (toolName === 'pmd') {
-    return ['pmdMain'];
+    return ['pmdMain', 'pmdTest'];
   }
 
   if (toolName === 'cpd') {
@@ -649,7 +649,7 @@ function buildGradleArguments(toolName) {
   }
 
   if (toolName === 'spotbugs') {
-    return ['spotbugsMain'];
+    return ['spotbugsMain', 'spotbugsTest'];
   }
 
   if (toolName === 'spotless') {

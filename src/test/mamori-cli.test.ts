@@ -5999,6 +5999,8 @@ suite('Mamori CLI Test Suite', () => {
     assert.match(result.stdout, /Gradle PMD finding/u);
     assert.match(result.stdout, /Potential issue/u);
     assert.match(fs.readFileSync(path.join(binDirectory, 'gradle.log'), 'utf8'), /spotlessApply/u);
+    assert.match(fs.readFileSync(path.join(binDirectory, 'gradle.log'), 'utf8'), /checkstyleTest/u);
+    assert.match(fs.readFileSync(path.join(binDirectory, 'gradle.log'), 'utf8'), /pmdTest/u);
     assert.ok(fs.existsSync(sarifOutputPath));
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Gradle Checkstyle finding/u);
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Gradle PMD finding/u);
@@ -6078,6 +6080,7 @@ suite('Mamori CLI Test Suite', () => {
     assert.ok(fs.existsSync(sarifOutputPath));
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Gradle PMD finding/u);
     assert.match(fs.readFileSync(gradleLogPath, 'utf8'), /pmdMain/u);
+    assert.match(fs.readFileSync(gradleLogPath, 'utf8'), /pmdTest/u);
     assert.match(fs.readFileSync(semgrepLogPath, 'utf8'), /scan --sarif/u);
   });
 
@@ -6160,6 +6163,7 @@ suite('Mamori CLI Test Suite', () => {
     assert.ok(fs.existsSync(sarifOutputPath));
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Gradle Checkstyle finding/u);
     assert.match(fs.readFileSync(gradleLogPath, 'utf8'), /checkstyleMain/u);
+    assert.match(fs.readFileSync(gradleLogPath, 'utf8'), /checkstyleTest/u);
     assert.match(fs.readFileSync(semgrepLogPath, 'utf8'), /App\.java/u);
   });
 
@@ -6319,6 +6323,7 @@ suite('Mamori CLI Test Suite', () => {
     assert.match(fs.readFileSync(sarifOutputPath, 'utf8'), /Dead store to local variable/u);
     assert.match(fs.readFileSync(gradleLogPath, 'utf8'), /cpdCheck/u);
     assert.match(fs.readFileSync(gradleLogPath, 'utf8'), /spotbugsMain/u);
+    assert.match(fs.readFileSync(gradleLogPath, 'utf8'), /spotbugsTest/u);
     assert.match(fs.readFileSync(semgrepLogPath, 'utf8'), /scan --sarif/u);
   });
 
@@ -7087,6 +7092,13 @@ suite('Mamori CLI Test Suite', () => {
         path.join(temporaryDirectory, '.mamori', 'tools', 'maven', '3.9.11', 'bin', 'maven-auto.log'),
         'utf8',
       ),
+      /checkstyle\.includeTestSourceDirectory=true/u,
+    );
+    assert.match(
+      fs.readFileSync(
+        path.join(temporaryDirectory, '.mamori', 'tools', 'maven', '3.9.11', 'bin', 'maven-auto.log'),
+        'utf8',
+      ),
       /pmd:check/u,
     );
   });
@@ -7229,7 +7241,21 @@ suite('Mamori CLI Test Suite', () => {
         path.join(temporaryDirectory, '.mamori', 'tools', 'gradle', '8.14.4', 'bin', 'gradle-auto.log'),
         'utf8',
       ),
+      /checkstyleTest/u,
+    );
+    assert.match(
+      fs.readFileSync(
+        path.join(temporaryDirectory, '.mamori', 'tools', 'gradle', '8.14.4', 'bin', 'gradle-auto.log'),
+        'utf8',
+      ),
       /pmdMain/u,
+    );
+    assert.match(
+      fs.readFileSync(
+        path.join(temporaryDirectory, '.mamori', 'tools', 'gradle', '8.14.4', 'bin', 'gradle-auto.log'),
+        'utf8',
+      ),
+      /pmdTest/u,
     );
   });
 
