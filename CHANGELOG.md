@@ -4,6 +4,13 @@
 
 形式は Keep a Changelog を参考にしつつ、このリポジトリの実装状況に合わせて整理します。
 
+## [0.3.4] - 2026-04-14
+
+### Fixed
+- Windows セキュリティ警告の原因となる PowerShell `-ExecutionPolicy Bypass` の呼び出しを除去し、ZIP 展開を Windows 組み込みの `System32/tar.exe` (bsdtar) で行うよう変更しました。
+- `exec.js` と `mamori.js` で `shell: true` を廃止し、`.cmd`/`.bat` ファイルのみ `cmd.exe` 経由で起動するよう変更しました。
+- `exec.js` の Windows コマンド解決で、`mvnw.cmd` のように拡張子付きのコマンド名を渡したとき正しく絶対パスへ解決できなかった問題を修正しました。
+
 ## [0.3.3] - 2026-04-13
 
 ### Changed
