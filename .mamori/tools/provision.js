@@ -487,24 +487,6 @@ function quoteWindowsCommandArgument(argument) {
 }
 
 /**
- * PowerShell の単一引用符文字列として安全な文字列へ変換する。
- * @param {string} value 変換対象文字列を表す。
- * @returns {string} 変換後文字列を返す。
- */
-function escapePowerShellSingleQuotedString(value) {
-  return value.replace(/'/g, "''");
-}
-
-/**
- * PowerShell の EncodedCommand 用文字列へ変換する。
- * @param {string} commandText PowerShell コマンド文字列を表す。
- * @returns {string} Base64 エンコード済み文字列を返す。
- */
-function encodePowerShellCommand(commandText) {
-  return Buffer.from(commandText, 'utf16le').toString('base64');
-}
-
-/**
  * URL からファイルをダウンロードする。
  * @param {string} sourceUrl ダウンロード元 URL を表す。
  * @param {string} destinationPath 保存先パスを表す。
@@ -576,6 +558,27 @@ async function materializeSource(sourceUrl, cachePath, destinationDirectory, arc
 }
 
 /**
+ * Windows 組み込みの bsdtar パスを返す。
+ * @returns {string} bsdtar パスを返す。
+ */
+function getWindowsBuiltinTarPath() {
+  const systemRoot = process.env.SystemRoot || process.env.WINDIR || 'C:\Windows';
+  return path.join(systemRoot, 'System32', 'tar.exe');
+}
+
+/**
+ * zip 展開に使う tar コマンドパスを返す。
+ * Windows では PowerShell を使わず OS 組み込みの bsdtar を使う。
+ * @returns {string} tar コマンドパスを返す。
+ */
+function getZipExtractionCommand() {
+  if (process.platform !== 'win32') {
+    return 'tar';
+  }
+  return getWindowsBuiltinTarPath();
+}
+
+/**
  * アーカイブを展開する。
  * @param {string} archivePath アーカイブパスを表す。
  * @param {string} destinationDirectory 展開先ディレクトリを表す。
@@ -586,25 +589,8 @@ function extractArchive(archivePath, destinationDirectory, archiveType) {
   ensureDirectory(destinationDirectory);
 
   let result;
-  if (archiveType === 'zip' && process.platform === 'win32') {
-    const commandText = [
-      `$archivePath = '${escapePowerShellSingleQuotedString(archivePath)}'`,
-      `$destinationDirectory = '${escapePowerShellSingleQuotedString(destinationDirectory)}'`,
-      'Expand-Archive -LiteralPath $archivePath -DestinationPath $destinationDirectory -Force',
-    ].join('; ');
-    result = runProcess(
-      'powershell',
-      [
-        '-NoProfile',
-        '-NonInteractive',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-EncodedCommand',
-        encodePowerShellCommand(commandText),
-      ],
-    );
-  } else if (archiveType === 'zip') {
-    result = runProcess('tar', ['-xf', archivePath, '-C', destinationDirectory]);
+  if (archiveType === 'zip') {
+    result = runProcess(getZipExtractionCommand(), ['-xf', archivePath, '-C', destinationDirectory]);
   } else {
     result = runProcess('tar', ['-xzf', archivePath, '-C', destinationDirectory]);
   }

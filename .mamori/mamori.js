@@ -302,13 +302,66 @@ function findInvalidFiles(currentWorkingDirectory, files) {
  * @returns {{status: number|null, stdout: string, stderr: string, error?: Error}} 実行結果を返す。
  */
 function runGitCommand(currentWorkingDirectory, gitArguments) {
-  const result = spawnSync('git', gitArguments, {
+  let gitCommand = 'git';
+  const commandArgs = gitArguments;
+  const spawnOptions = {
     cwd: currentWorkingDirectory,
     encoding: 'utf8',
-    shell: process.platform === 'win32',
+    shell: false,
     windowsHide: true,
-  });
+  };
 
+  if (process.platform === 'win32') {
+    const env = process.env;
+    const extensions = (env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean);
+    const searchDirs = [
+      currentWorkingDirectory,
+      ...String(env.PATH || '').split(path.delimiter).filter(Boolean),
+    ];
+
+    for (const dir of searchDirs) {
+      let resolved;
+      for (const ext of extensions) {
+        const candidate = path.join(dir, `git${ext}`);
+        if (fs.existsSync(candidate)) {
+          resolved = candidate;
+          break;
+        }
+        const lowerCandidate = path.join(dir, `git${ext.toLowerCase()}`);
+        if (fs.existsSync(lowerCandidate)) {
+          resolved = lowerCandidate;
+          break;
+        }
+      }
+      if (resolved) {
+        gitCommand = resolved;
+        break;
+      }
+    }
+
+    const ext = path.extname(gitCommand).toLowerCase();
+    if (ext === '.cmd' || ext === '.bat') {
+      const quoteArg = (arg) => `"${String(arg).replace(/"/g, '""')}"`;
+      const quoteIfNeeded = (arg) => {
+        const str = String(arg);
+        return /[ \t\n\v"&|<>^%!]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+      };
+      const commandLine = [quoteArg(gitCommand), ...gitArguments.map(quoteIfNeeded)].join(' ');
+      const result = spawnSync(
+        env.ComSpec || 'cmd.exe',
+        ['/d', '/s', '/c', `"${commandLine}"`],
+        { ...spawnOptions, windowsVerbatimArguments: true },
+      );
+      return {
+        status: result.status,
+        stdout: result.stdout || '',
+        stderr: result.stderr || '',
+        error: result.error,
+      };
+    }
+  }
+
+  const result = spawnSync(gitCommand, commandArgs, spawnOptions);
   return {
     status: result.status,
     stdout: result.stdout || '',
