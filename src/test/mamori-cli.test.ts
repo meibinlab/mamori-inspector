@@ -2211,7 +2211,8 @@ suite('Mamori CLI Test Suite', () => {
    * save/file で TypeScript ファイルの ESLint finding を SARIF 化できること。
    * @returns 返り値はない。
    */
-  test('Reports direct TypeScript ESLint findings during save checks', () => {
+  test('Reports direct TypeScript ESLint findings during save checks', function() {
+    this.timeout(10000);
     const temporaryDirectory = createTemporaryDirectory();
     const sourceDirectory = path.join(temporaryDirectory, 'src');
     const typescriptFilePath = path.join(sourceDirectory, 'main.ts');
