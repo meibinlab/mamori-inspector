@@ -48,15 +48,22 @@ function resolveWindowsCommand(command, cwd, env) {
   ];
 
   for (const dir of searchDirectories) {
-    for (const ext of extensions) {
-      const candidate = path.join(dir, `${command}${ext}`);
-      if (fs.existsSync(candidate)) {
-        return candidate;
+    if (path.extname(command) === '') {
+      for (const ext of extensions) {
+        const candidate = path.join(dir, `${command}${ext}`);
+        if (fs.existsSync(candidate)) {
+          return candidate;
+        }
+        const lowerCandidate = path.join(dir, `${command}${ext.toLowerCase()}`);
+        if (fs.existsSync(lowerCandidate)) {
+          return lowerCandidate;
+        }
       }
-      const lowerCandidate = path.join(dir, `${command}${ext.toLowerCase()}`);
-      if (fs.existsSync(lowerCandidate)) {
-        return lowerCandidate;
-      }
+    }
+
+    const exactCandidate = path.join(dir, command);
+    if (fs.existsSync(exactCandidate)) {
+      return exactCandidate;
     }
   }
 
