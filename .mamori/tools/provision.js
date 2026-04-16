@@ -554,32 +554,26 @@ async function materializeSource(sourceUrl, cachePath, destinationDirectory, arc
   if (!fs.existsSync(cachePath)) {
     await downloadFile(sourceUrl, cachePath);
   }
-  extractArchive(cachePath, destinationDirectory, archiveType);
-}
-
-/**
- * Windows 組み込みの bsdtar パスを返す。
- * @returns {string} bsdtar パスを返す。
- */
-function getWindowsBuiltinTarPath() {
-  const systemRoot = process.env.SystemRoot || process.env.WINDIR || 'C:\Windows';
-  return path.join(systemRoot, 'System32', 'tar.exe');
-}
-
-/**
- * zip 展開に使う tar コマンドパスを返す。
- * Windows では PowerShell を使わず OS 組み込みの bsdtar を使う。
- * @returns {string} tar コマンドパスを返す。
- */
-function getZipExtractionCommand() {
-  if (process.platform !== 'win32') {
-    return 'tar';
+  try {
+    extractArchive(cachePath, destinationDirectory, archiveType);
+  } catch (error) {
+    try { fs.unlinkSync(cachePath); } catch { /* 無視 */ }
+    throw error;
   }
-  return getWindowsBuiltinTarPath();
+}
+
+/**
+ * Windows PowerShell の絶対パスを返す。
+ * @returns {string} PowerShell パスを返す。
+ */
+function getWindowsPowerShellPath() {
+  const systemRoot = process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows';
+  return path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
 }
 
 /**
  * アーカイブを展開する。
+ * Windows では PowerShell の Expand-Archive コマンドレット（-ExecutionPolicy Bypass 不要）を使う。
  * @param {string} archivePath アーカイブパスを表す。
  * @param {string} destinationDirectory 展開先ディレクトリを表す。
  * @param {string} archiveType アーカイブ種別を表す。
@@ -589,8 +583,18 @@ function extractArchive(archivePath, destinationDirectory, archiveType) {
   ensureDirectory(destinationDirectory);
 
   let result;
-  if (archiveType === 'zip') {
-    result = runProcess(getZipExtractionCommand(), ['-xf', archivePath, '-C', destinationDirectory]);
+  if (archiveType === 'zip' && process.platform === 'win32') {
+    const psPath = getWindowsPowerShellPath();
+    const quotedArchivePath = archivePath.replace(/'/g, "''");
+    const quotedDestinationDirectory = destinationDirectory.replace(/'/g, "''");
+    result = runProcess(psPath, [
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      `Expand-Archive -LiteralPath '${quotedArchivePath}' -DestinationPath '${quotedDestinationDirectory}' -Force`,
+    ]);
+  } else if (archiveType === 'zip') {
+    result = runProcess('tar', ['-xf', archivePath, '-C', destinationDirectory]);
   } else {
     result = runProcess('tar', ['-xzf', archivePath, '-C', destinationDirectory]);
   }

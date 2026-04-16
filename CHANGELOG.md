@@ -4,6 +4,12 @@
 
 形式は Keep a Changelog を参考にしつつ、このリポジトリの実装状況に合わせて整理します。
 
+## [0.3.6] - 2026-04-16
+
+### Fixed
+- `tar.exe`（bsdtar）が Gradle の ZIP アーカイブ内の JAR ファイルを解凍できない問題（`ZIP decompression failed (-5)`）を修正しました。ZIP 展開を `-ExecutionPolicy Bypass` 不要の PowerShell 組み込みコマンドレット `Expand-Archive` に戻しました。
+- ダウンロードキャッシュが破損した場合、展開失敗時にキャッシュファイルを自動削除して次回起動時に再ダウンロードできるよう改善しました。
+
 ## [0.3.5] - 2026-04-14
 
 ### Fixed
