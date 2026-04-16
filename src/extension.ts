@@ -1531,6 +1531,9 @@ function createManageMaintenanceCommand(
       if (commandResult && commandResult.stdout.trim() !== '') {
         outputChannel.appendLine(commandResult.stdout.trim());
       }
+      if (action === 'setup') {
+        applyMamoriLintExclusions(workspaceFolder);
+      }
       reportMaintenanceCommandSuccess(
         action,
         commandResult ? commandResult.stdout : '',
@@ -2241,6 +2244,34 @@ async function updateWorkspaceEnabledSettingFile(
       fs.rmSync(settingsPath, { force: true });
     }
     return;
+  }
+
+  fs.mkdirSync(settingsDirectoryPath, { recursive: true });
+  fs.writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
+}
+
+/**
+ * .mamori フォルダをチェックツールの対象から除外する設定を .vscode/settings.json へ書き込む。
+ * flake8.args / pylint.args への --exclude / --ignore 追加を冪等に行う。
+ * @param workspaceFolder 対象ワークスペースフォルダーを表す。
+ */
+function applyMamoriLintExclusions(workspaceFolder: vscode.WorkspaceFolder): void {
+  const settingsDirectoryPath = path.join(workspaceFolder.uri.fsPath, '.vscode');
+  const settingsPath = path.join(settingsDirectoryPath, 'settings.json');
+  const settings = readJsonObjectFile(settingsPath);
+
+  const flake8ArgsKey = 'flake8.args';
+  const flake8ExcludeArg = '--exclude=.mamori';
+  const existingFlake8Args = Array.isArray(settings[flake8ArgsKey]) ? settings[flake8ArgsKey] as string[] : [];
+  if (!existingFlake8Args.includes(flake8ExcludeArg)) {
+    settings[flake8ArgsKey] = [...existingFlake8Args, flake8ExcludeArg];
+  }
+
+  const pylintArgsKey = 'pylint.args';
+  const pylintIgnoreArg = '--ignore=.mamori';
+  const existingPylintArgs = Array.isArray(settings[pylintArgsKey]) ? settings[pylintArgsKey] as string[] : [];
+  if (!existingPylintArgs.includes(pylintIgnoreArg)) {
+    settings[pylintArgsKey] = [...existingPylintArgs, pylintIgnoreArg];
   }
 
   fs.mkdirSync(settingsDirectoryPath, { recursive: true });
