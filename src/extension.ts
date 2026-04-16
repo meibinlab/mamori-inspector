@@ -2251,8 +2251,21 @@ async function updateWorkspaceEnabledSettingFile(
 }
 
 /**
+ * 文字列配列設定へ値を冪等に追加するヘルパー。
+ * @param settings 設定オブジェクトを表す。
+ * @param key 設定キーを表す。
+ * @param value 追加する値を表す。
+ */
+function addToStringArraySetting(settings: Record<string, unknown>, key: string, value: string): void {
+  const existing = Array.isArray(settings[key]) ? settings[key] as string[] : [];
+  if (!existing.includes(value)) {
+    settings[key] = [...existing, value];
+  }
+}
+
+/**
  * .mamori フォルダをチェックツールの対象から除外する設定を .vscode/settings.json へ書き込む。
- * flake8.args / pylint.args への --exclude / --ignore 追加を冪等に行う。
+ * flake8 / pylint / mypy / ruff / Pylance の各除外設定を冪等に追加する。
  * @param workspaceFolder 対象ワークスペースフォルダーを表す。
  */
 function applyMamoriLintExclusions(workspaceFolder: vscode.WorkspaceFolder): void {
@@ -2260,19 +2273,21 @@ function applyMamoriLintExclusions(workspaceFolder: vscode.WorkspaceFolder): voi
   const settingsPath = path.join(settingsDirectoryPath, 'settings.json');
   const settings = readJsonObjectFile(settingsPath);
 
-  const flake8ArgsKey = 'flake8.args';
-  const flake8ExcludeArg = '--exclude=.mamori';
-  const existingFlake8Args = Array.isArray(settings[flake8ArgsKey]) ? settings[flake8ArgsKey] as string[] : [];
-  if (!existingFlake8Args.includes(flake8ExcludeArg)) {
-    settings[flake8ArgsKey] = [...existingFlake8Args, flake8ExcludeArg];
-  }
+  // flake8 拡張: --exclude オプションとファイルパターン除外
+  addToStringArraySetting(settings, 'flake8.args', '--exclude=.mamori');
+  addToStringArraySetting(settings, 'flake8.ignorePatterns', '**/.mamori/**');
 
-  const pylintArgsKey = 'pylint.args';
-  const pylintIgnoreArg = '--ignore=.mamori';
-  const existingPylintArgs = Array.isArray(settings[pylintArgsKey]) ? settings[pylintArgsKey] as string[] : [];
-  if (!existingPylintArgs.includes(pylintIgnoreArg)) {
-    settings[pylintArgsKey] = [...existingPylintArgs, pylintIgnoreArg];
-  }
+  // pylint 拡張
+  addToStringArraySetting(settings, 'pylint.args', '--ignore=.mamori');
+
+  // mypy 拡張
+  addToStringArraySetting(settings, 'mypy-type-checker.args', '--exclude=\\.mamori/');
+
+  // ruff 拡張
+  addToStringArraySetting(settings, 'ruff.args', '--exclude=.mamori');
+
+  // Pylance (python.analysis)
+  addToStringArraySetting(settings, 'python.analysis.exclude', '**/.mamori/**');
 
   fs.mkdirSync(settingsDirectoryPath, { recursive: true });
   fs.writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
