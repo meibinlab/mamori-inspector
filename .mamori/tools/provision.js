@@ -666,6 +666,17 @@ async function ensureArchiveTool(workspaceRoot, definition, onToolStart) {
   const cachePath = path.join(directories.cacheRoot, definition.tool, definition.version, fileName);
   const temporaryDirectory = `${installDirectory}.tmp-${Date.now()}`;
 
+  // 過去のセットアップ失敗で残留した一時ディレクトリをすべて削除する
+  const versionDirectory = path.dirname(installDirectory);
+  if (fs.existsSync(versionDirectory)) {
+    const stalePrefix = `${definition.version}.tmp-`;
+    for (const entry of fs.readdirSync(versionDirectory)) {
+      if (entry.startsWith(stalePrefix)) {
+        removeDirectory(path.join(versionDirectory, entry));
+      }
+    }
+  }
+
   removeDirectory(temporaryDirectory);
   removeDirectory(installDirectory);
   ensureDirectory(temporaryDirectory);
