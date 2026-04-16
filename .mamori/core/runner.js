@@ -1371,7 +1371,7 @@ async function executeCommandEntry(workspaceRoot, moduleRoot, commandEntry, exec
     const result = await executor(runtimeCommand, runtimeArguments, {
       cwd: commandEntry.cwd,
       env: commandEnvironment,
-      timeoutMs: 30000,
+      timeoutMs: 120000,
     });
 
     if (result.exitCode !== 0 && isCommandStartFailure(result.stderr)) {
