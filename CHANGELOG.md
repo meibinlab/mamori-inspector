@@ -4,6 +4,14 @@
 
 形式は Keep a Changelog を参考にしつつ、このリポジトリの実装状況に合わせて整理します。
 
+## [0.3.7] - 2026-04-17
+
+### Added
+- `Set Up Managed Tools` 実行時に、`.vscode/settings.json` へ `.mamori` フォルダを flake8・pylint・mypy・ruff・Pylance の除外対象として自動追加するようにしました。
+
+### Fixed
+- 過去のセットアップ失敗で残留した一時ディレクトリ（`{version}.tmp-*`）が存在する場合、次回セットアップ時に自動クリーンアップするよう修正しました。
+
 ## [0.3.6] - 2026-04-16
 
 ### Fixed
