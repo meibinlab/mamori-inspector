@@ -14,6 +14,7 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 3. Run the command `Mamori Inspector: Enable In Workspace` for the workspace folder where you want automatic save-time validation.
 4. Save a supported file to trigger automatic save-time validation.
 5. If you also want validation on commit and push, run the command `Mamori Inspector: Install Git Hooks` once.
+6. To remove the managed hooks, run `Mamori Inspector: Uninstall Git Hooks`. Only Mamori-managed hooks are removed; hooks that Mamori did not create are left untouched.
 
 ## CI
 - GitHub Actions runs on `push`, `pull_request`, and `workflow_dispatch`.
@@ -24,6 +25,7 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 ## Initial Setup Notes
 - Save-time validation is disabled by default and starts only after you run `Mamori Inspector: Enable In Workspace` for the target workspace folder.
 - Git hook validation does not start automatically on extension installation. You must install the managed hooks explicitly.
+- To remove managed hooks, run `Mamori Inspector: Uninstall Git Hooks`. This removes only the hooks that Mamori created and leaves any other hooks in `.git/hooks` untouched.
 - `Mamori Inspector: Install Git Hooks` synchronizes the bundled runner runtime into the workspace `.mamori/` directory before writing managed hooks, and the synchronized runtime includes `.mamori/package.json` with `type: commonjs` so the repository-local runner keeps loading correctly even when the target project uses `"type": "module"`.
 - When a workspace already contains `.mamori/`, Mamori also re-synchronizes that managed runtime automatically on extension activation and when the workspace folder is added in VS Code, so upgraded users normally do not need to rerun setup or hook installation after opening the workspace once.
 - If `.git/hooks/pre-commit` or `.git/hooks/pre-push` has been replaced with a hook that is not managed by Mamori, Mamori does not overwrite it automatically. In that case, review the existing hook and switch it manually if you want to return to the managed hook behavior.

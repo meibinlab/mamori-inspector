@@ -14,6 +14,7 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 3. 保存時検証を使いたいワークスペースフォルダーで、コマンド `Mamori Inspector: Enable In Workspace` を実行します。
 4. 対応ファイルを保存すると、保存時検証が始まります。
 5. commit と push 時の検証も有効にしたい場合は、コマンド `Mamori Inspector: Install Git Hooks` を一度実行します。
+6. 管理対象 hook を削除するには `Mamori Inspector: Uninstall Git Hooks` を実行します。Mamori が作成した hook のみ削除され、Mamori が管理していない hook はそのまま残ります。
 
 ## CI
 - GitHub Actions は `push`、`pull_request`、`workflow_dispatch` で実行します。
@@ -24,6 +25,7 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 ## 初期セットアップ時の注意
 - 保存時検証は既定で無効です。対象ワークスペースフォルダーごとに `Mamori Inspector: Enable In Workspace` を実行したあとで開始します。
 - Git hook 検証は、拡張をインストールしただけでは開始しません。管理対象の hook を明示的にインストールする必要があります。
+- 管理対象 hook を削除するには `Mamori Inspector: Uninstall Git Hooks` を実行します。Mamori が作成した hook のみ削除され、`.git/hooks` 内の他の hook には影響しません。
 - `Mamori Inspector: Install Git Hooks` は、管理対象 hook を生成する前に、同梱 runner の静的 runtime をワークスペースの `.mamori/` へ同期します。同期される runtime には `type: commonjs` を持つ `.mamori/package.json` も含まれるため、導入先プロジェクトが `"type": "module"` の場合でも repo-local runner を正しく起動できます。
 - 既にワークスペースに `.mamori/` がある場合、Mamori は拡張の有効化時と workspace 追加時にも管理 runtime を自動再同期します。そのため、利用者は通常、拡張更新後に一度 VS Code で対象 workspace を開けば setup や hook install を再実行する必要はありません。
 - `.git/hooks/pre-commit` または `.git/hooks/pre-push` が Mamori 管理外の独自 hook に置き換えられている場合、Mamori はそれを自動上書きしません。その場合は既存 hook の内容を確認したうえで、管理対象 hook に戻したいときだけ手動で切り替えてください。
