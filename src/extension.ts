@@ -2799,25 +2799,27 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push({
     dispose: () => saveCheckScheduler.dispose(),
   });
-  synchronizeExistingMamoriRuntimeForWorkspaceFolders(
-    vscode.workspace.workspaceFolders || [],
-    extensionRootPath,
-    outputChannel,
-  );
-  processObservedPrePushResultForWorkspaceFolders(
-    vscode.workspace.workspaceFolders || [],
-    diagnosticsState,
-    diagnosticCollection,
-    outputChannel,
-    handledPrePushRunIdsByWorkspace,
-    false,
-  );
-  processObservedPreCommitResultForWorkspaceFolders(
-    vscode.workspace.workspaceFolders || [],
-    outputChannel,
-    handledPreCommitRunIdsByWorkspace,
-    false,
-  );
+  setTimeout(() => {
+    synchronizeExistingMamoriRuntimeForWorkspaceFolders(
+      vscode.workspace.workspaceFolders || [],
+      extensionRootPath,
+      outputChannel,
+    );
+    processObservedPrePushResultForWorkspaceFolders(
+      vscode.workspace.workspaceFolders || [],
+      diagnosticsState,
+      diagnosticCollection,
+      outputChannel,
+      handledPrePushRunIdsByWorkspace,
+      false,
+    );
+    processObservedPreCommitResultForWorkspaceFolders(
+      vscode.workspace.workspaceFolders || [],
+      outputChannel,
+      handledPreCommitRunIdsByWorkspace,
+      false,
+    );
+  }, 0);
   const preCommitResultWatcher = vscode.workspace.createFileSystemWatcher(PRE_COMMIT_RESULT_GLOB);
   context.subscriptions.push(preCommitResultWatcher);
   context.subscriptions.push(
