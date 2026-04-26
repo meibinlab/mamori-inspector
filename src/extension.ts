@@ -1051,11 +1051,12 @@ function getMamoriCliFailureMessage(stdout: string, stderr: string, code: number
 }
 
 /**
- * ワークスペース向けの既定 SARIF パスを返す。
+ * ワークスペース直下の相対パスを絶対パスへ解決する。
  * @param workspaceFolder ワークスペースフォルダーを表す。
- * @returns SARIF パスを返す。
+ * @param relativePath ワークスペースからの相対パスを表す。
+ * @returns 絶対パスを返す。
  */
-function getSarifOutputPath(workspaceFolder: vscode.WorkspaceFolder, relativePath: string): string {
+function getWorkspaceRelativePath(workspaceFolder: vscode.WorkspaceFolder, relativePath: string): string {
   return path.join(workspaceFolder.uri.fsPath, relativePath);
 }
 
@@ -1065,7 +1066,7 @@ function getSarifOutputPath(workspaceFolder: vscode.WorkspaceFolder, relativePat
  * @returns 結果ファイルパスを返す。
  */
 function getPrePushResultOutputPath(workspaceFolder: vscode.WorkspaceFolder): string {
-  return getSarifOutputPath(workspaceFolder, PRE_PUSH_RESULT_OUTPUT);
+  return getWorkspaceRelativePath(workspaceFolder, PRE_PUSH_RESULT_OUTPUT);
 }
 
 /**
@@ -1074,7 +1075,7 @@ function getPrePushResultOutputPath(workspaceFolder: vscode.WorkspaceFolder): st
  * @returns 結果ファイルパスを返す。
  */
 function getPreCommitResultOutputPath(workspaceFolder: vscode.WorkspaceFolder): string {
-  return getSarifOutputPath(workspaceFolder, PRE_COMMIT_RESULT_OUTPUT);
+  return getWorkspaceRelativePath(workspaceFolder, PRE_COMMIT_RESULT_OUTPUT);
 }
 
 /**
@@ -2450,7 +2451,7 @@ async function runSaveCheck(
   outputChannel: vscode.OutputChannel,
   extensionRootPath: string,
 ): Promise<void> {
-  const sarifPath = getSarifOutputPath(workspaceFolder, SAVE_SARIF_OUTPUT);
+  const sarifPath = getWorkspaceRelativePath(workspaceFolder, SAVE_SARIF_OUTPUT);
   const documentUri = vscode.Uri.file(filePath);
   const fileName = path.basename(filePath);
   const notifiedToolIds = new Set<string>();
@@ -2597,7 +2598,7 @@ function createRunWorkspaceCheckCommand(
     try {
       const sarifOutputs = existingWorkspaceFolders.map((workspaceFolder) => ({
         workspaceFolder,
-        sarifPath: getSarifOutputPath(workspaceFolder, MANUAL_SARIF_OUTPUT),
+        sarifPath: getWorkspaceRelativePath(workspaceFolder, MANUAL_SARIF_OUTPUT),
       }));
       showTransientNotificationToast(getWorkspaceCheckStartedMessage());
       const manualRunPromise = (async() => {
