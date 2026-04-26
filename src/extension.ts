@@ -2485,6 +2485,7 @@ async function runSaveCheck(
       outputChannel.appendLine(
         `Mamori Inspector save check detected formatter changes for ${filePath}; rerunning checks for the latest content.`,
       );
+      notifiedToolIds.clear();
       fs.rmSync(sarifPath, { force: true });
       await runMamoriCli(workspaceFolder, {
         mode: 'save',
