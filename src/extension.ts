@@ -1674,7 +1674,7 @@ function buildDiagnosticKey(diagnostic: vscode.Diagnostic): string {
       : diagnostic.code && typeof diagnostic.code === 'object' && 'value' in diagnostic.code
         ? String(diagnostic.code.value)
         : '';
-  return [
+  return JSON.stringify([
     diagnostic.range.start.line,
     diagnostic.range.start.character,
     diagnostic.range.end.line,
@@ -1682,7 +1682,7 @@ function buildDiagnosticKey(diagnostic: vscode.Diagnostic): string {
     diagnostic.severity,
     code,
     diagnostic.message,
-  ].join(':');
+  ]);
 }
 
 /**
