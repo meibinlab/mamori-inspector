@@ -2497,7 +2497,7 @@ async function runSaveCheck(
         sarifOutputPath: sarifPath,
       }, extensionRootPath, {
         onStdoutLine: (outputLine: string) => {
-          const toolId = parseSaveCheckToolStartOutputLine(outputLine);
+          const toolId = parseSaveCheckToolStartLine(outputLine);
           if (!toolId || notifiedToolIds.has(toolId)) {
             return;
           }
