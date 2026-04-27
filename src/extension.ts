@@ -1854,11 +1854,8 @@ function publishSaveDiagnosticsFromSarif(
   const saveDiagnosticsByUri = buildDiagnosticsByUri(workspaceFolder, sarifPath);
   clearDocumentDiagnosticsByUri(diagnosticsState.manualDiagnosticsByUri, documentUri);
   clearDocumentDiagnosticsByUri(diagnosticsState.prePushDiagnosticsByUri, documentUri);
-  replaceWorkspaceDiagnosticsByUri(
-    diagnosticsState.saveDiagnosticsByUri,
-    workspaceFolder,
-    saveDiagnosticsByUri,
-  );
+  clearDocumentDiagnosticsByUri(diagnosticsState.saveDiagnosticsByUri, documentUri);
+  mergeDiagnosticsByUri(diagnosticsState.saveDiagnosticsByUri, saveDiagnosticsByUri);
   publishTrackedDiagnostics(diagnosticCollection, diagnosticsState);
   return countDiagnosticsByUri(saveDiagnosticsByUri);
 }
