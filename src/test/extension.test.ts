@@ -1300,6 +1300,13 @@ suite('Extension Utility Test Suite', () => {
         },
       },
       presenter,
+      {
+        installSuccessMessage: 'Mamori Inspector: Installed Git hooks.',
+        uninstallSuccessMessage: 'Mamori Inspector: Uninstalled Git hooks.',
+        buildWarningMessage: (warnings: string) => (
+          `Mamori Inspector: Git hooks were processed, but some hooks were left unchanged. ${warnings}`
+        ),
+      },
     );
 
     assert.deepStrictEqual(outputLines, [
@@ -1330,6 +1337,13 @@ suite('Extension Utility Test Suite', () => {
         },
       },
       presenter,
+      {
+        installSuccessMessage: 'Mamori Inspector: Installed Git hooks.',
+        uninstallSuccessMessage: 'Mamori Inspector: Uninstalled Git hooks.',
+        buildWarningMessage: (warnings: string) => (
+          `Mamori Inspector: Git hooks were processed, but some hooks were left unchanged. ${warnings}`
+        ),
+      },
     );
 
     assert.deepStrictEqual(outputLines, [
@@ -1516,6 +1530,13 @@ suite('Extension Utility Test Suite', () => {
         },
       },
       presenter,
+      {
+        installSuccessMessage: 'Mamori Inspector: Installed Git hooks.',
+        uninstallSuccessMessage: 'Mamori Inspector: Uninstalled Git hooks.',
+        buildWarningMessage: (warnings: string) => (
+          `Mamori Inspector: Git hooks were processed, but some hooks were left unchanged. ${warnings}`
+        ),
+      },
     );
 
     assert.deepStrictEqual(outputLines, []);

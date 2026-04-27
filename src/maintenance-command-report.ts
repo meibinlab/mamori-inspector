@@ -190,13 +190,7 @@ export function reportMaintenanceCommandSuccess(
   action: 'setup' | 'cache-clear',
   stdout: string,
   messagePresenter: MaintenanceMessagePresenter,
-  messages: MaintenanceCommandMessages = {
-    setupSuccessMessage: 'Mamori Inspector: Set up managed tools.',
-    cacheClearSuccessMessage: 'Mamori Inspector: Cleared the cache.',
-    buildWarningMessage: (_action: 'setup' | 'cache-clear', warnings: string) => (
-      `Mamori Inspector: Maintenance completed with warnings. ${warnings}`
-    ),
-  },
+  messages: MaintenanceCommandMessages,
 ): void {
   const warnings = extractMaintenanceWarnings(action, stdout);
 

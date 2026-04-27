@@ -80,13 +80,7 @@ export function reportHooksCommandSuccess(
   stdout: string,
   outputWriter: HooksOutputWriter,
   messagePresenter: HooksMessagePresenter,
-  messages: HooksCommandMessages = {
-    installSuccessMessage: 'Mamori Inspector: Installed Git hooks.',
-    uninstallSuccessMessage: 'Mamori Inspector: Uninstalled Git hooks.',
-    buildWarningMessage: (warnings: string) => (
-      `Mamori Inspector: Git hooks were processed, but some hooks were left unchanged. ${warnings}`
-    ),
-  },
+  messages: HooksCommandMessages,
 ): void {
   const warnings = extractHooksWarnings(stdout);
 
