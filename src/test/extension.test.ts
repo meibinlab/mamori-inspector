@@ -3885,7 +3885,7 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
    * 再起動相当の activate 時に、結果生成後へ更新されたファイルの stale な pre-push Diagnostics を復元しないこと。
    * @returns 実行完了を待つ Promise を返す。
    */
-  test('Does not restore stale observed pre-push diagnostics on activate when the file was modified after the result', async function() {
+  test('Keeps manual diagnostics when stale observed pre-push diagnostics are ignored', async function() {
     this.timeout(20000);
 
     const activeVscodeApi = vscodeApi;
@@ -3894,18 +3894,71 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
       throw new Error('Workspace root was not found');
     }
 
+    const cliScriptPath = path.join(workspaceRoot, '.mamori', 'mamori.js');
+    const manualSarifPath = path.join(workspaceRoot, '.mamori', 'out', 'combined.sarif');
     const prePushResultPath = path.join(workspaceRoot, '.mamori', 'out', 'latest-prepush-result.json');
     const prePushSarifPath = path.join(workspaceRoot, '.mamori', 'out', 'observed-prepush-stale-on-activate.sarif');
     const targetFilePath = path.join(workspaceRoot, 'src', 'extension.ts');
     const targetUri = activeVscodeApi.Uri.file(targetFilePath);
+    const restoreCliScript = createRestoreAction(cliScriptPath);
+    const restoreManualSarif = createRestoreAction(manualSarifPath);
     const restorePrePushResult = createRestoreAction(prePushResultPath);
     const restorePrePushSarif = createRestoreAction(prePushSarifPath);
     const restoreTargetFile = createRestoreAction(targetFilePath);
     const messageCapture = captureWindowMessages(activeVscodeApi);
+    const outputCapture = captureOutputChannelLines(activeVscodeApi, 'Mamori Inspector');
 
     try {
+      fs.rmSync(manualSarifPath, { force: true });
       fs.rmSync(prePushResultPath, { force: true });
       fs.rmSync(prePushSarifPath, { force: true });
+
+      fs.writeFileSync(
+        cliScriptPath,
+        [
+          '#!/usr/bin/env node',
+          'const fs = require("fs");',
+          'const path = require("path");',
+          `const sarifPath = ${JSON.stringify(manualSarifPath)};`,
+          'fs.mkdirSync(path.dirname(sarifPath), { recursive: true });',
+          'fs.writeFileSync(sarifPath, JSON.stringify({',
+          '  version: "2.1.0",',
+          '  runs: [',
+          '    {',
+          '      results: [',
+          '        {',
+          '          ruleId: "manual-rule",',
+          '          level: "warning",',
+          '          message: { text: "Observed manual finding." },',
+          '          locations: [',
+          '            {',
+          '              physicalLocation: {',
+          `                artifactLocation: { uri: ${JSON.stringify(targetFilePath)} },`,
+          '                region: { startLine: 1, startColumn: 1 },',
+          '              },',
+          '            },',
+          '          ],',
+          '        },',
+          '      ],',
+          '    },',
+          '  ],',
+          '}, null, 2), "utf8");',
+          'process.exit(0);',
+          '',
+        ].join('\n'),
+        'utf8',
+      );
+      makeExecutable(cliScriptPath);
+
+      await getMamoriExtension(activeVscodeApi).activate();
+      await activeVscodeApi.commands.executeCommand('mamori-inspector.runWorkspaceCheck');
+
+      await waitFor(
+        () => activeVscodeApi.languages.getDiagnostics(targetUri).some(
+          (diagnostic) => diagnostic.message === 'Observed manual finding.',
+        ),
+        20000,
+      );
 
       fs.mkdirSync(path.dirname(prePushResultPath), { recursive: true });
       fs.writeFileSync(
@@ -3957,15 +4010,20 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
         'utf8',
       );
 
-      fs.writeFileSync(targetFilePath, fs.readFileSync(targetFilePath, 'utf8'), 'utf8');
+      await waitFor(
+        () => outputCapture.outputLines.some((line) => line.includes('ignored stale observed pre-push diagnostics')),
+        20000,
+      );
 
-      await getMamoriExtension(activeVscodeApi).activate();
-      await delay(500);
-
-      assert.deepStrictEqual(activeVscodeApi.languages.getDiagnostics(targetUri), []);
+      const diagnostics = activeVscodeApi.languages.getDiagnostics(targetUri);
+      assert.ok(diagnostics.some((diagnostic) => diagnostic.message === 'Observed manual finding.'));
+      assert.ok(!diagnostics.some((diagnostic) => diagnostic.message === 'Observed pre-push stale finding.'));
       assert.strictEqual(messageCapture.warningMessages.length, 0);
     } finally {
       messageCapture.restore();
+      outputCapture.restore();
+      restoreCliScript();
+      restoreManualSarif();
       restoreTargetFile();
       restorePrePushResult();
       restorePrePushSarif();

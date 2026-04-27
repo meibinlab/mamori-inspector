@@ -2037,9 +2037,8 @@ function processObservedPrePushResultForWorkspace(
   }
   handledRunIdsByWorkspace.set(workspaceKey, observedResult.runId);
 
-  clearWorkspaceDiagnosticsByUri(diagnosticsState.manualDiagnosticsByUri, workspaceFolder);
-
   if (observedResult.exitCode === 0) {
+    clearWorkspaceDiagnosticsByUri(diagnosticsState.manualDiagnosticsByUri, workspaceFolder);
     clearWorkspaceDiagnosticsByUri(diagnosticsState.prePushDiagnosticsByUri, workspaceFolder);
     publishTrackedDiagnostics(diagnosticCollection, diagnosticsState);
     outputChannel.appendLine(
@@ -2055,13 +2054,6 @@ function processObservedPrePushResultForWorkspace(
     prePushDiagnosticsByUri,
     observedResult.createdAt,
   );
-  replaceWorkspaceDiagnosticsByUri(
-    diagnosticsState.prePushDiagnosticsByUri,
-    workspaceFolder,
-    freshPrePushDiagnosticsByUri,
-  );
-  publishTrackedDiagnostics(diagnosticCollection, diagnosticsState);
-
   const diagnosticsCount = countDiagnosticsByUri(freshPrePushDiagnosticsByUri);
   if (diagnosticsCount === 0 && countDiagnosticsByUri(prePushDiagnosticsByUri) > 0) {
     outputChannel.appendLine(
@@ -2069,6 +2061,14 @@ function processObservedPrePushResultForWorkspace(
     );
     return;
   }
+
+  clearWorkspaceDiagnosticsByUri(diagnosticsState.manualDiagnosticsByUri, workspaceFolder);
+  replaceWorkspaceDiagnosticsByUri(
+    diagnosticsState.prePushDiagnosticsByUri,
+    workspaceFolder,
+    freshPrePushDiagnosticsByUri,
+  );
+  publishTrackedDiagnostics(diagnosticCollection, diagnosticsState);
   outputChannel.appendLine(
     `Mamori Inspector observed failed pre-push result for ${workspaceFolder.uri.fsPath}: exitCode=${String(observedResult.exitCode)} diagnostics=${String(diagnosticsCount)}.`,
   );
