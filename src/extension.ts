@@ -1290,27 +1290,31 @@ function runMamoriCliCommand(
       settleCommand(exitCode);
     }
 
-    child.stdout.on('data', (chunk: Buffer) => {
-      const chunkText = chunk.toString('utf8');
-      stdout += chunkText;
-      pendingStdoutLine = emitCompletedOutputLines(
-        pendingStdoutLine,
-        chunkText,
-        events?.onStdoutLine,
-      );
-    });
-    child.stdout.once('end', () => {
-      stdoutEnded = true;
-      trySettleAfterExit();
-    });
+    if (child.stdout) {
+      child.stdout.on('data', (chunk: Buffer) => {
+        const chunkText = chunk.toString('utf8');
+        stdout += chunkText;
+        pendingStdoutLine = emitCompletedOutputLines(
+          pendingStdoutLine,
+          chunkText,
+          events?.onStdoutLine,
+        );
+      });
+      child.stdout.once('end', () => {
+        stdoutEnded = true;
+        trySettleAfterExit();
+      });
+    }
 
-    child.stderr.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString('utf8');
-    });
-    child.stderr.once('end', () => {
-      stderrEnded = true;
-      trySettleAfterExit();
-    });
+    if (child.stderr) {
+      child.stderr.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString('utf8');
+      });
+      child.stderr.once('end', () => {
+        stderrEnded = true;
+        trySettleAfterExit();
+      });
+    }
 
     child.on('error', (error) => {
       if (settled) {
