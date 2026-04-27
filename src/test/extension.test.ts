@@ -2990,6 +2990,148 @@ integrationVscodeApi && suite('Extension Test Suite', () => {
   });
 
   /**
+   * stdio が未生成でも子プロセス error をそのまま拒否できること。
+   * @returns 実行完了を待つ Promise を返す。
+   */
+  test('Rejects managed tool setup with the child process error when stdio streams are unavailable', async function() {
+    this.timeout(10000);
+
+    const activeVscodeApi = vscodeApi;
+    const extensionModule = loadExtensionModule();
+    const workspaceFolder = activeVscodeApi.workspace.workspaceFolders?.[0];
+    if (!extensionModule) {
+      throw new Error('Extension module was not found');
+    }
+    if (!workspaceFolder) {
+      throw new Error('Workspace root was not found');
+    }
+
+    const extensionRootPath = getMamoriExtension(activeVscodeApi).extensionUri.fsPath;
+    const expectedError = new Error('spawn setup failed');
+
+    extensionModule.setMamoriCliSpawnForTesting(
+      ((() => {
+        const child = new EventEmitter() as EventEmitter & childProcess.ChildProcess;
+
+        queueMicrotask(() => {
+          child.emit('error', expectedError);
+        });
+
+        return child;
+      }) as unknown) as typeof childProcess.spawn,
+    );
+
+    try {
+      await assert.rejects(
+        extensionModule.runMamoriCliCommandForTesting(
+          workspaceFolder,
+          ['setup'],
+          extensionRootPath,
+        ),
+        (error: unknown) => {
+          assert.strictEqual(error, expectedError);
+          return true;
+        },
+      );
+    } finally {
+      extensionModule.setMamoriCliSpawnForTesting(undefined);
+    }
+  });
+
+  /**
+   * stdio が未生成でも exit 0 のみで setup を完了できること。
+   * @returns 実行完了を待つ Promise を返す。
+   */
+  test('Completes managed tool setup when stdio streams are unavailable and the child process only emits exit', async function() {
+    this.timeout(10000);
+
+    const activeVscodeApi = vscodeApi;
+    const extensionModule = loadExtensionModule();
+    const workspaceFolder = activeVscodeApi.workspace.workspaceFolders?.[0];
+    if (!extensionModule) {
+      throw new Error('Extension module was not found');
+    }
+    if (!workspaceFolder) {
+      throw new Error('Workspace root was not found');
+    }
+
+    const extensionRootPath = getMamoriExtension(activeVscodeApi).extensionUri.fsPath;
+
+    extensionModule.setMamoriCliSpawnForTesting(
+      ((() => {
+        const child = new EventEmitter() as EventEmitter & childProcess.ChildProcess;
+
+        queueMicrotask(() => {
+          child.emit('exit', 0, null);
+        });
+
+        return child;
+      }) as unknown) as typeof childProcess.spawn,
+    );
+
+    try {
+      const commandResult = await extensionModule.runMamoriCliCommandForTesting(
+        workspaceFolder,
+        ['setup'],
+        extensionRootPath,
+      );
+
+      assert.strictEqual(commandResult.stdout, '');
+      assert.strictEqual(commandResult.stderr, '');
+    } finally {
+      extensionModule.setMamoriCliSpawnForTesting(undefined);
+    }
+  });
+
+  /**
+   * stdio が未生成でも非 0 exit を失敗として扱えること。
+   * @returns 実行完了を待つ Promise を返す。
+   */
+  test('Rejects managed tool setup when stdio streams are unavailable and the child process exits with failure', async function() {
+    this.timeout(10000);
+
+    const activeVscodeApi = vscodeApi;
+    const extensionModule = loadExtensionModule();
+    const workspaceFolder = activeVscodeApi.workspace.workspaceFolders?.[0];
+    if (!extensionModule) {
+      throw new Error('Extension module was not found');
+    }
+    if (!workspaceFolder) {
+      throw new Error('Workspace root was not found');
+    }
+
+    const extensionRootPath = getMamoriExtension(activeVscodeApi).extensionUri.fsPath;
+
+    extensionModule.setMamoriCliSpawnForTesting(
+      ((() => {
+        const child = new EventEmitter() as EventEmitter & childProcess.ChildProcess;
+
+        queueMicrotask(() => {
+          child.emit('exit', 2, null);
+        });
+
+        return child;
+      }) as unknown) as typeof childProcess.spawn,
+    );
+
+    try {
+      await assert.rejects(
+        extensionModule.runMamoriCliCommandForTesting(
+          workspaceFolder,
+          ['setup'],
+          extensionRootPath,
+        ),
+        (error: unknown) => {
+          assert.match(String(error), /Mamori CLI exited with code 2/u);
+          return true;
+        },
+      );
+    } finally {
+      extensionModule.setMamoriCliSpawnForTesting(undefined);
+    }
+  });
+
+  /**
    * 未管理の既存 hook がある場合は保持したまま install を継続できること。
    * @returns 実行完了を待つ Promise を返す。
    */
