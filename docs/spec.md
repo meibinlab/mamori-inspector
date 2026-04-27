@@ -121,6 +121,7 @@ pre-push の通知仕様（確定）:
 - VS Code 拡張は最新結果を検知した場合、生成済み SARIF があれば Problems を更新し、pre-push チェック失敗と Problems 確認を促す warning 通知を表示する
 - managed pre-push が終了コード 2 で失敗した場合も、生成済み SARIF があれば Problems を更新し、Problems と Output Channel の確認を促す error 通知を表示する
 - managed pre-push が成功した場合、runner は同じ結果メタデータを成功状態で更新し、拡張は以前の pre-push 由来 Diagnostics を消去できるようにする
+- VS Code 拡張は pre-push 結果（成功・失敗を問わず）を検知した場合、同一ワークスペースの manual 実行由来 Diagnostics も合わせて消去する（pre-push はワークスペース全体を対象とするため、manual 結果より新鮮であるとみなす）
 
 ### 3.4 手動（manual、将来対応あり）
 現行実装:
