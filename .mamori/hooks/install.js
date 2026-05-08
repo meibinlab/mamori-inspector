@@ -38,11 +38,10 @@ function getGitHooksDirectory(currentWorkingDirectory) {
  * @returns {string} hook 内容を返す。
  */
 function buildHookScript(hookDefinition) {
-  return [
+  const guardLines = [
     '#!/bin/sh',
     `# ${HOOK_MARKER}`,
     `# generated for ${hookDefinition.filename}`,
-    'set -eu',
     'REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"',
     'NODE_BIN="${NODE:-node}"',
     'RUNNER_PATH="$REPO_ROOT/.mamori/mamori.js"',
@@ -54,11 +53,22 @@ function buildHookScript(hookDefinition) {
     `  printf '%s\\n' "mamori: warning: ${hookDefinition.filename} skipped because node command was not found: $NODE_BIN" >&2`,
     '  exit 0',
     'fi',
-    `if ! ${MANAGED_HOOK_ENV_NAME}=${hookDefinition.mode} "$NODE_BIN" "$RUNNER_PATH" run --mode ${hookDefinition.mode} --scope ${hookDefinition.scope} --execute; then`,
-    `  printf '%s\\n' "mamori: warning: ${hookDefinition.filename} reported issues or execution errors, but Git continues" >&2`,
-    'fi',
-    'exit 0',
-  ].join('\n');
+  ];
+
+  // staged スコープはシェル側でステージファイルを取得してから渡す。
+  // バックグラウンド化後にコミットが完了すると git diff --cached が空になるため。
+  const runLines = hookDefinition.scope === 'staged'
+    ? [
+        `MAMORI_STAGED_FILES="$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | tr '\\n' ',')"`,
+        'if [ -n "$MAMORI_STAGED_FILES" ]; then',
+        `  ${MANAGED_HOOK_ENV_NAME}=${hookDefinition.mode} "$NODE_BIN" "$RUNNER_PATH" run --mode ${hookDefinition.mode} --scope ${hookDefinition.scope} --files "$MAMORI_STAGED_FILES" --execute > /dev/null 2>&1 &`,
+        'fi',
+      ]
+    : [
+        `${MANAGED_HOOK_ENV_NAME}=${hookDefinition.mode} "$NODE_BIN" "$RUNNER_PATH" run --mode ${hookDefinition.mode} --scope ${hookDefinition.scope} --execute > /dev/null 2>&1 &`,
+      ];
+
+  return [...guardLines, ...runLines, 'exit 0'].join('\n');
 }
 
 /**

@@ -4434,7 +4434,7 @@ suite('Mamori CLI Test Suite', () => {
     assert.match(fs.readFileSync(preCommitHookPath, 'utf8'), /mamori-inspector-managed-hook/u);
     assert.match(fs.readFileSync(preCommitHookPath, 'utf8'), /runner was not found/u);
     assert.match(fs.readFileSync(preCommitHookPath, 'utf8'), /node command was not found/u);
-    assert.match(fs.readFileSync(preCommitHookPath, 'utf8'), /--mode precommit --scope staged --execute/u);
+    assert.match(fs.readFileSync(preCommitHookPath, 'utf8'), /--mode precommit --scope staged --files .* --execute/u);
     assert.match(fs.readFileSync(prePushHookPath, 'utf8'), /--mode prepush --scope workspace --execute/u);
   });
 
@@ -4487,10 +4487,10 @@ suite('Mamori CLI Test Suite', () => {
   });
 
   /**
-   * 管理対象 hook が runner の失敗時も warning を出して継続すること。
+   * 管理対象 hook がバックグラウンドで runner を起動し、即座に継続すること。
    * @returns 返り値はない。
    */
-  test('Continues managed hook with warning when the runner exits with failure', function() {
+  test('Runs managed pre-push hook asynchronously and runner receives correct arguments', function() {
     if (!resolvePosixShellCommand()) {
       this.skip();
       return;
@@ -4520,7 +4520,15 @@ suite('Mamori CLI Test Suite', () => {
     const result = runManagedHookScript(prePushHookPath, temporaryDirectory);
 
     assert.strictEqual(result.status, 0);
-    assert.match(result.stderr, /reported issues or execution errors, but Git continues/u);
+
+    // バックグラウンドプロセスの完了を同期的に待つ
+    const sharedBuffer = new SharedArrayBuffer(4);
+    const waitArray = new Int32Array(sharedBuffer);
+    const deadline = Date.now() + 5000;
+    while (!fs.existsSync(invocationLogPath) && Date.now() < deadline) {
+      Atomics.wait(waitArray, 0, 0, 50);
+    }
+
     assert.deepStrictEqual(
       JSON.parse(fs.readFileSync(invocationLogPath, 'utf8')).args,
       ['run', '--mode', 'prepush', '--scope', 'workspace', '--execute'],
