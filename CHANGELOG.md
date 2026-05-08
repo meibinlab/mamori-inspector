@@ -8,6 +8,8 @@
 
 ### Fixed
 - VS Code の extension host 環境に `JAVA_HOME` が設定されていない場合、Windows レジストリ（`HKLM\SOFTWARE\JavaSoft\JDK`）から JDK インストール先を自動検出して Maven コマンドの実行環境に注入するようにしました。これにより、`JAVA_HOME` をシステム環境変数に設定していない環境でも workspace check で PMD / Checkstyle の警告が正しく検出されます。
+- Windows の NTFS ファイルシステムトンネリングにより、Maven がレポートファイルを再生成しても古い更新日時・サイズが再利用され、変更なしと誤判定されて結果が空になる問題を修正しました。レポートファイルを実行前に削除してからスナップショットを取得するようにしました。
+- ワークスペースフォルダが NTFS ジャンクションポイント経由のパス（例: `c:\workspace\project`）で開かれている場合、Maven が出力するレポートの絶対パスが実体パスで記録されるため、Diagnostics に表示されたファイルパスが VS Code のファイルと一致しない問題を修正しました。`fs.realpathSync` で実体パスを検出し、ジャンクション経由のパスに変換して返すようにしました。
 
 ### Changed
 - Git hooks（pre-commit / pre-push）のチェックをバックグラウンドで実行するようにしました。チェック結果にかかわらず処理は常に継続するため、コミットやプッシュの完了を待たせる必要がなくなりました。チェック結果は従来どおり VS Code の通知と Problems へ反映されます。
