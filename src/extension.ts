@@ -2570,19 +2570,20 @@ function createRunWorkspaceCheckCommand(
   extensionRootPath: string,
 ): () => Promise<void> {
   return async() => {
-    const workspaceFolders = vscode.workspace.workspaceFolders;
-    if (!workspaceFolders || workspaceFolders.length === 0) {
+    const workspaceFolder = await resolveWorkspaceFolderForSingleTargetCommand();
+    if (!workspaceFolder) {
       showTransientNonErrorMessage(getOpenWorkspaceMessage());
       return;
     }
 
-    const existingWorkspaceFolders = filterExistingWorkspaceFolders(workspaceFolders, outputChannel);
-    if (existingWorkspaceFolders.length === 0) {
+    if (!fs.existsSync(workspaceFolder.uri.fsPath)) {
       diagnosticsState.manualDiagnosticsByUri.clear();
       publishTrackedDiagnostics(diagnosticCollection, diagnosticsState);
       showTransientNonErrorMessage(getNoAvailableWorkspaceMessage());
       return;
     }
+
+    const existingWorkspaceFolders = [workspaceFolder];
 
     let runningWorkspaceCheck:
       | {

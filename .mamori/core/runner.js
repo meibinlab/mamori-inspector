@@ -1315,7 +1315,7 @@ async function executeCommandEntry(workspaceRoot, moduleRoot, commandEntry, exec
       delete baseEnvironment[environmentKey];
     }
   }
-  const toolReportState = captureToolReportState(commandEntry.cwd || moduleRoot, commandEntry.tool);
+  let toolReportState;
   let preparedCommand;
   let commandResult;
   let runtimeCommand = commandEntry.command;
@@ -1365,6 +1365,16 @@ async function executeCommandEntry(workspaceRoot, moduleRoot, commandEntry, exec
       };
       return commandResult;
     }
+
+    const reportDir = commandEntry.cwd || moduleRoot;
+    for (const reportPath of resolveToolReportPaths(reportDir, commandEntry.tool)) {
+      try {
+        fs.rmSync(reportPath, { force: true });
+      } catch {
+        // best-effort
+      }
+    }
+    toolReportState = captureToolReportState(reportDir, commandEntry.tool);
 
     printToolStart(commandEntry.tool, moduleRoot, commandEntry.phase);
 
@@ -1504,6 +1514,21 @@ async function runResolvedConfiguration(resolution, options = {}) {
     if (restageWarning) {
       result.exitCode = 2;
       result.warnings.push(`precommit restage failed: ${restageWarning}`);
+    }
+  }
+
+  if (result.issues.length > 0 && resolution.cwd) {
+    try {
+      const realCwd = fs.realpathSync(resolution.cwd);
+      if (realCwd.toLowerCase() !== resolution.cwd.toLowerCase()) {
+        for (const issue of result.issues) {
+          if (typeof issue.filePath === 'string' && issue.filePath.toLowerCase().startsWith(realCwd.toLowerCase())) {
+            issue.filePath = resolution.cwd + issue.filePath.slice(realCwd.length);
+          }
+        }
+      }
+    } catch {
+      // best-effort
     }
   }
 

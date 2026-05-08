@@ -6,6 +6,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- VS Code の extension host 環境に `JAVA_HOME` が設定されていない場合、Windows レジストリ（`HKLM\SOFTWARE\JavaSoft\JDK`）から JDK インストール先を自動検出して Maven コマンドの実行環境に注入するようにしました。これにより、`JAVA_HOME` をシステム環境変数に設定していない環境でも workspace check で PMD / Checkstyle の警告が正しく検出されます。
+
 ### Changed
 - Git hooks（pre-commit / pre-push）のチェックをバックグラウンドで実行するようにしました。チェック結果にかかわらず処理は常に継続するため、コミットやプッシュの完了を待たせる必要がなくなりました。チェック結果は従来どおり VS Code の通知と Problems へ反映されます。
 - pre-commit フックは、バックグラウンド化後にコミットが完了すると `git diff --cached` が空になる問題を回避するため、ステージ済みファイルの一覧をフックスクリプト側で先に取得して runner へ渡すようにしました。
