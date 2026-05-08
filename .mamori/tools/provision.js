@@ -788,6 +788,29 @@ function resolvePythonLauncher(workspaceRoot, env) {
     }
   }
 
+  // existsSync で検出できない候補 (Windows App Execution Alias 等) をスポーン実行で確認する
+  for (const candidate of candidates) {
+    const probeResult = runProcess(candidate.command, [...candidate.baseArgs, '--version'], {
+      cwd: workspaceRoot,
+      env,
+    });
+    if (!probeResult.error && probeResult.status === 0) {
+      return { command: candidate.command, baseArgs: candidate.baseArgs };
+    }
+  }
+
+  // uv が管理する Python を検索する
+  const uvProbeResult = runProcess('uv', ['python', 'find'], {
+    cwd: workspaceRoot,
+    env,
+  });
+  if (!uvProbeResult.error && uvProbeResult.status === 0) {
+    const uvPythonPath = uvProbeResult.stdout.trim();
+    if (uvPythonPath && fs.existsSync(uvPythonPath)) {
+      return { command: uvPythonPath, baseArgs: [] };
+    }
+  }
+
   throw new Error('python command not found for Semgrep installation');
 }
 

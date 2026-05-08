@@ -7027,6 +7027,87 @@ suite('Mamori CLI Test Suite', () => {
   });
 
   /**
+   * Python が標準検索で見つからなくても uv python find でフォールバックできること。
+   * uv 管理 Python のみが利用可能な環境 (Windows の App Execution Alias 問題等) で成立。
+   * @returns 返り値はない。
+   */
+  test('Uses uv python find as fallback when Python is not found via standard detection', function() {
+    if (process.platform !== 'win32') {
+      this.skip();
+      return;
+    }
+
+    // py.exe が標準 Windows 配置にある場合は resolveWindowsPythonLauncher が先に成功する
+    const systemRoot = process.env.SystemRoot || process.env.WINDIR || '';
+    if (fs.existsSync(path.join(systemRoot, 'py.exe'))) {
+      this.skip();
+      return;
+    }
+
+    // Python が existsSync で PATH から直接検出できる場合は標準検索が先に成功する
+    const executableExtensions = String(process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';');
+    const pathDirs = String(process.env.PATH || '').split(path.delimiter);
+    const hasPythonViaExistsSync = ['py', 'python', 'python3'].some((cmd) =>
+      pathDirs.some((dir) =>
+        executableExtensions.some((ext) => fs.existsSync(path.join(dir, `${cmd}${ext}`))),
+      ),
+    );
+    if (hasPythonViaExistsSync) {
+      this.skip();
+      return;
+    }
+
+    // Python がスポーン実行で成功する場合はスポーン確認フォールバックが先に成功する
+    const pythonCandidates: Array<[string, string[]]> = [
+      ['py', ['-3', '--version']],
+      ['python', ['--version']],
+      ['python3', ['--version']],
+    ];
+    for (const [cmd, args] of pythonCandidates) {
+      const r = spawnSync(cmd, args, { stdio: 'pipe', timeout: 3000 });
+      if (!r.error && r.status === 0) {
+        this.skip();
+        return;
+      }
+    }
+
+    // uv が利用可能で Python を解決できる場合のみ実行する
+    const uvFindResult = spawnSync('uv', ['python', 'find'], { stdio: 'pipe', timeout: 5000 });
+    if (uvFindResult.error || uvFindResult.status !== 0) {
+      this.skip();
+      return;
+    }
+    const expectedPythonPath = uvFindResult.stdout.toString().trim();
+    if (!expectedPythonPath || !fs.existsSync(expectedPythonPath)) {
+      this.skip();
+      return;
+    }
+
+    const temporaryDirectory = createTemporaryDirectory();
+
+    const provisionModulePath = path.join(
+      path.resolve(__dirname, '..', '..'),
+      '.mamori',
+      'tools',
+      'provision.js',
+    );
+    const { resolvePythonLauncher } = require(provisionModulePath) as {
+      resolvePythonLauncher: (workspaceRoot: string, env: NodeJS.ProcessEnv) => {
+        command: string;
+        baseArgs: string[];
+      };
+    };
+
+    const launcher = resolvePythonLauncher(temporaryDirectory, {
+      ...process.env,
+      MAMORI_TOOL_PYTHON_COMMAND: undefined,
+    });
+
+    assert.strictEqual(launcher.command, expectedPythonPath);
+    assert.deepStrictEqual(launcher.baseArgs, []);
+  });
+
+  /**
    * mvn が存在しないときに管理配布物を自動導入して実行できること。
    * @returns 返り値はない。
    */
