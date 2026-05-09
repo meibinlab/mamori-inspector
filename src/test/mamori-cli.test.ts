@@ -2544,7 +2544,7 @@ suite('Mamori CLI Test Suite', () => {
    * 設定未検出時でも組み込み Web 設定ファイルを各 checker 実行へ渡すこと。
    * @returns 返り値はない。
    */
-  test('Executes web checkers with bundled fallback configuration files', function () {
+  test('Executes web checkers with bundled fallback configuration files', function() {
     this.timeout(10000);
     const temporaryDirectory = createTemporaryDirectory();
     const scriptDirectory = path.join(temporaryDirectory, 'src');
