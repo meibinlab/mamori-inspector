@@ -7,6 +7,7 @@
 ## [Unreleased]
 
 ### Fixed
+- Maven の `<parent>` を持つ pom.xml で、親 POM にのみ定義されているプラグイン（Spotless・Checkstyle・PMD・SpotBugs）が検出されず、保存時の整形やチェックがスキップされる問題を修正しました。`<relativePath>` → `../pom.xml` → `~/.m2/repository` の順で親 POM を遡って設定を補完するようにしました。
 
 ### Changed
 

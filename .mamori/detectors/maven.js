@@ -4,9 +4,14 @@
 const fs = require('fs');
 // パス操作を表す
 const path = require('path');
+// ホームディレクトリ取得を表す
+const os = require('os');
 
 // Maven のビルドファイル名を表す
 const MAVEN_BUILD_FILENAME = 'pom.xml';
+
+// 親 POM 探索の最大深度を表す（循環参照防止）
+const MAX_PARENT_POM_DEPTH = 10;
 
 /**
  * ディレクトリ階層を上位へたどる。
@@ -155,6 +160,182 @@ function extractPluginBlocks(rawPomText, artifactId) {
 }
 
 /**
+ * pom.xml から親 POM の座標と relativePath を抽出する。
+ * @param {string} rawPomText pom.xml の文字列内容を表す。
+ * @returns {{groupId: string, artifactId: string, version: string, relativePath: string|undefined}|undefined} 親 POM 情報を返す。
+ */
+function extractParentPomInfo(rawPomText) {
+  const parentMatch = rawPomText.match(/<parent>([\s\S]*?)<\/parent>/u);
+  if (!parentMatch || !parentMatch[1]) {
+    return undefined;
+  }
+
+  const parentBlock = parentMatch[1];
+  const groupId = extractFirstMatch(parentBlock, /<groupId>([^<]+)<\/groupId>/u);
+  const artifactId = extractFirstMatch(parentBlock, /<artifactId>([^<]+)<\/artifactId>/u);
+  const version = extractFirstMatch(parentBlock, /<version>([^<]+)<\/version>/u);
+  const relativePath = extractFirstMatch(parentBlock, /<relativePath>([^<]*)<\/relativePath>/u);
+
+  if (!groupId || !artifactId || !version) {
+    return undefined;
+  }
+
+  return { groupId, artifactId, version, relativePath };
+}
+
+/**
+ * ローカル Maven リポジトリ内の POM ファイルパスを返す。
+ * @param {string} groupId グループ ID を表す。
+ * @param {string} artifactId アーティファクト ID を表す。
+ * @param {string} version バージョンを表す。
+ * @returns {string} POM ファイルパスを返す。
+ */
+function resolveLocalRepositoryPomPath(groupId, artifactId, version) {
+  const groupPath = groupId.split('.').join(path.sep);
+  return path.join(
+    os.homedir(),
+    '.m2',
+    'repository',
+    groupPath,
+    artifactId,
+    version,
+    `${artifactId}-${version}.pom`,
+  );
+}
+
+/**
+ * 親 POM のファイルパスを解決する。
+ * Lemminx と同じ順序で探索する:
+ * 1. <relativePath> が明示されていればそのパス
+ * 2. 省略時は ../pom.xml
+ * 3. ~/.m2/repository 内の POM
+ * @param {string} childPomPath 子 POM のファイルパスを表す。
+ * @param {{groupId: string, artifactId: string, version: string, relativePath: string|undefined}} parentInfo 親 POM 情報を表す。
+ * @returns {string|undefined} 見つかった親 POM のファイルパスを返す。
+ */
+function resolveParentPomPath(childPomPath, parentInfo) {
+  const childDir = path.dirname(childPomPath);
+
+  // relativePath が空文字列の場合はファイルシステム探索をスキップする
+  if (parentInfo.relativePath !== undefined && parentInfo.relativePath !== '') {
+    const candidate = path.resolve(childDir, parentInfo.relativePath);
+    // ディレクトリが指定された場合は pom.xml を補完する
+    const resolvedCandidate = candidate.endsWith('.xml')
+      ? candidate
+      : path.join(candidate, MAVEN_BUILD_FILENAME);
+    if (fs.existsSync(resolvedCandidate) && fs.statSync(resolvedCandidate).isFile()) {
+      return resolvedCandidate;
+    }
+    return undefined;
+  }
+
+  // relativePath 未指定時は ../pom.xml を試みる
+  if (parentInfo.relativePath === undefined) {
+    const defaultCandidate = path.join(childDir, '..', MAVEN_BUILD_FILENAME);
+    if (fs.existsSync(defaultCandidate) && fs.statSync(defaultCandidate).isFile()) {
+      return defaultCandidate;
+    }
+  }
+
+  // ~/.m2/repository にフォールバックする
+  const localRepoPomPath = resolveLocalRepositoryPomPath(
+    parentInfo.groupId,
+    parentInfo.artifactId,
+    parentInfo.version,
+  );
+  if (fs.existsSync(localRepoPomPath) && fs.statSync(localRepoPomPath).isFile()) {
+    return localRepoPomPath;
+  }
+
+  return undefined;
+}
+
+/**
+ * POM テキストからプラグイン設定を抽出する。
+ * @param {string} rawPomText pom.xml の文字列内容を表す。
+ * @returns {{checkstyleBlocks: string[], pmdBlocks: string[], spotlessBlocks: string[], spotbugsBlocks: string[]}} プラグインブロック一覧を返す。
+ */
+function extractAllPluginBlocks(rawPomText) {
+  return {
+    checkstyleBlocks: extractPluginBlocks(rawPomText, 'maven-checkstyle-plugin'),
+    pmdBlocks: extractPluginBlocks(rawPomText, 'maven-pmd-plugin'),
+    spotlessBlocks: extractPluginBlocks(rawPomText, 'spotless-maven-plugin'),
+    spotbugsBlocks: extractPluginBlocks(rawPomText, 'spotbugs-maven-plugin'),
+  };
+}
+
+/**
+ * 先祖 POM を遡って不足しているプラグインブロックを補完する。
+ * @param {string} pomFilePath 起点となる POM のファイルパスを表す。
+ * @param {{checkstyleBlocks: string[], pmdBlocks: string[], spotlessBlocks: string[], spotbugsBlocks: string[]}} accumulated 現在蓄積済みのプラグインブロックを表す。
+ * @param {Set<string>} visited 訪問済み POM パスを表す。
+ * @param {number} depth 現在の探索深度を表す。
+ * @returns {{checkstyleBlocks: string[], pmdBlocks: string[], spotlessBlocks: string[], spotbugsBlocks: string[]}} 補完後のプラグインブロックを返す。
+ */
+function mergeParentPluginBlocks(pomFilePath, accumulated, visited, depth) {
+  if (depth > MAX_PARENT_POM_DEPTH) {
+    return accumulated;
+  }
+
+  let rawPomText;
+  try {
+    rawPomText = fs.readFileSync(pomFilePath, 'utf8');
+  } catch {
+    return accumulated;
+  }
+
+  const parentInfo = extractParentPomInfo(rawPomText);
+  if (!parentInfo) {
+    return accumulated;
+  }
+
+  const parentPomPath = resolveParentPomPath(pomFilePath, parentInfo);
+  if (!parentPomPath) {
+    return accumulated;
+  }
+
+  const resolvedParentPath = path.resolve(parentPomPath);
+  if (visited.has(resolvedParentPath)) {
+    return accumulated;
+  }
+  visited.add(resolvedParentPath);
+
+  let parentRawPomText;
+  try {
+    parentRawPomText = fs.readFileSync(resolvedParentPath, 'utf8');
+  } catch {
+    return accumulated;
+  }
+
+  const parentBlocks = extractAllPluginBlocks(parentRawPomText);
+  const merged = {
+    checkstyleBlocks: accumulated.checkstyleBlocks.length > 0
+      ? accumulated.checkstyleBlocks
+      : parentBlocks.checkstyleBlocks,
+    pmdBlocks: accumulated.pmdBlocks.length > 0
+      ? accumulated.pmdBlocks
+      : parentBlocks.pmdBlocks,
+    spotlessBlocks: accumulated.spotlessBlocks.length > 0
+      ? accumulated.spotlessBlocks
+      : parentBlocks.spotlessBlocks,
+    spotbugsBlocks: accumulated.spotbugsBlocks.length > 0
+      ? accumulated.spotbugsBlocks
+      : parentBlocks.spotbugsBlocks,
+  };
+
+  const allResolved = merged.checkstyleBlocks.length > 0
+    && merged.pmdBlocks.length > 0
+    && merged.spotlessBlocks.length > 0
+    && merged.spotbugsBlocks.length > 0;
+
+  if (allResolved) {
+    return merged;
+  }
+
+  return mergeParentPluginBlocks(resolvedParentPath, merged, visited, depth + 1);
+}
+
+/**
  * Maven モジュールの build-definition を抽出する。
  * @param {string} buildFilePath pom.xml の絶対パスを表す。
  * @returns {{buildSystem: string, buildFile: string, moduleRoot: string, confidence: string, checkstyle: object, pmd: object, spotless: object, spotbugs: object, warnings: string[]}} 抽出結果を返す。
@@ -163,10 +344,16 @@ function extractMavenBuildDefinition(buildFilePath) {
   const moduleRoot = path.dirname(buildFilePath);
   const warnings = [];
   const rawPomText = fs.readFileSync(buildFilePath, 'utf8');
-  const checkstyleBlocks = extractPluginBlocks(rawPomText, 'maven-checkstyle-plugin');
-  const pmdBlocks = extractPluginBlocks(rawPomText, 'maven-pmd-plugin');
-  const spotlessBlocks = extractPluginBlocks(rawPomText, 'spotless-maven-plugin');
-  const spotbugsBlocks = extractPluginBlocks(rawPomText, 'spotbugs-maven-plugin');
+
+  const ownBlocks = extractAllPluginBlocks(rawPomText);
+  const visited = new Set([path.resolve(buildFilePath)]);
+  const { checkstyleBlocks, pmdBlocks, spotlessBlocks, spotbugsBlocks } = mergeParentPluginBlocks(
+    buildFilePath,
+    ownBlocks,
+    visited,
+    1,
+  );
+
   const checkstyleConfig = extractFirstMatch(
     checkstyleBlocks.join('\n'),
     /<configLocation>([^<]+)<\/configLocation>/u,
