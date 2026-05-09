@@ -10,6 +10,7 @@
 - Maven の `<parent>` を持つ pom.xml で、親 POM にのみ定義されているプラグイン（Spotless・Checkstyle・PMD・SpotBugs）が検出されず、保存時の整形やチェックがスキップされる問題を修正しました。`<relativePath>` → `../pom.xml` → `~/.m2/repository` の順で親 POM を遡って設定を補完するようにしました。
 
 ### Changed
+- 保存時チェックや Git フックで起動する外部コマンド（Maven・Semgrep 等）の子プロセス優先度を `PRIORITY_BELOW_NORMAL` に設定するようにしました。VS Code の操作を妨げずにバックグラウンドで静的解析・整形を実行できます。
 
 ## [0.3.9] - 2026-05-09
 

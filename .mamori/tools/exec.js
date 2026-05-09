@@ -6,6 +6,8 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 // パス操作を表す
 const path = require('path');
+// OS ユーティリティを表す
+const os = require('os');
 
 /**
  * cmd.exe へ渡す Windows コマンド引数を常にダブルクォートで囲む。
@@ -121,6 +123,11 @@ function execCommand(command, args, options = {}) {
       windowsHide: true,
       windowsVerbatimArguments: invocation.windowsVerbatimArguments,
     });
+    try {
+      os.setPriority(child.pid, os.constants.priority.PRIORITY_BELOW_NORMAL);
+    } catch {
+      // 優先度設定の失敗はチェック処理に影響しないため無視する
+    }
     let stdout = '';
     let stderr = '';
     let finished = false;
