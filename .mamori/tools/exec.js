@@ -123,11 +123,6 @@ function execCommand(command, args, options = {}) {
       windowsHide: true,
       windowsVerbatimArguments: invocation.windowsVerbatimArguments,
     });
-    try {
-      os.setPriority(child.pid, os.constants.priority.PRIORITY_BELOW_NORMAL);
-    } catch {
-      // 優先度設定の失敗はチェック処理に影響しないため無視する
-    }
     let stdout = '';
     let stderr = '';
     let finished = false;
@@ -162,6 +157,15 @@ function execCommand(command, args, options = {}) {
       }
       reject(error);
     });
+
+    // spawn 成功後（pid が確定した後）に優先度を下げる。失敗はチェック処理に影響しない
+    if (child.pid !== undefined) {
+      try {
+        os.setPriority(child.pid, os.constants.priority.PRIORITY_BELOW_NORMAL);
+      } catch {
+        // 優先度設定の失敗はチェック処理に影響しないため無視する
+      }
+    }
 
     child.on('close', (code) => {
       if (finished) {
