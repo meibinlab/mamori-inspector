@@ -1367,15 +1367,6 @@ async function executeCommandEntry(workspaceRoot, moduleRoot, commandEntry, exec
     }
 
     const reportDir = commandEntry.cwd || moduleRoot;
-    if (process.platform === 'win32') {
-      for (const reportPath of resolveToolReportPaths(reportDir, commandEntry.tool)) {
-        try {
-          fs.rmSync(reportPath, { force: true });
-        } catch {
-          // best-effort
-        }
-      }
-    }
     toolReportState = captureToolReportState(reportDir, commandEntry.tool);
 
     printToolStart(commandEntry.tool, moduleRoot, commandEntry.phase);
