@@ -59,14 +59,24 @@ function buildHookScript(hookDefinition) {
   // バックグラウンド化後にコミットが完了すると git diff --cached が空になるため。
   const runLines = hookDefinition.scope === 'staged'
     ? [
-        `MAMORI_STAGED_FILES="$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | tr '\\n' ',')"`,
-        'if [ -n "$MAMORI_STAGED_FILES" ]; then',
-        `  ${MANAGED_HOOK_ENV_NAME}=${hookDefinition.mode} "$NODE_BIN" "$RUNNER_PATH" run --mode ${hookDefinition.mode} --scope ${hookDefinition.scope} --files "$MAMORI_STAGED_FILES" --execute > /dev/null 2>&1 &`,
-        'fi',
-      ]
+      [
+        'MAMORI_STAGED_FILES="$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | tr ',
+        String.fromCharCode(39),
+        '\\n',
+        String.fromCharCode(39),
+        ' ',
+        String.fromCharCode(39),
+        ',',
+        String.fromCharCode(39),
+        ')",',
+      ].join(''),
+      'if [ -n "$MAMORI_STAGED_FILES" ]; then',
+      `  ${MANAGED_HOOK_ENV_NAME}=${hookDefinition.mode} "$NODE_BIN" "$RUNNER_PATH" run --mode ${hookDefinition.mode} --scope ${hookDefinition.scope} --files "$MAMORI_STAGED_FILES" --execute > /dev/null 2>&1 &`,
+      'fi',
+    ]
     : [
-        `${MANAGED_HOOK_ENV_NAME}=${hookDefinition.mode} "$NODE_BIN" "$RUNNER_PATH" run --mode ${hookDefinition.mode} --scope ${hookDefinition.scope} --execute > /dev/null 2>&1 &`,
-      ];
+      `${MANAGED_HOOK_ENV_NAME}=${hookDefinition.mode} "$NODE_BIN" "$RUNNER_PATH" run --mode ${hookDefinition.mode} --scope ${hookDefinition.scope} --execute > /dev/null 2>&1 &`,
+    ];
 
   return [...guardLines, ...runLines, 'exit 0'].join('\n');
 }
