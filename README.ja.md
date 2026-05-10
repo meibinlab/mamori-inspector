@@ -50,7 +50,7 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 | Maven | 3.9.11 | `.mamori/tools/maven/<version>` | `PATH` 上に `mvn` がない場合に使用します。 |
 | Gradle | 8.14.4 | `.mamori/tools/gradle/<version>` | `PATH` 上に `gradle` がない場合に使用します。 |
 | Semgrep | 1.151.0 | `.mamori/tools/python/packages` | `PATH` 上に `semgrep` がない場合に `pip` で導入します。 |
-| Prettier / ESLint / Stylelint / htmlhint | 導入時点の npm 取得版 | `.mamori/node/node_modules/.bin` | プロジェクト直下の `node_modules/.bin` に対象ツールがない場合に使用します。 |
+| Prettier / ESLint / Stylelint / htmlhint / TypeScript / HTML-Validate / Oxlint / doiuse / Knip | 導入時点の npm 取得版 | `.mamori/node/node_modules/.bin` | プロジェクト直下の `node_modules/.bin` に対象ツールがない場合に使用します。 |
 
 - Web ツールは、最寄りのプロジェクト `node_modules/.bin` を優先し、見つからない場合のみ `.mamori/node` にフォールバックします。
 - Maven、Gradle、Semgrep は、まず `PATH` 上の既存コマンドを使い、見つからない場合だけ管理コピーを導入します。
@@ -84,7 +84,7 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 - 手動全体チェックが成功した場合、拡張は同じワークスペースに対して以前反映していた保存時 Diagnostics を、最新の手動結果で置き換えます。
 - コマンド `Mamori Inspector: Enable In Workspace` と `Mamori Inspector: Disable In Workspace` は、ワークスペースフォルダー単位で保存時検証の有効・無効を切り替えます。既定値は無効です。
 - `Enable In Workspace` / `Disable In Workspace` が変更するのは `mamori-inspector.enabled` のみで、VS Code の formatter や save 系 editor 設定は変更しません。
-- コマンド `Mamori Inspector: Setup Managed Tools` は、管理対象の Maven、Gradle、Semgrep、Prettier、ESLint、Stylelint、htmlhint をワークスペースキャッシュへ導入します。
+- コマンド `Mamori Inspector: Setup Managed Tools` は、管理対象の Maven、Gradle、Semgrep、Prettier、ESLint、Stylelint、htmlhint、TypeScript、HTML-Validate、Oxlint、doiuse、Knip をワークスペースキャッシュへ導入します。
 - コマンド `Mamori Inspector: Clear Managed Tool Cache` は、`.mamori/tools` と `.mamori/node` の管理キャッシュを削除し、`.mamori-inline-tmp` も削除します。
 - コマンド `Mamori Inspector: Install Git Hooks` と `Mamori Inspector: Uninstall Git Hooks` は、CLI と同じランナーを呼び出し、`.git/hooks/pre-commit` と `.git/hooks/pre-push` を管理します。
 - Maven と Gradle の build 定義を解析して、Checkstyle、PMD、Spotless、CPD、SpotBugs などの Java ツール設定を解決します。
@@ -128,6 +128,11 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 | CSS / SCSS / Sass Stylelint | 任意: `stylelint.config.js`、`stylelint.config.mjs`、`stylelint.config.cjs`、`stylelint.config.ts`、`stylelint.config.mts`、`stylelint.config.cts`、`.stylelintrc`、`.stylelintrc.js`、`.stylelintrc.cjs`、`.stylelintrc.json`、`.stylelintrc.yaml`、`.stylelintrc.yml`、`.stylelintrc.ts`、`.stylelintrc.mts`、`.stylelintrc.cts` のいずれか、または `stylelint` を含む `package.json` | プロジェクト設定がある場合はそれを優先し、ない場合は CSS ファイルと HTML の inline style チェックに bundled minimal Stylelint config を使用します。 |
 | HTML htmlhint | 任意: `.htmlhintrc`、`.htmlhintrc.js`、`.htmlhintrc.cjs`、`.htmlhintrc.json`、`.htmlhintrc.yaml`、`.htmlhintrc.yml` のいずれか、または `htmlhint` を含む `package.json` | プロジェクト設定がある場合はそれを優先し、ない場合は HTML チェックに bundled minimal htmlhint config を使用します。 |
 | JavaScript / CSS / HTML の Prettier | Mamori 専用の必須設定ファイルはありません | プロジェクトで Prettier 設定を使う場合は、通常どおりプロジェクト内に置いて整形ルールを合わせてください。 |
+| TypeScript `tsc --noEmit` | `tsconfig.json`、または明示指定した tsconfig パス | 組み込みデフォルトなし。tsconfig が見つからない場合は warning を残してスキップします。pre-push と手動実行で使用します。 |
+| HTML HTML-Validate | 任意: `.htmlvalidate.js`、`.htmlvalidate.cjs`、`.htmlvalidate.mjs`、`.htmlvalidate.json` のいずれか | htmlhint を補完する構造・アクセシビリティ検査です。設定未検出時は bundled minimal HTML-Validate config を使用します。 |
+| JavaScript / TypeScript Oxlint | 任意: `.oxlintrc.json` または `oxlint.config.ts` | ESLint を補完する高速検査です。設定未検出時は bundled minimal Oxlint config を使用します。現行リリースでは direct file のみを対象とし、HTML の inline script には適用しません。 |
+| CSS / SCSS / Sass doiuse | `browserslist` を含む `package.json`、`.browserslistrc`、または `browserslist` ファイル | Browserslist ベースのブラウザ互換性検査です。Browserslist が見つからない場合は warning を残してスキップします。pre-push と手動実行で使用します。 |
+| JavaScript / TypeScript Knip | `package.json`、および任意で `knip.json`、`knip.jsonc`、`.knip.json`、`.knip.jsonc`、`knip.js`、`knip.ts`、`tsconfig.json` のいずれか | 未使用ファイル・export・依存関係の分析です。`package.json` が見つからない場合は warning を残してスキップします。手動実行のみで使用します。 |
 
 ## 仕様
 - docs/spec.md

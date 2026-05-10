@@ -1,59 +1,38 @@
-// VS Code 拡張APIを表す
 import * as vscode from 'vscode';
-// 子プロセス実行 API を表す
 import * as childProcess from 'child_process';
-// Node のファイルシステム API を表す
 import * as fs from 'fs';
-// Node のパス操作 API を表す
 import * as path from 'path';
-// hooks 成功通知の整形処理を表す
 import {
   reportHooksCommandSuccess,
   type HooksCommandMessages,
   type MamoriHooksAction,
 } from './hooks-command-report';
-// SARIF Diagnostics 変換器を表す
 import { loadSarifFindings, SarifFinding } from './sarif-diagnostics';
-// 保存時通知文言補助を表す
 import {
   getSaveCheckStartStatusMessage as buildSaveCheckStartStatusMessage,
   getSaveCheckToolLabel as buildSaveCheckToolLabel,
   parseSaveCheckToolStartLine as parseSaveCheckToolStartOutputLine,
 } from './save-check-notifications';
-// 保守コマンドの warning 通知補助を表す
 import {
   createMaintenanceProgressReporter,
   getMaintenanceInstallingToolLabel,
   reportMaintenanceCommandSuccess,
   type MaintenanceCommandMessages,
 } from './maintenance-command-report';
-// 保存時チェックのスケジューラーを表す
 import { SaveCheckScheduler } from './save-check-scheduler';
 
-// Mamori CLI 実行に使う spawn 実装を表す
 let spawnProcess: typeof childProcess.spawn = childProcess.spawn;
 
-// 管理対象 hook の識別子を表す
 const MANAGED_HOOK_MARKER = 'mamori-inspector-managed-hook';
-// 診断コレクション名を表す
 const DIAGNOSTIC_COLLECTION_NAME = 'mamori-inspector';
-// 拡張設定セクション名を表す
 const EXTENSION_CONFIGURATION_SECTION = 'mamori-inspector';
-// 有効化設定キー名を表す
 const ENABLED_CONFIGURATION_KEY = 'enabled';
-// 手動実行向けの SARIF 出力先を表す
 const MANUAL_SARIF_OUTPUT = path.join('.mamori', 'out', 'combined.sarif');
-// 保存時実行向けの SARIF 出力先を表す
 const SAVE_SARIF_OUTPUT = path.join('.mamori', 'out', 'combined-save.sarif');
-// pre-commit 最新結果の出力先を表す
 const PRE_COMMIT_RESULT_OUTPUT = path.join('.mamori', 'out', 'latest-precommit-result.json');
-// pre-push 最新結果の出力先を表す
 const PRE_PUSH_RESULT_OUTPUT = path.join('.mamori', 'out', 'latest-prepush-result.json');
-// pre-commit 最新結果監視に使う glob を表す
 const PRE_COMMIT_RESULT_GLOB = '**/.mamori/out/latest-precommit-result.json';
-// pre-push 最新結果監視に使う glob を表す
 const PRE_PUSH_RESULT_GLOB = '**/.mamori/out/latest-prepush-result.json';
-// ワークスペースへ同期する Mamori runtime の静的エントリ一覧を表す
 const WORKSPACE_MAMORI_RUNTIME_ENTRIES = [
   'mamori.js',
   'package.json',
@@ -66,9 +45,7 @@ const WORKSPACE_MAMORI_RUNTIME_ENTRIES = [
   path.join('tools', 'exec.js'),
   path.join('tools', 'provision.js'),
 ];
-// 管理対象 hook ファイル名一覧を表す
 const MANAGED_HOOK_FILENAMES = ['pre-commit', 'pre-push'];
-// 保存時自動チェック対象の言語一覧を表す
 const AUTO_SAVE_LANGUAGE_IDS = new Set([
   'java',
   'javascript',
@@ -80,39 +57,21 @@ const AUTO_SAVE_LANGUAGE_IDS = new Set([
   'sass',
   'html',
 ]);
-// 保存時チェックのデバウンス時間を表す
 const SAVE_DEBOUNCE_MILLISECONDS = 400;
-// 自己再帰抑止時間を表す
 const SAVE_SUPPRESSION_MILLISECONDS = 1500;
-// 設定反映待機の上限時間を表す
 const CONFIGURATION_UPDATE_TIMEOUT_MILLISECONDS = 5000;
-// 設定反映待機のポーリング間隔を表す
 const CONFIGURATION_UPDATE_POLLING_MILLISECONDS = 100;
-// 非エラー通知を自動非表示にする時間を表す
 const TRANSIENT_NON_ERROR_NOTIFICATION_MILLISECONDS = 5000;
-// 保守コマンド進捗の心拍更新間隔を表す
 const MAINTENANCE_PROGRESS_HEARTBEAT_MILLISECONDS = 0;
-// 保守コマンド進捗の最低表示時間を表す
 const MAINTENANCE_PROGRESS_MINIMUM_VISIBLE_MILLISECONDS = 1200;
-
-/** 一時トーストの自動非表示時間を表す。 */
 const TRANSIENT_NOTIFICATION_TOAST_MILLISECONDS = 3000;
 
-/** ローカライズ埋め込み引数を表す。 */
 type LocalizationArguments = Array<string | number | boolean> | Record<string, string | number | boolean>;
-/** 非エラー通知向け表示先を表す。 */
 type TransientMessagePresenter = {
   showInformationMessage: (message: string) => Thenable<unknown>;
   showWarningMessage: (message: string) => Thenable<unknown>;
 };
 
-/**
- * 既定英語文言をローカライズする。
- * @param message 既定文言を表す。
- * @param comment 翻訳向け補足を表す。
- * @param args 埋め込み引数を表す。
- * @returns ローカライズ済み文言を返す。
- */
 function localize(
   message: string,
   comment: string | string[],
@@ -121,10 +80,6 @@ function localize(
   return vscode.l10n.t({ message, comment, args });
 }
 
-/**
- * ワークスペース未選択時の警告文言を返す。
- * @returns 警告文言を返す。
- */
 function getOpenWorkspaceMessage(): string {
   return localize(
     'Mamori Inspector: Open a workspace first.',
@@ -132,10 +87,6 @@ function getOpenWorkspaceMessage(): string {
   );
 }
 
-/**
- * ワークスペース選択プレースホルダーを返す。
- * @returns プレースホルダー文言を返す。
- */
 function getWorkspaceSelectionPlaceholder(): string {
   return localize(
     'Select the workspace for Mamori Inspector.',
@@ -143,11 +94,6 @@ function getWorkspaceSelectionPlaceholder(): string {
   );
 }
 
-/**
- * hooks 進捗タイトルを返す。
- * @param action hooks 操作種別を表す。
- * @returns 進捗タイトルを返す。
- */
 function getHooksProgressTitle(action: MamoriHooksAction): string {
   return action === 'install'
     ? localize(
@@ -160,12 +106,6 @@ function getHooksProgressTitle(action: MamoriHooksAction): string {
     );
 }
 
-/**
- * hooks 失敗通知文言を返す。
- * @param action hooks 操作種別を表す。
- * @param details 失敗詳細を表す。
- * @returns エラー通知文言を返す。
- */
 function getHooksFailureMessage(action: MamoriHooksAction, details: string): string {
   return action === 'install'
     ? localize(
@@ -180,10 +120,6 @@ function getHooksFailureMessage(action: MamoriHooksAction, details: string): str
     );
 }
 
-/**
- * hooks 成功通知文言を返す。
- * @returns hooks 通知文言を返す。
- */
 function getHooksCommandMessages(): HooksCommandMessages {
   return {
     installSuccessMessage: localize(
@@ -202,11 +138,6 @@ function getHooksCommandMessages(): HooksCommandMessages {
   };
 }
 
-/**
- * 保守コマンド進捗タイトルを返す。
- * @param action 保守コマンド種別を表す。
- * @returns 進捗タイトルを返す。
- */
 function getMaintenanceProgressTitle(action: MamoriMaintenanceAction): string {
   return action === 'setup'
     ? localize(
@@ -219,11 +150,6 @@ function getMaintenanceProgressTitle(action: MamoriMaintenanceAction): string {
     );
 }
 
-/**
- * 保守コマンドの進捗基礎メッセージを返す。
- * @param action 保守コマンド種別を表す。
- * @returns 進捗基礎メッセージを返す。
- */
 function getMaintenanceProgressBaseMessage(action: MamoriMaintenanceAction): string {
   return action === 'setup'
     ? localize(
@@ -236,12 +162,6 @@ function getMaintenanceProgressBaseMessage(action: MamoriMaintenanceAction): str
     );
 }
 
-/**
- * 保守コマンドの stdout 行から進捗メッセージを返す。
- * @param action 保守コマンド種別を表す。
- * @param outputLine CLI stdout の 1 行を表す。
- * @returns 進捗メッセージを返す。
- */
 function getMaintenanceProgressDetailMessage(
   action: MamoriMaintenanceAction,
   outputLine: string,
@@ -280,12 +200,6 @@ function getMaintenanceProgressDetailMessage(
   );
 }
 
-/**
- * 保守コマンドの心拍メッセージを返す。
- * @param action 保守コマンド種別を表す。
- * @param startedAtMilliseconds 実行開始時刻を表す。
- * @returns 心拍メッセージを返す。
- */
 function getMaintenanceHeartbeatMessage(
   action: MamoriMaintenanceAction,
   startedAtMilliseconds: number,
@@ -306,11 +220,6 @@ function getMaintenanceHeartbeatMessage(
   );
 }
 
-/**
- * 保守コマンド成功通知文言を返す。
- * @param action 保守コマンド種別を表す。
- * @returns 情報通知文言を返す。
- */
 function getMaintenanceSuccessMessage(action: MamoriMaintenanceAction): string {
   return action === 'setup'
     ? localize(
@@ -323,12 +232,6 @@ function getMaintenanceSuccessMessage(action: MamoriMaintenanceAction): string {
     );
 }
 
-/**
- * 保守コマンド warning 通知文言を返す。
- * @param action 保守コマンド種別を表す。
- * @param warnings 警告内容を表す。
- * @returns 警告通知文言を返す。
- */
 function getMaintenanceWarningMessage(action: MamoriMaintenanceAction, warnings: string): string {
   return action === 'setup'
     ? localize(
@@ -343,10 +246,6 @@ function getMaintenanceWarningMessage(action: MamoriMaintenanceAction, warnings:
     );
 }
 
-/**
- * 保守コマンド通知文言を返す。
- * @returns 保守コマンド通知文言を返す。
- */
 function getMaintenanceCommandMessages(): MaintenanceCommandMessages {
   return {
     setupSuccessMessage: getMaintenanceSuccessMessage('setup'),
@@ -357,12 +256,6 @@ function getMaintenanceCommandMessages(): MaintenanceCommandMessages {
   };
 }
 
-/**
- * 保守コマンド失敗通知文言を返す。
- * @param action 保守コマンド種別を表す。
- * @param details 失敗詳細を表す。
- * @returns エラー通知文言を返す。
- */
 function getMaintenanceFailureMessage(action: MamoriMaintenanceAction, details: string): string {
   return action === 'setup'
     ? localize(
@@ -377,11 +270,6 @@ function getMaintenanceFailureMessage(action: MamoriMaintenanceAction, details: 
     );
 }
 
-/**
- * 保存時チェック結果のステータスバー文言を返す。
- * @param diagnosticsCount 診断件数を表す。
- * @returns ステータスバー文言を返す。
- */
 function getSaveCheckStatusMessage(diagnosticsCount: number): string {
   return localize(
     'Mamori Inspector: Reflected {0} save-check diagnostics.',
@@ -390,11 +278,6 @@ function getSaveCheckStatusMessage(diagnosticsCount: number): string {
   );
 }
 
-/**
- * 非エラー通知を自動非表示の status bar へ表示する。
- * @param message 表示するメッセージを表す。
- * @returns 返り値はない。
- */
 function showTransientNonErrorMessage(message: string): void {
   void vscode.window.setStatusBarMessage(
     message,
@@ -402,11 +285,6 @@ function showTransientNonErrorMessage(message: string): void {
   );
 }
 
-/**
- * 通知エリアへ自動非表示の一時トーストを表示する。
- * @param message 表示するメッセージを表す。
- * @returns 返り値はない。
- */
 function showTransientNotificationToast(message: string): void {
   void vscode.window.withProgress(
     {
@@ -422,10 +300,6 @@ function showTransientNotificationToast(message: string): void {
   );
 }
 
-/**
- * hooks / maintenance 成功通知向けの表示先を返す。
- * @returns 通知表示先を返す。
- */
 function getTransientMessagePresenter(): TransientMessagePresenter {
   return {
     showInformationMessage: async(message: string) => {
@@ -439,30 +313,14 @@ function getTransientMessagePresenter(): TransientMessagePresenter {
   };
 }
 
-/**
- * 保存時 CLI 出力から開始したツール ID を抽出する。
- * @param outputLine CLI の標準出力 1 行を表す。
- * @returns ツール ID を返す。
- */
 function parseSaveCheckToolStartLine(outputLine: string): string | undefined {
   return parseSaveCheckToolStartOutputLine(outputLine);
 }
 
-/**
- * 保存時通知に表示するツール名を返す。
- * @param toolId CLI が通知したツール ID を表す。
- * @returns 表示用ツール名を返す。
- */
 function getSaveCheckToolLabel(toolId: string): string {
   return buildSaveCheckToolLabel(toolId);
 }
 
-/**
- * 保存時開始ステータス文言を返す。
- * @param fileName 対象ファイル名を表す。
- * @param toolLabel 表示用ツール名を表す。
- * @returns ステータス文言を返す。
- */
 function getSaveCheckStartStatusMessage(fileName: string, toolLabel: string): string {
   return localize(
     buildSaveCheckStartStatusMessage(fileName, toolLabel),
@@ -470,10 +328,6 @@ function getSaveCheckStartStatusMessage(fileName: string, toolLabel: string): st
   );
 }
 
-/**
- * 利用可能ワークスペースなしの警告文言を返す。
- * @returns 警告文言を返す。
- */
 function getNoAvailableWorkspaceMessage(): string {
   return localize(
     'Mamori Inspector: No available workspace folders were found.',
@@ -481,10 +335,6 @@ function getNoAvailableWorkspaceMessage(): string {
   );
 }
 
-/**
- * 手動実行の進捗タイトルを返す。
- * @returns 進捗タイトルを返す。
- */
 function getWorkspaceCheckProgressTitle(): string {
   return localize(
     'Running Mamori Inspector',
@@ -492,10 +342,6 @@ function getWorkspaceCheckProgressTitle(): string {
   );
 }
 
-/**
- * 手動実行開始の一時トースト文言を返す。
- * @returns 開始通知文言を返す。
- */
 function getWorkspaceCheckStartedMessage(): string {
   return localize(
     'Mamori Inspector: Started workspace check.',
@@ -503,11 +349,6 @@ function getWorkspaceCheckStartedMessage(): string {
   );
 }
 
-/**
- * 手動実行成功通知文言を返す。
- * @param diagnosticsCount 診断件数を表す。
- * @returns 情報通知文言を返す。
- */
 function getWorkspaceCheckSuccessMessage(diagnosticsCount: number): string {
   return localize(
     'Mamori Inspector: Reflected {0} diagnostics.',
@@ -516,11 +357,6 @@ function getWorkspaceCheckSuccessMessage(diagnosticsCount: number): string {
   );
 }
 
-/**
- * 手動実行失敗通知文言を返す。
- * @param details 失敗詳細を表す。
- * @returns エラー通知文言を返す。
- */
 function getWorkspaceCheckFailureMessage(details: string): string {
   return localize(
     'Mamori Inspector: Execution failed. {0}',
@@ -529,12 +365,6 @@ function getWorkspaceCheckFailureMessage(details: string): string {
   );
 }
 
-/**
- * 手動実行の一部失敗通知文言を返す。
- * @param failedWorkspaceCount 失敗したワークスペース数を表す。
- * @param details 失敗詳細を表す。
- * @returns エラー通知文言を返す。
- */
 function getWorkspaceCheckPartialFailureMessage(
   failedWorkspaceCount: number,
   details: string,
@@ -546,10 +376,6 @@ function getWorkspaceCheckPartialFailureMessage(
   );
 }
 
-/**
- * Problems 表示アクション文言を返す。
- * @returns アクション文言を返す。
- */
 function getOpenProblemsActionLabel(): string {
   return localize(
     'Open Problems',
@@ -557,10 +383,6 @@ function getOpenProblemsActionLabel(): string {
   );
 }
 
-/**
- * Output 表示アクション文言を返す。
- * @returns アクション文言を返す。
- */
 function getOpenOutputActionLabel(): string {
   return localize(
     'Open Mamori Output',
@@ -568,10 +390,6 @@ function getOpenOutputActionLabel(): string {
   );
 }
 
-/**
- * 手動チェック実行アクション文言を返す。
- * @returns アクション文言を返す。
- */
 function getRunWorkspaceCheckActionLabel(): string {
   return localize(
     'Run Workspace Check',
@@ -579,11 +397,6 @@ function getRunWorkspaceCheckActionLabel(): string {
   );
 }
 
-/**
- * pre-commit 検出通知文言を返す。
- * @param issueCount 検出件数を表す。
- * @returns 警告通知文言を返す。
- */
 function getPreCommitChecksFailedMessage(issueCount: number): string {
   if (issueCount > 0) {
     return localize(
@@ -599,11 +412,6 @@ function getPreCommitChecksFailedMessage(issueCount: number): string {
   );
 }
 
-/**
- * pre-commit 実行エラー通知文言を返す。
- * @param details 失敗詳細を表す。
- * @returns エラー通知文言を返す。
- */
 function getPreCommitExecutionFailureMessage(details: string): string {
   if (details.trim() !== '') {
     return localize(
@@ -619,11 +427,6 @@ function getPreCommitExecutionFailureMessage(details: string): string {
   );
 }
 
-/**
- * pre-push 検出通知文言を返す。
- * @param diagnosticsCount 検出件数を表す。
- * @returns 警告通知文言を返す。
- */
 function getPrePushChecksFailedMessage(diagnosticsCount: number): string {
   if (diagnosticsCount > 0) {
     return localize(
@@ -639,11 +442,6 @@ function getPrePushChecksFailedMessage(diagnosticsCount: number): string {
   );
 }
 
-/**
- * pre-push 実行エラー通知文言を返す。
- * @param details 失敗詳細を表す。
- * @returns エラー通知文言を返す。
- */
 function getPrePushExecutionFailureMessage(details: string): string {
   if (details.trim() !== '') {
     return localize(
@@ -659,12 +457,6 @@ function getPrePushExecutionFailureMessage(details: string): string {
   );
 }
 
-/**
- * ワークスペース有効化の成功通知文言を返す。
- * @param enabled 有効化後の状態を表す。
- * @param workspaceFolderName 対象ワークスペース名を表す。
- * @returns 情報通知文言を返す。
- */
 function getWorkspaceEnablementSuccessMessage(enabled: boolean, workspaceFolderName: string): string {
   return enabled
     ? localize(
@@ -679,11 +471,6 @@ function getWorkspaceEnablementSuccessMessage(enabled: boolean, workspaceFolderN
     );
 }
 
-/**
- * ワークスペース有効化の更新失敗通知文言を返す。
- * @param details 失敗詳細を表す。
- * @returns エラー通知文言を返す。
- */
 function getWorkspaceEnablementFailureMessage(details: string): string {
   return localize(
     'Mamori Inspector: Failed to update workspace enablement. {0}',
@@ -692,152 +479,73 @@ function getWorkspaceEnablementFailureMessage(details: string): string {
   );
 }
 
-/**
- * Mamori CLI 実行条件を表す。
- */
 interface MamoriCliRunOptions {
-  /** 実行モードを表す。 */
   mode: 'manual' | 'save';
-  /** 実行スコープを表す。 */
   scope: 'workspace' | 'file';
-  /** SARIF 出力パスを表す。 */
   sarifOutputPath: string;
-  /** 対象ファイル一覧を表す。 */
   files?: string[];
 }
 
-/**
- * Mamori CLI 実行結果を表す。
- */
 interface MamoriCliCommandResult {
-  /** 標準出力を表す。 */
   stdout: string;
-  /** 標準エラー出力を表す。 */
   stderr: string;
 }
 
-/**
- * Mamori CLI 実行中の逐次イベントを表す。
- */
 interface MamoriCliCommandEvents {
-  /** 標準出力 1 行を受け取る処理を表す。 */
   onStdoutLine?: (line: string) => void;
 }
 
-/**
- * Mamori CLI の保守コマンド種別を表す。
- */
 type MamoriMaintenanceAction = 'setup' | 'cache-clear';
 
-/**
- * URI ごとの Diagnostics 収集結果を表す。
- */
 interface DiagnosticsByUriEntry {
-  /** 対象 URI を表す。 */
   uri: vscode.Uri;
-  /** Diagnostics 一覧を表す。 */
   diagnostics: vscode.Diagnostic[];
 }
 
-/**
- * 実行種別ごとの Diagnostics 保持状態を表す。
- */
 interface DiagnosticsState {
-  /** 手動実行由来の Diagnostics を表す。 */
   manualDiagnosticsByUri: Map<string, DiagnosticsByUriEntry>;
-  /** pre-push 実行由来の Diagnostics を表す。 */
   prePushDiagnosticsByUri: Map<string, DiagnosticsByUriEntry>;
-  /** 保存時実行由来の Diagnostics を表す。 */
   saveDiagnosticsByUri: Map<string, DiagnosticsByUriEntry>;
 }
 
-/**
- * 観測した pre-push 実行結果を表す。
- */
 interface ObservedPrePushResult {
-  /** 実行を一意に識別する ID を表す。 */
   runId: string;
-  /** 終了コードを表す。 */
   exitCode: number;
-  /** 生成時刻を表す。 */
   createdAt: string;
-  /** 問題件数を表す。 */
   issueCount: number;
-  /** 警告一覧を表す。 */
   warnings: string[];
-  /** SARIF 出力パスを表す。 */
   sarifOutputPath?: string;
 }
 
-/**
- * 観測した pre-commit 実行結果を表す。
- */
 interface ObservedPreCommitResult {
-  /** 実行を一意に識別する ID を表す。 */
   runId: string;
-  /** 終了コードを表す。 */
   exitCode: number;
-  /** 生成時刻を表す。 */
   createdAt: string;
-  /** 問題件数を表す。 */
   issueCount: number;
-  /** 警告一覧を表す。 */
   warnings: string[];
-  /** SARIF 出力パスを表す。 */
   sarifOutputPath?: string;
 }
 
-/**
- * ワークスペース直下の Mamori ルートパスを返す。
- * @param workspaceFolder ワークスペースフォルダーを表す。
- * @returns Mamori ルートパスを返す。
- */
 function getWorkspaceMamoriRootPath(workspaceFolder: vscode.WorkspaceFolder): string {
   return path.join(workspaceFolder.uri.fsPath, '.mamori');
 }
 
-/**
- * ワークスペース直下の Mamori CLI パスを返す。
- * @param workspaceFolder ワークスペースフォルダーを表す。
- * @returns CLI スクリプトパスを返す。
- */
 function getWorkspaceMamoriCliPath(workspaceFolder: vscode.WorkspaceFolder): string {
   return path.join(getWorkspaceMamoriRootPath(workspaceFolder), 'mamori.js');
 }
 
-/**
- * ワークスペースの Git hooks ディレクトリパスを返す。
- * @param workspaceFolder ワークスペースフォルダーを表す。
- * @returns Git hooks ディレクトリパスを返す。
- */
 function getWorkspaceGitHooksPath(workspaceFolder: vscode.WorkspaceFolder): string {
   return path.join(workspaceFolder.uri.fsPath, '.git', 'hooks');
 }
 
-/**
- * 拡張同梱の Mamori ルートパスを返す。
- * @param extensionRootPath 拡張ルートパスを表す。
- * @returns Mamori ルートパスを返す。
- */
 function getBundledMamoriRootPath(extensionRootPath: string): string {
   return path.join(extensionRootPath, '.mamori');
 }
 
-/**
- * 拡張同梱の Mamori CLI パスを返す。
- * @param extensionRootPath 拡張ルートパスを表す。
- * @returns CLI スクリプトパスを返す。
- */
 function getBundledMamoriCliPath(extensionRootPath: string): string {
   return path.join(getBundledMamoriRootPath(extensionRootPath), 'mamori.js');
 }
 
-/**
- * 拡張同梱の Mamori runtime をワークスペースへ同期する。
- * @param workspaceFolder 同期先ワークスペースフォルダーを表す。
- * @param extensionRootPath 拡張ルートパスを表す。
- * @returns 返り値はない。
- */
 function synchronizeMamoriRuntimeToWorkspace(
   workspaceFolder: vscode.WorkspaceFolder,
   extensionRootPath: string,
@@ -865,11 +573,6 @@ function synchronizeMamoriRuntimeToWorkspace(
   }
 }
 
-/**
- * 既存の管理対象 hook があるか判定する。
- * @param workspaceFolder 対象ワークスペースフォルダーを表す。
- * @returns 管理対象 hook が 1 つでも存在すれば true を返す。
- */
 function hasExistingManagedHooks(workspaceFolder: vscode.WorkspaceFolder): boolean {
   const hooksDirectoryPath = getWorkspaceGitHooksPath(workspaceFolder);
 
@@ -887,12 +590,6 @@ function hasExistingManagedHooks(workspaceFolder: vscode.WorkspaceFolder): boole
   return false;
 }
 
-/**
- * 既存の管理対象 hook がある場合は最新テンプレートで再同期する。
- * @param workspaceFolder 対象ワークスペースフォルダーを表す。
- * @param extensionRootPath 拡張ルートパスを表す。
- * @returns 返り値はない。
- */
 function synchronizeExistingManagedHooksIfPresent(
   workspaceFolder: vscode.WorkspaceFolder,
   extensionRootPath: string,
@@ -932,13 +629,6 @@ function synchronizeExistingManagedHooksIfPresent(
   }
 }
 
-/**
- * 既存の `.mamori` を持つワークスペースに対して runtime を best-effort で同期する。
- * @param workspaceFolder 対象ワークスペースフォルダーを表す。
- * @param extensionRootPath 拡張ルートパスを表す。
- * @param outputChannel 出力チャネルを表す。
- * @returns 返り値はない。
- */
 export function synchronizeExistingMamoriRuntimeIfPresent(
   workspaceFolder: vscode.WorkspaceFolder,
   extensionRootPath: string,
@@ -959,13 +649,6 @@ export function synchronizeExistingMamoriRuntimeIfPresent(
   }
 }
 
-/**
- * 既存 `.mamori` を持つワークスペース群へ runtime を best-effort で同期する。
- * @param workspaceFolders 対象ワークスペース一覧を表す。
- * @param extensionRootPath 拡張ルートパスを表す。
- * @param outputChannel 出力チャネルを表す。
- * @returns 返り値はない。
- */
 function synchronizeExistingMamoriRuntimeForWorkspaceFolders(
   workspaceFolders: readonly vscode.WorkspaceFolder[],
   extensionRootPath: string,
@@ -976,12 +659,6 @@ function synchronizeExistingMamoriRuntimeForWorkspaceFolders(
   }
 }
 
-/**
- * 実行に利用する Mamori CLI パスを返す。
- * @param workspaceFolder ワークスペースフォルダーを表す。
- * @param extensionRootPath 拡張ルートパスを表す。
- * @returns 利用する CLI スクリプトパスを返す。
- */
 function getMamoriCliPath(workspaceFolder: vscode.WorkspaceFolder, extensionRootPath: string): string {
   const workspaceCliPath = getWorkspaceMamoriCliPath(workspaceFolder);
   if (fs.existsSync(workspaceCliPath)) {
@@ -991,10 +668,6 @@ function getMamoriCliPath(workspaceFolder: vscode.WorkspaceFolder, extensionRoot
   return getBundledMamoriCliPath(extensionRootPath);
 }
 
-/**
- * Mamori CLI の実行に使う親プロセスを返す。
- * @returns 実行ファイルパスを返す。
- */
 function getMamoriCliExecutablePath(): string {
   const configuredExecutablePath = process.env.MAMORI_CLI_NODE_PATH;
   if (configuredExecutablePath && fs.existsSync(configuredExecutablePath)) {
@@ -1004,24 +677,12 @@ function getMamoriCliExecutablePath(): string {
   return process.execPath;
 }
 
-/**
- * テスト用に Mamori CLI 実行の spawn 実装を差し替える。
- * @param spawnImplementation 差し替える spawn 実装を表す。
- * @returns 返り値はない。
- */
 export function setMamoriCliSpawnForTesting(
   spawnImplementation: typeof childProcess.spawn | undefined,
 ): void {
   spawnProcess = spawnImplementation || childProcess.spawn;
 }
 
-/**
- * Mamori CLI 失敗時に表示する詳細メッセージを返す。
- * @param stdout 標準出力を表す。
- * @param stderr 標準エラー出力を表す。
- * @param code 終了コードを表す。
- * @returns 利用者向けの失敗詳細を返す。
- */
 function getMamoriCliFailureMessage(stdout: string, stderr: string, code: number | null): string {
   const normalizedStderr = stderr.trim();
   if (normalizedStderr !== '') {
@@ -1050,39 +711,18 @@ function getMamoriCliFailureMessage(stdout: string, stderr: string, code: number
   return lines.at(-1) || `Mamori CLI exited with code ${String(code)}`;
 }
 
-/**
- * ワークスペース直下の相対パスを絶対パスへ解決する。
- * @param workspaceFolder ワークスペースフォルダーを表す。
- * @param relativePath ワークスペースからの相対パスを表す。
- * @returns 絶対パスを返す。
- */
 function getWorkspaceRelativePath(workspaceFolder: vscode.WorkspaceFolder, relativePath: string): string {
   return path.join(workspaceFolder.uri.fsPath, relativePath);
 }
 
-/**
- * pre-push 最新結果ファイルパスを返す。
- * @param workspaceFolder ワークスペースフォルダーを表す。
- * @returns 結果ファイルパスを返す。
- */
 function getPrePushResultOutputPath(workspaceFolder: vscode.WorkspaceFolder): string {
   return getWorkspaceRelativePath(workspaceFolder, PRE_PUSH_RESULT_OUTPUT);
 }
 
-/**
- * pre-commit 最新結果ファイルパスを返す。
- * @param workspaceFolder ワークスペースフォルダーを表す。
- * @returns 結果ファイルパスを返す。
- */
 function getPreCommitResultOutputPath(workspaceFolder: vscode.WorkspaceFolder): string {
   return getWorkspaceRelativePath(workspaceFolder, PRE_COMMIT_RESULT_OUTPUT);
 }
 
-/**
- * Mamori CLI の引数一覧を構築する。
- * @param options 実行条件を表す。
- * @returns CLI 引数一覧を返す。
- */
 function buildMamoriCliArguments(options: MamoriCliRunOptions): string[] {
   const argumentsList = [
     'run',
@@ -1102,29 +742,14 @@ function buildMamoriCliArguments(options: MamoriCliRunOptions): string[] {
   return argumentsList;
 }
 
-/**
- * Mamori hooks CLI の引数一覧を構築する。
- * @param action hooks 操作種別を表す。
- * @returns CLI 引数一覧を返す。
- */
 function buildMamoriHooksArguments(action: MamoriHooksAction): string[] {
   return ['hooks', action];
 }
 
-/**
- * Mamori 保守コマンドの引数一覧を構築する。
- * @param action 保守コマンド種別を表す。
- * @returns CLI 引数一覧を返す。
- */
 function buildMamoriMaintenanceArguments(action: MamoriMaintenanceAction): string[] {
   return [action];
 }
 
-/**
- * SARIF level を VS Code の重要度へ変換する。
- * @param level SARIF level を表す。
- * @returns VS Code の重要度を返す。
- */
 function toDiagnosticSeverity(level: string | undefined): vscode.DiagnosticSeverity {
   switch (level) {
     case 'error':
@@ -1137,12 +762,6 @@ function toDiagnosticSeverity(level: string | undefined): vscode.DiagnosticSever
   }
 }
 
-/**
- * SARIF finding の URI を VS Code URI へ変換する。
- * @param workspaceFolder ワークスペースフォルダーを表す。
- * @param finding SARIF finding を表す。
- * @returns VS Code URI を返す。
- */
 function toDocumentUri(workspaceFolder: vscode.WorkspaceFolder, finding: SarifFinding): vscode.Uri {
   if (path.isAbsolute(finding.uri)) {
     return vscode.Uri.file(finding.uri);
@@ -1151,11 +770,6 @@ function toDocumentUri(workspaceFolder: vscode.WorkspaceFolder, finding: SarifFi
   return vscode.Uri.file(path.resolve(workspaceFolder.uri.fsPath, finding.uri));
 }
 
-/**
- * Mamori CLI を実行する。
- * @param workspaceFolder ワークスペースフォルダーを表す。
- * @returns 実行完了を待つ Promise を返す。
- */
 function runMamoriCli(
   workspaceFolder: vscode.WorkspaceFolder,
   options: MamoriCliRunOptions,
@@ -1170,13 +784,7 @@ function runMamoriCli(
   );
 }
 
-/**
- * 受信した出力テキストから完結した行を通知し、未完了の末尾行を返す。
- * @param pendingLine 前回チャンクから継続している末尾行を表す。
- * @param chunkText 今回受信したテキストを表す。
- * @param onLine 完結した行の通知先を表す。
- * @returns 次回へ持ち越す末尾行を返す。
- */
+/** 受信した出力テキストから完結した行を通知し、未完了の末尾行を返す。 */
 function emitCompletedOutputLines(
   pendingLine: string,
   chunkText: string,
@@ -1194,12 +802,6 @@ function emitCompletedOutputLines(
   return nextPendingLine;
 }
 
-/**
- * 子プロセス終了時に未通知の末尾行を通知する。
- * @param pendingLine 未通知の末尾行を表す。
- * @param onLine 行の通知先を表す。
- * @returns 返り値はない。
- */
 function emitPendingOutputLine(
   pendingLine: string,
   onLine?: (line: string) => void,
@@ -1209,12 +811,6 @@ function emitPendingOutputLine(
   }
 }
 
-/**
- * 任意の Mamori CLI 引数を実行する。
- * @param workspaceFolder ワークスペースフォルダーを表す。
- * @param argumentsList CLI 引数一覧を表す。
- * @returns 実行完了を待つ Promise を返す。
- */
 function runMamoriCliCommand(
   workspaceFolder: vscode.WorkspaceFolder,
   argumentsList: string[],
@@ -1255,11 +851,6 @@ function runMamoriCliCommand(
     let stdoutEnded = !child.stdout;
     let stderrEnded = !child.stderr;
 
-    /**
-     * CLI 実行結果を 1 回だけ確定する。
-     * @param code 終了コードを表す。
-     * @returns 返り値はない。
-     */
     function settleCommand(code: number | null): void {
       if (settled) {
         return;
@@ -1276,10 +867,6 @@ function runMamoriCliCommand(
       reject(new Error(getMamoriCliFailureMessage(stdout, stderr, code ?? null)));
     }
 
-    /**
-     * `exit` のみ受信した場合に標準入出力終端後の完了判定を行う。
-     * @returns 返り値はない。
-     */
     function trySettleAfterExit(): void {
       if (typeof exitCode === 'undefined') {
         return;
@@ -1336,13 +923,6 @@ function runMamoriCliCommand(
   });
 }
 
-/**
- * テスト用に Mamori CLI 実行 Promise を直接返す。
- * @param workspaceFolder 対象ワークスペースフォルダーを表す。
- * @param argumentsList CLI 引数一覧を表す。
- * @param extensionRootPath 拡張ルートパスを表す。
- * @returns 実行完了を待つ Promise を返す。
- */
 export function runMamoriCliCommandForTesting(
   workspaceFolder: vscode.WorkspaceFolder,
   argumentsList: string[],
@@ -1351,12 +931,6 @@ export function runMamoriCliCommandForTesting(
   return runMamoriCliCommand(workspaceFolder, argumentsList, extensionRootPath);
 }
 
-/**
- * 存在するワークスペースフォルダーだけを返す。
- * @param workspaceFolders ワークスペースフォルダー一覧を表す。
- * @param outputChannel 出力チャネルを表す。
- * @returns 存在するワークスペースフォルダー一覧を返す。
- */
 function filterExistingWorkspaceFolders(
   workspaceFolders: readonly vscode.WorkspaceFolder[],
   outputChannel: vscode.OutputChannel,
@@ -1377,10 +951,6 @@ function filterExistingWorkspaceFolders(
   return existingWorkspaceFolders;
 }
 
-/**
- * 単一ワークスペース対象の操作に使うフォルダーを返す。
- * @returns 選択されたワークスペースフォルダーを返す。
- */
 async function resolveWorkspaceFolderForSingleTargetCommand(): Promise<vscode.WorkspaceFolder | undefined> {
   const workspaceFolders = vscode.workspace.workspaceFolders;
   if (!workspaceFolders || workspaceFolders.length === 0) {
@@ -1414,13 +984,6 @@ async function resolveWorkspaceFolderForSingleTargetCommand(): Promise<vscode.Wo
   return selectedItem?.workspaceFolder;
 }
 
-/**
- * hooks 管理コマンドを作成する。
- * @param action hooks 操作種別を表す。
- * @param outputChannel 出力チャネルを表す。
- * @param extensionRootPath 拡張ルートパスを表す。
- * @returns コマンド本体を返す。
- */
 function createManageHooksCommand(
   action: MamoriHooksAction,
   outputChannel: vscode.OutputChannel,
@@ -1470,13 +1033,6 @@ function createManageHooksCommand(
   };
 }
 
-/**
- * setup / cache-clear 管理コマンドを作成する。
- * @param action 保守コマンド種別を表す。
- * @param outputChannel 出力チャネルを表す。
- * @param extensionRootPath 拡張ルートパスを表す。
- * @returns コマンド本体を返す。
- */
 function createManageMaintenanceCommand(
   action: MamoriMaintenanceAction,
   outputChannel: vscode.OutputChannel,
@@ -1555,12 +1111,6 @@ function createManageMaintenanceCommand(
   };
 }
 
-/**
- * SARIF の内容を URI ごとの Diagnostics へ変換する。
- * @param workspaceFolder ワークスペースフォルダーを表す。
- * @param sarifPath SARIF パスを表す。
- * @returns URI ごとの Diagnostics 一覧を返す。
- */
 function buildDiagnosticsByUri(
   workspaceFolder: vscode.WorkspaceFolder,
   sarifPath: string,
@@ -1597,12 +1147,6 @@ function buildDiagnosticsByUri(
   return diagnosticsByUri;
 }
 
-/**
- * 観測結果生成後に変更されたファイルの Diagnostics を除外する。
- * @param diagnosticsByUri URI ごとの Diagnostics を表す。
- * @param observedAtIsoString 観測結果の生成時刻を表す。
- * @returns stale 除外後の Diagnostics を返す。
- */
 function filterDiagnosticsByObservedResultFreshness(
   diagnosticsByUri: Map<string, DiagnosticsByUriEntry>,
   observedAtIsoString: string,
@@ -1633,12 +1177,6 @@ function filterDiagnosticsByObservedResultFreshness(
   return filteredDiagnosticsByUri;
 }
 
-/**
- * URI ごとの Diagnostics を集約する。
- * @param target 集約先を表す。
- * @param source 集約元を表す。
- * @returns 返り値はない。
- */
 function mergeDiagnosticsByUri(
   target: Map<string, DiagnosticsByUriEntry>,
   source: Map<string, DiagnosticsByUriEntry>,
@@ -1661,11 +1199,6 @@ function mergeDiagnosticsByUri(
   }
 }
 
-/**
- * Diagnostics の重複判定に使うキーを返す。
- * @param diagnostic 対象 Diagnostics を表す。
- * @returns 重複判定キーを返す。
- */
 function buildDiagnosticKey(diagnostic: vscode.Diagnostic): string {
   const code = typeof diagnostic.code === 'string'
     ? diagnostic.code
@@ -1685,12 +1218,6 @@ function buildDiagnosticKey(diagnostic: vscode.Diagnostic): string {
   ]);
 }
 
-/**
- * 対象ワークスペースの Diagnostics を保持マップから削除する。
- * @param diagnosticsByUri URI ごとの Diagnostics を表す。
- * @param workspaceFolder 対象ワークスペースフォルダーを表す。
- * @returns 返り値はない。
- */
 function clearWorkspaceDiagnosticsByUri(
   diagnosticsByUri: Map<string, DiagnosticsByUriEntry>,
   workspaceFolder: vscode.WorkspaceFolder,
@@ -1702,12 +1229,6 @@ function clearWorkspaceDiagnosticsByUri(
   }
 }
 
-/**
- * 対象ドキュメントの Diagnostics を保持マップから削除する。
- * @param diagnosticsByUri URI ごとの Diagnostics を表す。
- * @param documentUri 対象ドキュメント URI を表す。
- * @returns 返り値はない。
- */
 function clearDocumentDiagnosticsByUri(
   diagnosticsByUri: Map<string, DiagnosticsByUriEntry>,
   documentUri: vscode.Uri,
@@ -1715,11 +1236,6 @@ function clearDocumentDiagnosticsByUri(
   diagnosticsByUri.delete(documentUri.toString());
 }
 
-/**
- * 対象ファイルの現在内容を返す。
- * @param filePath 対象ファイルパスを表す。
- * @returns 読み込めたファイル内容を返す。
- */
 function readFileContent(filePath: string): string {
   try {
     return fs.readFileSync(filePath, 'utf8');
@@ -1728,13 +1244,6 @@ function readFileContent(filePath: string): string {
   }
 }
 
-/**
- * 対象ドキュメントに紐づく stale な Mamori Diagnostics を消去する。
- * @param diagnosticsState Diagnostics 保持状態を表す。
- * @param diagnosticCollection 診断コレクションを表す。
- * @param documentUri 対象ドキュメント URI を表す。
- * @returns Diagnostics を消去した場合は true を返す。
- */
 function clearStaleDiagnosticsForDocument(
   diagnosticsState: DiagnosticsState,
   diagnosticCollection: vscode.DiagnosticCollection,
@@ -1756,13 +1265,6 @@ function clearStaleDiagnosticsForDocument(
   return true;
 }
 
-/**
- * 対象ワークスペースの Diagnostics を最新結果へ置き換える。
- * @param target 集約先を表す。
- * @param workspaceFolder 対象ワークスペースフォルダーを表す。
- * @param source 最新結果を表す。
- * @returns 返り値はない。
- */
 function replaceWorkspaceDiagnosticsByUri(
   target: Map<string, DiagnosticsByUriEntry>,
   workspaceFolder: vscode.WorkspaceFolder,
@@ -1774,11 +1276,6 @@ function replaceWorkspaceDiagnosticsByUri(
   }
 }
 
-/**
- * Diagnostics 保持状態を URI ごとにマージする。
- * @param diagnosticsState 保持状態を表す。
- * @returns マージ済み Diagnostics を返す。
- */
 function buildMergedDiagnosticsByUri(
   diagnosticsState: DiagnosticsState,
 ): Map<string, DiagnosticsByUriEntry> {
@@ -1789,11 +1286,6 @@ function buildMergedDiagnosticsByUri(
   return mergedDiagnosticsByUri;
 }
 
-/**
- * Diagnostics 一覧の件数を数える。
- * @param diagnosticsByUri URI ごとの Diagnostics を表す。
- * @returns Diagnostics 件数を返す。
- */
 function countDiagnosticsByUri(diagnosticsByUri: Map<string, DiagnosticsByUriEntry>): number {
   let diagnosticsCount = 0;
   for (const entry of diagnosticsByUri.values()) {
@@ -1802,12 +1294,6 @@ function countDiagnosticsByUri(diagnosticsByUri: Map<string, DiagnosticsByUriEnt
   return diagnosticsCount;
 }
 
-/**
- * 集約済み Diagnostics を DiagnosticsCollection へ反映する。
- * @param diagnosticCollection 診断コレクションを表す。
- * @param diagnosticsByUri URI ごとの Diagnostics を表す。
- * @returns 反映件数を返す。
- */
 function publishCollectedDiagnostics(
   diagnosticCollection: vscode.DiagnosticCollection,
   diagnosticsByUri: Map<string, DiagnosticsByUriEntry>,
@@ -1823,12 +1309,6 @@ function publishCollectedDiagnostics(
   return totalDiagnostics;
 }
 
-/**
- * Diagnostics 保持状態を DiagnosticsCollection へ反映する。
- * @param diagnosticCollection 診断コレクションを表す。
- * @param diagnosticsState Diagnostics 保持状態を表す。
- * @returns 反映件数を返す。
- */
 function publishTrackedDiagnostics(
   diagnosticCollection: vscode.DiagnosticCollection,
   diagnosticsState: DiagnosticsState,
@@ -1836,15 +1316,6 @@ function publishTrackedDiagnostics(
   return publishCollectedDiagnostics(diagnosticCollection, buildMergedDiagnosticsByUri(diagnosticsState));
 }
 
-/**
- * 保存時 SARIF から Diagnostics を反映する。
- * @param workspaceFolder 対象ワークスペースフォルダーを表す。
- * @param documentUri 対象ドキュメント URI を表す。
- * @param sarifPath 保存時 SARIF パスを表す。
- * @param diagnosticsState Diagnostics 保持状態を表す。
- * @param diagnosticCollection 診断コレクションを表す。
- * @returns 保存時 Diagnostics 件数を返す。
- */
 function publishSaveDiagnosticsFromSarif(
   workspaceFolder: vscode.WorkspaceFolder,
   documentUri: vscode.Uri,
@@ -1861,12 +1332,6 @@ function publishSaveDiagnosticsFromSarif(
   return countDiagnosticsByUri(saveDiagnosticsByUri);
 }
 
-/**
- * 観測した pre-push 実行結果を読み込む。
- * @param workspaceFolder 対象ワークスペースフォルダーを表す。
- * @param outputChannel 出力チャネルを表す。
- * @returns 読み込めた結果を返す。
- */
 function loadObservedPrePushResult(
   workspaceFolder: vscode.WorkspaceFolder,
   outputChannel: vscode.OutputChannel,
@@ -1905,12 +1370,6 @@ function loadObservedPrePushResult(
   }
 }
 
-/**
- * 観測した pre-commit 実行結果を読み込む。
- * @param workspaceFolder 対象ワークスペースフォルダーを表す。
- * @param outputChannel 出力チャネルを表す。
- * @returns 読み込めた結果を返す。
- */
 function loadObservedPreCommitResult(
   workspaceFolder: vscode.WorkspaceFolder,
   outputChannel: vscode.OutputChannel,
@@ -1949,12 +1408,6 @@ function loadObservedPreCommitResult(
   }
 }
 
-/**
- * 観測した pre-commit 失敗を選択肢付きで通知する。
- * @param observedResult 観測した結果を表す。
- * @param outputChannel 出力チャネルを表す。
- * @returns 通知完了を待つ Promise を返す。
- */
 async function showObservedPreCommitFailureNotification(
   observedResult: ObservedPreCommitResult,
   outputChannel: vscode.OutputChannel,
@@ -1983,12 +1436,6 @@ async function showObservedPreCommitFailureNotification(
   }
 }
 
-/**
- * 観測した pre-push 失敗を通知する。
- * @param observedResult 観測した結果を表す。
- * @param diagnosticsCount Problems に反映した件数を表す。
- * @returns 通知完了を待つ Promise を返す。
- */
 async function showObservedPrePushFailureNotification(
   observedResult: ObservedPrePushResult,
   diagnosticsCount: number,
@@ -2009,15 +1456,6 @@ async function showObservedPrePushFailureNotification(
   }
 }
 
-/**
- * 観測した pre-push 実行結果を Problems へ反映する。
- * @param workspaceFolder 対象ワークスペースフォルダーを表す。
- * @param diagnosticsState Diagnostics 保持状態を表す。
- * @param diagnosticCollection 診断コレクションを表す。
- * @param outputChannel 出力チャネルを表す。
- * @param handledRunIdsByWorkspace ワークスペースごとの処理済み runId を表す。
- * @returns 返り値はない。
- */
 function processObservedPrePushResultForWorkspace(
   workspaceFolder: vscode.WorkspaceFolder,
   diagnosticsState: DiagnosticsState,
@@ -2077,15 +1515,6 @@ function processObservedPrePushResultForWorkspace(
   }
 }
 
-/**
- * ワークスペース群の pre-push 実行結果を Problems へ反映する。
- * @param workspaceFolders 対象ワークスペース一覧を表す。
- * @param diagnosticsState Diagnostics 保持状態を表す。
- * @param diagnosticCollection 診断コレクションを表す。
- * @param outputChannel 出力チャネルを表す。
- * @param handledRunIdsByWorkspace ワークスペースごとの処理済み runId を表す。
- * @returns 返り値はない。
- */
 function processObservedPrePushResultForWorkspaceFolders(
   workspaceFolders: readonly vscode.WorkspaceFolder[],
   diagnosticsState: DiagnosticsState,
@@ -2106,13 +1535,6 @@ function processObservedPrePushResultForWorkspaceFolders(
   }
 }
 
-/**
- * 観測した pre-commit 実行結果を通知する。
- * @param workspaceFolder 対象ワークスペースフォルダーを表す。
- * @param outputChannel 出力チャネルを表す。
- * @param handledRunIdsByWorkspace ワークスペースごとの処理済み runId を表す。
- * @returns 返り値はない。
- */
 function processObservedPreCommitResultForWorkspace(
   workspaceFolder: vscode.WorkspaceFolder,
   outputChannel: vscode.OutputChannel,
@@ -2145,13 +1567,6 @@ function processObservedPreCommitResultForWorkspace(
   }
 }
 
-/**
- * ワークスペース群の pre-commit 実行結果を通知する。
- * @param workspaceFolders 対象ワークスペース一覧を表す。
- * @param outputChannel 出力チャネルを表す。
- * @param handledRunIdsByWorkspace ワークスペースごとの処理済み runId を表す。
- * @returns 返り値はない。
- */
 function processObservedPreCommitResultForWorkspaceFolders(
   workspaceFolders: readonly vscode.WorkspaceFolder[],
   outputChannel: vscode.OutputChannel,
@@ -2168,39 +1583,18 @@ function processObservedPreCommitResultForWorkspaceFolders(
   }
 }
 
-/**
- * 対象 URI に対応するワークスペースフォルダーを返す。
- * @param resourceUri 対象 URI を表す。
- * @returns ワークスペースフォルダーを返す。
- */
 function getWorkspaceFolderForUri(resourceUri: vscode.Uri): vscode.WorkspaceFolder | undefined {
   return vscode.workspace.getWorkspaceFolder(resourceUri);
 }
 
-/**
- * 対象ワークスペースの Mamori 設定を返す。
- * @param workspaceFolder ワークスペースフォルダーを表す。
- * @returns Mamori 設定を返す。
- */
 function getMamoriConfiguration(workspaceFolder: vscode.WorkspaceFolder): vscode.WorkspaceConfiguration {
   return vscode.workspace.getConfiguration(EXTENSION_CONFIGURATION_SECTION, workspaceFolder.uri);
 }
 
-/**
- * 対象ワークスペースで Mamori Inspector が有効か判定する。
- * @param workspaceFolder ワークスペースフォルダーを表す。
- * @returns 有効な場合は true を返す。
- */
 function isWorkspaceEnabled(workspaceFolder: vscode.WorkspaceFolder): boolean {
   return getMamoriConfiguration(workspaceFolder).get<boolean>(ENABLED_CONFIGURATION_KEY, false);
 }
 
-/**
- * 対象ワークスペースの有効化設定を更新する。
- * @param workspaceFolder ワークスペースフォルダーを表す。
- * @param enabled 設定する有効状態を表す。
- * @returns 更新完了を待つ Promise を返す。
- */
 async function updateWorkspaceEnabledSetting(
   workspaceFolder: vscode.WorkspaceFolder,
   enabled: boolean,
@@ -2221,12 +1615,6 @@ async function updateWorkspaceEnabledSetting(
   await waitForWorkspaceEnabledSetting(workspaceFolder, enabled);
 }
 
-/**
- * ワークスペース設定ファイルへ Mamori 有効化設定を書き込む。
- * @param workspaceFolder ワークスペースフォルダーを表す。
- * @param enabled 設定する有効状態を表す。
- * @returns 更新完了を待つ Promise を返す。
- */
 async function updateWorkspaceEnabledSettingFile(
   workspaceFolder: vscode.WorkspaceFolder,
   enabled: boolean | undefined,
@@ -2252,12 +1640,6 @@ async function updateWorkspaceEnabledSettingFile(
   fs.writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
 }
 
-/**
- * 文字列配列設定へ値を冪等に追加するヘルパー。
- * @param settings 設定オブジェクトを表す。
- * @param key 設定キーを表す。
- * @param value 追加する値を表す。
- */
 function addToStringArraySetting(settings: Record<string, unknown>, key: string, value: string): void {
   const existing = Array.isArray(settings[key]) ? settings[key] as string[] : [];
   if (!existing.includes(value)) {
@@ -2265,11 +1647,6 @@ function addToStringArraySetting(settings: Record<string, unknown>, key: string,
   }
 }
 
-/**
- * .mamori フォルダをチェックツールの対象から除外する設定を .vscode/settings.json へ書き込む。
- * flake8 / pylint / mypy / ruff / Pylance の各除外設定を冪等に追加する。
- * @param workspaceFolder 対象ワークスペースフォルダーを表す。
- */
 function applyMamoriLintExclusions(workspaceFolder: vscode.WorkspaceFolder): void {
   const settingsDirectoryPath = path.join(workspaceFolder.uri.fsPath, '.vscode');
   const settingsPath = path.join(settingsDirectoryPath, 'settings.json');
@@ -2295,11 +1672,6 @@ function applyMamoriLintExclusions(workspaceFolder: vscode.WorkspaceFolder): voi
   fs.writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
 }
 
-/**
- * JSON オブジェクトファイルをコメント許容で読み込む。
- * @param filePath 対象ファイルパスを表す。
- * @returns 読み込んだ JSON オブジェクトを返す。
- */
 function readJsonObjectFile(filePath: string): Record<string, unknown> {
   if (!fs.existsSync(filePath)) {
     return {};
@@ -2314,11 +1686,6 @@ function readJsonObjectFile(filePath: string): Record<string, unknown> {
   }
 }
 
-/**
- * JSON 文字列内を壊さずにコメントだけを除去する。
- * @param input コメントを含む JSON 文字列を表す。
- * @returns コメント除去後の JSON 文字列を返す。
- */
 function stripJsonComments(input: string): string {
   let result = '';
   let inString = false;
@@ -2382,12 +1749,6 @@ function stripJsonComments(input: string): string {
   return result;
 }
 
-/**
- * 指定したワークスペース設定値が反映されるまで待機する。
- * @param workspaceFolder 対象ワークスペースフォルダーを表す。
- * @param enabled 反映待ちの有効状態を表す。
- * @returns 反映完了を待つ Promise を返す。
- */
 async function waitForWorkspaceEnabledSetting(
   workspaceFolder: vscode.WorkspaceFolder,
   enabled: boolean,
@@ -2407,12 +1768,6 @@ async function waitForWorkspaceEnabledSetting(
   throw new Error(`Timed out while waiting for workspace enablement to become ${String(enabled)}`);
 }
 
-/**
- * 対象ワークスペースに属する Diagnostics を削除する。
- * @param diagnosticCollection 診断コレクションを表す。
- * @param workspaceFolder 対象ワークスペースフォルダーを表す。
- * @returns 返り値はない。
- */
 function clearDiagnosticsForWorkspaceFolder(
   diagnosticsState: DiagnosticsState,
   diagnosticCollection: vscode.DiagnosticCollection,
@@ -2423,11 +1778,6 @@ function clearDiagnosticsForWorkspaceFolder(
   publishTrackedDiagnostics(diagnosticCollection, diagnosticsState);
 }
 
-/**
- * 保存時自動チェック対象か判定する。
- * @param document 対象ドキュメントを表す。
- * @returns 対象なら true を返す。
- */
 function shouldRunAutomaticSaveCheck(document: vscode.TextDocument): boolean {
   const workspaceFolder = getWorkspaceFolderForUri(document.uri);
   return document.uri.scheme === 'file'
@@ -2436,14 +1786,6 @@ function shouldRunAutomaticSaveCheck(document: vscode.TextDocument): boolean {
     && Boolean(workspaceFolder && isWorkspaceEnabled(workspaceFolder));
 }
 
-/**
- * 単一ファイルの保存時チェックを実行する。
- * @param workspaceFolder ワークスペースフォルダーを表す。
- * @param filePath 対象ファイルパスを表す。
- * @param diagnosticCollection 診断コレクションを表す。
- * @param outputChannel 出力チャネルを表す。
- * @returns 実行完了を待つ Promise を返す。
- */
 async function runSaveCheck(
   workspaceFolder: vscode.WorkspaceFolder,
   filePath: string,
@@ -2556,13 +1898,6 @@ async function runSaveCheck(
   }
 }
 
-/**
- * ワークスペースチェックコマンドを作成する。
- * @param diagnosticCollection 診断コレクションを表す。
- * @param outputChannel 出力チャネルを表す。
- * @param extensionRootPath 拡張ルートパスを表す。
- * @returns コマンド本体を返す。
- */
 function createRunWorkspaceCheckCommand(
   diagnosticsState: DiagnosticsState,
   diagnosticCollection: vscode.DiagnosticCollection,
@@ -2730,12 +2065,6 @@ function createRunWorkspaceCheckCommand(
   };
 }
 
-/**
- * ワークスペース単位の有効化コマンドを作成する。
- * @param enabled 設定する有効状態を表す。
- * @param diagnosticCollection 診断コレクションを表す。
- * @returns コマンド本体を返す。
- */
 function createSetWorkspaceEnablementCommand(
   enabled: boolean,
   diagnosticsState: DiagnosticsState,
@@ -2761,11 +2090,6 @@ function createSetWorkspaceEnablementCommand(
   };
 }
 
-/**
- * 拡張の初期化処理を行う。
- * @param context 拡張コンテキストを表す。
- * @returns 返り値はない。
- */
 export function activate(context: vscode.ExtensionContext): void {
   const diagnosticCollection = vscode.languages.createDiagnosticCollection(DIAGNOSTIC_COLLECTION_NAME);
   const outputChannel = vscode.window.createOutputChannel('Mamori Inspector');
@@ -3000,8 +2324,4 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 }
 
-/**
- * 拡張の終了処理を行う。
- * @returns 返り値はない。
- */
 export function deactivate(): void {}

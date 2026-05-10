@@ -10,6 +10,13 @@
 
 ### Changed
 
+## [0.3.11] - 2026-05-10
+
+### Changed
+- README の「Files Required For Each Check」テーブルに、v0.3.9 で追加された 5 ツール（TypeScript `tsc --noEmit`・HTML-Validate・Oxlint・doiuse・Knip）の設定ファイル要件を追記しました。
+- README の「Managed Tool Provisioning」テーブルおよび `Setup Managed Tools` コマンドの説明文に、新規管理対象ツール（TypeScript / HTML-Validate / Oxlint / doiuse / Knip）を追記しました。
+- `package.json` のキーワードに `oxlint`・`html-validate`・`typescript`・`html`・`prettier`・`knip` を追加し、VS Code Marketplace での検索ヒット率を改善しました。
+
 ## [0.3.10] - 2026-05-09
 
 ### Fixed

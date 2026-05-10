@@ -50,7 +50,7 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 | Maven | 3.9.11 | `.mamori/tools/maven/<version>` | Used when `mvn` is not available on `PATH`. |
 | Gradle | 8.14.4 | `.mamori/tools/gradle/<version>` | Used when `gradle` is not available on `PATH`. |
 | Semgrep | 1.151.0 | `.mamori/tools/python/packages` | Installed with `pip` when `semgrep` is not available on `PATH`. |
-| Prettier / ESLint / Stylelint / htmlhint | npm latest at install time | `.mamori/node/node_modules/.bin` | Installed with `npm` and used when a project-local `node_modules/.bin` tool is not available. |
+| Prettier / ESLint / Stylelint / htmlhint / TypeScript / HTML-Validate / Oxlint / doiuse / Knip | npm latest at install time | `.mamori/node/node_modules/.bin` | Installed with `npm` and used when a project-local `node_modules/.bin` tool is not available. |
 
 - For web tools, Mamori prefers the nearest project `node_modules/.bin` executable and falls back to `.mamori/node` only when the project copy is missing.
 - For Maven, Gradle, and Semgrep, Mamori uses an existing command on `PATH` first and only installs the managed copy when the command is missing.
@@ -87,7 +87,7 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 - When a managed pre-push run ends with an execution error, Mamori still shows an error notification that asks you to review Problems and the Mamori Inspector output, reuses any generated pre-push SARIF when available, and lets the push continue.
 - The commands `Mamori Inspector: Enable In Workspace` and `Mamori Inspector: Disable In Workspace` toggle automatic save-time validation per workspace folder. The default is disabled.
 - `Enable In Workspace` and `Disable In Workspace` only change `mamori-inspector.enabled`; they do not rewrite VS Code formatter or save-related editor settings.
-- The command `Mamori Inspector: Setup Managed Tools` downloads the managed Maven, Gradle, Semgrep, Prettier, ESLint, Stylelint, and htmlhint toolchain into the workspace cache.
+- The command `Mamori Inspector: Setup Managed Tools` downloads the managed Maven, Gradle, Semgrep, Prettier, ESLint, Stylelint, htmlhint, TypeScript, HTML-Validate, Oxlint, doiuse, and Knip toolchain into the workspace cache.
 - The command `Mamori Inspector: Clear Managed Tool Cache` removes the managed cache directories under `.mamori/tools` and `.mamori/node`, and also removes `.mamori-inline-tmp`.
 - The commands `Mamori Inspector: Install Git Hooks` and `Mamori Inspector: Uninstall Git Hooks` call the same runner as the CLI and manage `.git/hooks/pre-commit` and `.git/hooks/pre-push`.
 - Maven and Gradle build definitions are inspected to resolve Java tooling such as Checkstyle, PMD, Spotless, CPD, and SpotBugs.
@@ -131,6 +131,11 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 | CSS / SCSS / Sass Stylelint | Optional: one of `stylelint.config.js`, `stylelint.config.mjs`, `stylelint.config.cjs`, `stylelint.config.ts`, `stylelint.config.mts`, `stylelint.config.cts`, `.stylelintrc`, `.stylelintrc.js`, `.stylelintrc.cjs`, `.stylelintrc.json`, `.stylelintrc.yaml`, `.stylelintrc.yml`, `.stylelintrc.ts`, `.stylelintrc.mts`, `.stylelintrc.cts`, or `package.json` with `stylelint` | Mamori prefers project configuration when present and otherwise uses a bundled minimal Stylelint config for CSS files and HTML inline style checks. |
 | HTML htmlhint | Optional: one of `.htmlhintrc`, `.htmlhintrc.js`, `.htmlhintrc.cjs`, `.htmlhintrc.json`, `.htmlhintrc.yaml`, `.htmlhintrc.yml`, or `package.json` with `htmlhint` | Mamori prefers project configuration when present and otherwise uses a bundled minimal htmlhint config for HTML checks. |
 | Prettier for JavaScript / CSS / HTML | No Mamori-specific config file is required | If your project uses a Prettier config, keep it in the project as usual so formatting behavior matches your repository rules. |
+| TypeScript `tsc --noEmit` | `tsconfig.json`, or an explicitly configured tsconfig path | No bundled default. Mamori skips `tsc` with a warning when no tsconfig is found. Used in pre-push and manual runs. |
+| HTML HTML-Validate | Optional: one of `.htmlvalidate.js`, `.htmlvalidate.cjs`, `.htmlvalidate.mjs`, `.htmlvalidate.json` | Complements htmlhint with structural and accessibility checks. When no config is found, Mamori uses a bundled minimal HTML-Validate config. |
+| JavaScript / TypeScript Oxlint | Optional: `.oxlintrc.json` or `oxlint.config.ts` | Runs as a fast complement to ESLint. When no config is found, Mamori uses a bundled minimal Oxlint config. Applies to direct files only (not HTML inline script) in the current release. |
+| CSS / SCSS / Sass doiuse | `package.json` with `browserslist`, `.browserslistrc`, or a `browserslist` file | Browserslist-based browser compatibility check. Mamori skips doiuse with a warning when no Browserslist config is found. Used in pre-push and manual runs. |
+| JavaScript / TypeScript Knip | `package.json`, and optionally one of `knip.json`, `knip.jsonc`, `.knip.json`, `.knip.jsonc`, `knip.js`, `knip.ts`, and `tsconfig.json` | Unused file, export, and dependency analysis. Mamori skips Knip with a warning when no `package.json` is found. Used in manual runs only. |
 
 ## Spec
 - docs/spec.md
