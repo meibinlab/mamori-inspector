@@ -27,6 +27,7 @@ const MANAGED_HOOK_MARKER = 'mamori-inspector-managed-hook';
 const DIAGNOSTIC_COLLECTION_NAME = 'mamori-inspector';
 const EXTENSION_CONFIGURATION_SECTION = 'mamori-inspector';
 const ENABLED_CONFIGURATION_KEY = 'enabled';
+const SAVE_CHECK_SKIP_FORMATTERS_CONFIGURATION_KEY = 'saveCheckSkipFormatters';
 const MANUAL_SARIF_OUTPUT = path.join('.mamori', 'out', 'combined.sarif');
 const SAVE_SARIF_OUTPUT = path.join('.mamori', 'out', 'combined-save.sarif');
 const PRE_COMMIT_RESULT_OUTPUT = path.join('.mamori', 'out', 'latest-precommit-result.json');
@@ -484,6 +485,7 @@ interface MamoriCliRunOptions {
   scope: 'workspace' | 'file';
   sarifOutputPath: string;
   files?: string[];
+  skipFormatters?: boolean;
 }
 
 interface MamoriCliCommandResult {
@@ -737,6 +739,10 @@ function buildMamoriCliArguments(options: MamoriCliRunOptions): string[] {
 
   if (options.scope === 'file' && Array.isArray(options.files) && options.files.length > 0) {
     argumentsList.push('--files', options.files.join(','));
+  }
+
+  if (options.skipFormatters) {
+    argumentsList.push('--no-formatters');
   }
 
   return argumentsList;
@@ -1595,6 +1601,10 @@ function isWorkspaceEnabled(workspaceFolder: vscode.WorkspaceFolder): boolean {
   return getMamoriConfiguration(workspaceFolder).get<boolean>(ENABLED_CONFIGURATION_KEY, false);
 }
 
+function isSaveCheckSkipFormattersEnabled(workspaceFolder: vscode.WorkspaceFolder): boolean {
+  return getMamoriConfiguration(workspaceFolder).get<boolean>(SAVE_CHECK_SKIP_FORMATTERS_CONFIGURATION_KEY, false);
+}
+
 async function updateWorkspaceEnabledSetting(
   workspaceFolder: vscode.WorkspaceFolder,
   enabled: boolean,
@@ -1793,6 +1803,7 @@ async function runSaveCheck(
   diagnosticCollection: vscode.DiagnosticCollection,
   outputChannel: vscode.OutputChannel,
   extensionRootPath: string,
+  skipFormatters: boolean,
 ): Promise<void> {
   const sarifPath = getWorkspaceRelativePath(workspaceFolder, SAVE_SARIF_OUTPUT);
   const documentUri = vscode.Uri.file(filePath);
@@ -1810,6 +1821,7 @@ async function runSaveCheck(
       scope: 'file',
       files: [filePath],
       sarifOutputPath: sarifPath,
+      skipFormatters,
     }, extensionRootPath, {
       onStdoutLine: (outputLine: string) => {
         const toolId = parseSaveCheckToolStartLine(outputLine);
@@ -1836,6 +1848,7 @@ async function runSaveCheck(
         scope: 'file',
         files: [filePath],
         sarifOutputPath: sarifPath,
+        skipFormatters,
       }, extensionRootPath, {
         onStdoutLine: (outputLine: string) => {
           const toolId = parseSaveCheckToolStartLine(outputLine);
@@ -2118,6 +2131,7 @@ export function activate(context: vscode.ExtensionContext): void {
         diagnosticCollection,
         outputChannel,
         extensionRootPath,
+        isSaveCheckSkipFormattersEnabled(workspaceFolder),
       );
     },
   });

@@ -26,6 +26,7 @@
 - ワークスペース単位の設定 `mamori-inspector.enabled` が `true` の場合のみ実行する
 - 既定値は `false` とし、拡張コマンドで切り替える
 - 保存時検証の有効化や整形のために、VS Code の `editor.defaultFormatter`、`editor.formatOnSave`、`editor.codeActionsOnSave` は自動変更しない
+- ワークスペース単位の設定 `mamori-inspector.saveCheckSkipFormatters` が `true` の場合、保存時の自動チェックで全フォーマッター（Spotless・Prettier・ESLint auto-fix）をスキップする。静的解析チェックは実行を継続し、Diagnostics も通常どおり報告する。既定値は `false`
 
 実行順序（確定）:
 1) 整形（自動適用、非同期）

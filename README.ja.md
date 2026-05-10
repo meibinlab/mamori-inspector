@@ -84,6 +84,7 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 - 手動全体チェックが成功した場合、拡張は同じワークスペースに対して以前反映していた保存時 Diagnostics を、最新の手動結果で置き換えます。
 - コマンド `Mamori Inspector: Enable In Workspace` と `Mamori Inspector: Disable In Workspace` は、ワークスペースフォルダー単位で保存時検証の有効・無効を切り替えます。既定値は無効です。
 - `Enable In Workspace` / `Disable In Workspace` が変更するのは `mamori-inspector.enabled` のみで、VS Code の formatter や save 系 editor 設定は変更しません。
+- `mamori-inspector.saveCheckSkipFormatters` を `true` にすると、保存時の自動チェックでフォーマッター（Spotless・Prettier・ESLint auto-fix）をスキップします。静的解析チェックは引き続き実行され、Diagnostics も通常どおり報告されます。既定値は `false` です。AI コーディングツールがファイルを編集している最中は、保存時整形によってファイル内容が書き換わり AI が混乱することがあるため、この設定を有効にすることで問題を回避できます。
 - コマンド `Mamori Inspector: Setup Managed Tools` は、管理対象の Maven、Gradle、Semgrep、Prettier、ESLint、Stylelint、htmlhint、TypeScript、HTML-Validate、Oxlint、doiuse、Knip をワークスペースキャッシュへ導入します。
 - コマンド `Mamori Inspector: Clear Managed Tool Cache` は、`.mamori/tools` と `.mamori/node` の管理キャッシュを削除し、`.mamori-inline-tmp` も削除します。
 - コマンド `Mamori Inspector: Install Git Hooks` と `Mamori Inspector: Uninstall Git Hooks` は、CLI と同じランナーを呼び出し、`.git/hooks/pre-commit` と `.git/hooks/pre-push` を管理します。

@@ -10,6 +10,11 @@
 
 ### Changed
 
+## [0.3.12] - 2026-05-11
+
+### Added
+- 保存時の自動チェックでフォーマッターをスキップする設定オプション `mamori-inspector.saveCheckSkipFormatters` を追加しました。`true` にすると Spotless・Prettier・ESLint auto-fix をスキップし、静的解析チェックだけを実行します。AI コーディングツールとの併用時に保存時整形がファイル内容を書き換えて AI の動作を妨げる場合に使用します。既定値は `false` です。
+
 ## [0.3.11] - 2026-05-10
 
 ### Changed
