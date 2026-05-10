@@ -13,19 +13,16 @@
     "Linters"
   ],
   "keywords": [
-    "lint",
-    "sarif",
-    "quality",
     "java",
+    "checkstyle",
+    "pmd",
+    "spotbugs",
+    "semgrep",
+    "lint",
     "eslint",
-    "oxlint",
-    "stylelint",
-    "htmlhint",
-    "html-validate",
-    "typescript",
-    "html",
     "prettier",
-    "knip"
+    "typescript",
+    "stylelint"
   ],
   "repository": {
     "type": "git",
