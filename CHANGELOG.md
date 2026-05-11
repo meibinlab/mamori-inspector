@@ -6,12 +6,14 @@
 
 ## [Unreleased]
 
-### Added
-- 保存時フォーマッタースキップのコマンドを追加しました。`Mamori Inspector: Disable Save Formatters` を実行するとフォーマッターをスキップし、`Mamori Inspector: Enable Save Formatters` で元に戻します。AI コーディングセッション中にコマンドパレットから素早く切り替えられます。
-
 ### Fixed
 
 ### Changed
+
+## [0.3.13] - 2026-05-11
+
+### Added
+- 保存時フォーマッタースキップのコマンドを追加しました。`Mamori Inspector: Disable Save Formatters` を実行するとフォーマッターをスキップし、`Mamori Inspector: Enable Save Formatters` で元に戻します。AI コーディングセッション中にコマンドパレットから素早く切り替えられます。
 
 ## [0.3.12] - 2026-05-11
 
