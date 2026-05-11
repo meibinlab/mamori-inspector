@@ -68,6 +68,14 @@
         "title": "Mamori Inspector: Clear Managed Tool Cache"
       },
       {
+        "command": "mamori-inspector.enableSaveFormatters",
+        "title": "Mamori Inspector: Enable Save Formatters"
+      },
+      {
+        "command": "mamori-inspector.disableSaveFormatters",
+        "title": "Mamori Inspector: Disable Save Formatters"
+      },
+      {
         "command": "mamori-inspector.installGitHooks",
         "title": "Mamori Inspector: Install Git Hooks"
       },

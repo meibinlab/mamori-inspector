@@ -480,6 +480,28 @@ function getWorkspaceEnablementFailureMessage(details: string): string {
   );
 }
 
+function getSaveFormattersEnablementSuccessMessage(enabled: boolean, workspaceFolderName: string): string {
+  return enabled
+    ? localize(
+      'Mamori Inspector: Enabled save formatters in workspace "{0}".',
+      'Information message shown after enabling save formatters in a workspace folder.',
+      [workspaceFolderName],
+    )
+    : localize(
+      'Mamori Inspector: Disabled save formatters in workspace "{0}".',
+      'Information message shown after disabling save formatters in a workspace folder.',
+      [workspaceFolderName],
+    );
+}
+
+function getSaveFormattersEnablementFailureMessage(details: string): string {
+  return localize(
+    'Mamori Inspector: Failed to update save formatters setting. {0}',
+    'Error message shown when updating the save formatters setting fails.',
+    [details],
+  );
+}
+
 interface MamoriCliRunOptions {
   mode: 'manual' | 'save';
   scope: 'workspace' | 'file';
@@ -1625,6 +1647,29 @@ async function updateWorkspaceEnabledSetting(
   await waitForWorkspaceEnabledSetting(workspaceFolder, enabled);
 }
 
+async function updateSaveCheckSkipFormattersSetting(
+  workspaceFolder: vscode.WorkspaceFolder,
+  skipFormatters: boolean,
+): Promise<void> {
+  try {
+    await getMamoriConfiguration(workspaceFolder).update(
+      SAVE_CHECK_SKIP_FORMATTERS_CONFIGURATION_KEY,
+      skipFormatters,
+      vscode.ConfigurationTarget.WorkspaceFolder,
+    );
+  } catch (error) {
+    if (!(error instanceof Error) || !/no resource is provided/i.test(error.message)) {
+      throw error;
+    }
+    const settingsDirectoryPath = path.join(workspaceFolder.uri.fsPath, '.vscode');
+    const settingsPath = path.join(settingsDirectoryPath, 'settings.json');
+    const settings = readJsonObjectFile(settingsPath);
+    settings[`${EXTENSION_CONFIGURATION_SECTION}.${SAVE_CHECK_SKIP_FORMATTERS_CONFIGURATION_KEY}`] = skipFormatters;
+    fs.mkdirSync(settingsDirectoryPath, { recursive: true });
+    fs.writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf8');
+  }
+}
+
 async function updateWorkspaceEnabledSettingFile(
   workspaceFolder: vscode.WorkspaceFolder,
   enabled: boolean | undefined,
@@ -2103,6 +2148,26 @@ function createSetWorkspaceEnablementCommand(
   };
 }
 
+function createSetSaveCheckSkipFormattersCommand(
+  skipFormatters: boolean,
+): () => Promise<void> {
+  return async() => {
+    const workspaceFolder = await resolveWorkspaceFolderForSingleTargetCommand();
+    if (!workspaceFolder) {
+      showTransientNonErrorMessage(getOpenWorkspaceMessage());
+      return;
+    }
+
+    try {
+      await updateSaveCheckSkipFormattersSetting(workspaceFolder, skipFormatters);
+      showTransientNonErrorMessage(getSaveFormattersEnablementSuccessMessage(!skipFormatters, workspaceFolder.name));
+    } catch (error) {
+      const details = error instanceof Error ? error.message : String(error);
+      void vscode.window.showErrorMessage(getSaveFormattersEnablementFailureMessage(details));
+    }
+  };
+}
+
 export function activate(context: vscode.ExtensionContext): void {
   const diagnosticCollection = vscode.languages.createDiagnosticCollection(DIAGNOSTIC_COLLECTION_NAME);
   const outputChannel = vscode.window.createOutputChannel('Mamori Inspector');
@@ -2236,6 +2301,18 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand(
       'mamori-inspector.disableInWorkspace',
       createSetWorkspaceEnablementCommand(false, diagnosticsState, diagnosticCollection),
+    ),
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'mamori-inspector.enableSaveFormatters',
+      createSetSaveCheckSkipFormattersCommand(false),
+    ),
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      'mamori-inspector.disableSaveFormatters',
+      createSetSaveCheckSkipFormattersCommand(true),
     ),
   );
   context.subscriptions.push(
