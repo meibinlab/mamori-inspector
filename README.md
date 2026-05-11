@@ -121,6 +121,12 @@ Mamori Inspector is a unified code inspection platform for VS Code that orchestr
 - Pre-commit validation runs on staged files only and re-stages formatter changes automatically.
 - Pre-push validation runs on the workspace scope, updates Problems when diagnostics are available, and surfaces the result as a notification before pushing changes continue.
 
+## AI Coding Tools
+- Save-time formatters (Spotless, Prettier, ESLint auto-fix) rewrite file content immediately after each save. When an AI coding tool is making sequential edits during a session, these rewrites can cause the AI to encounter unexpected file content on the next edit, disrupting its context.
+- To avoid this, run `Mamori Inspector: Disable Save Formatters` before starting an AI coding session. This sets `mamori-inspector.saveCheckSkipFormatters` to `true` and skips all formatters during automatic save checks. Static analysis checkers still run and diagnostics are still reported as usual.
+- Run `Mamori Inspector: Enable Save Formatters` when the AI coding session ends to restore normal save-time formatting.
+- `mamori-inspector.saveCheckSkipFormatters` can also be toggled manually in the VS Code workspace settings UI.
+
 ## Files Required For Each Check
 | Check | Files you should prepare | Notes |
 | ---- | ---- | ---- |

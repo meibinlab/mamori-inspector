@@ -118,6 +118,12 @@ Mamori Inspector は、複数の解析ツールを統合し、開発者が扱い
 - pre-commit 検証はステージ済みファイルのみを対象にし、整形による変更を自動で再ステージします。
 - pre-push 検証はワークスペース全体を対象にし、Problems 更新と通知で結果を知らせたうえで push を継続します。
 
+## AI コーディングツールとの併用
+- 保存時フォーマッター（Spotless・Prettier・ESLint auto-fix）は、保存のたびにファイル内容を書き換えます。AI コーディングツールがセッション中に連続してファイルを編集している場合、この書き換えによって AI が次の編集時に想定外のファイル内容を受け取り、動作が不安定になることがあります。
+- この問題を避けるには、AI コーディングセッションを始める前に `Mamori Inspector: Disable Save Formatters` を実行します。`mamori-inspector.saveCheckSkipFormatters` が `true` になり、保存時の自動チェックでフォーマッターがスキップされます。静的解析チェックは引き続き実行され、Diagnostics も通常どおり報告されます。
+- AI コーディングセッションが終わったら `Mamori Inspector: Enable Save Formatters` を実行して保存時整形を元の状態に戻します。
+- `mamori-inspector.saveCheckSkipFormatters` は VS Code のワークスペース設定 UI から手動で切り替えることもできます。
+
 ## 各チェックで用意すべきファイル
 | チェック | 用意すべきファイル | 補足 |
 | ---- | ---- | ---- |
