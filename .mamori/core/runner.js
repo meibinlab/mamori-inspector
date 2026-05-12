@@ -1230,6 +1230,103 @@ function buildPreferredNodePaths(currentWorkingDirectory) {
 }
 
 /**
+ * Windows レジストリから JAVA_HOME を取得する。
+ * @returns {string|undefined} レジストリの JAVA_HOME 値、または undefined を返す。
+ */
+function getJavaHomeFromRegistry() {
+  if (process.platform !== 'win32') {
+    return undefined;
+  }
+  try {
+    const { spawnSync } = require('child_process');
+    const envRegistryKeys = [
+      'HKCU\\Environment',
+      'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment',
+    ];
+    for (const key of envRegistryKeys) {
+      const result = spawnSync('reg', ['query', key, '/v', 'JAVA_HOME'], {
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: 3000,
+      });
+      if (result.status === 0) {
+        const match = (result.stdout || '').match(/JAVA_HOME\s+REG_(?:SZ|EXPAND_SZ)\s+(.+)/i);
+        if (match) {
+          return match[1].trim();
+        }
+      }
+    }
+    const javaSoftKeys = [
+      'HKLM\\SOFTWARE\\JavaSoft\\JDK',
+      'HKLM\\SOFTWARE\\JavaSoft\\Java Development Kit',
+      'HKLM\\SOFTWARE\\WOW6432Node\\JavaSoft\\JDK',
+    ];
+    for (const baseKey of javaSoftKeys) {
+      const versionResult = spawnSync('reg', ['query', baseKey, '/v', 'CurrentVersion'], {
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: 3000,
+      });
+      if (versionResult.status !== 0) {
+        continue;
+      }
+      const versionMatch = (versionResult.stdout || '').match(/CurrentVersion\s+REG_SZ\s+(.+)/i);
+      if (!versionMatch) {
+        continue;
+      }
+      const version = versionMatch[1].trim();
+      const javaHomeResult = spawnSync('reg', ['query', `${baseKey}\\${version}`, '/v', 'JavaHome'], {
+        encoding: 'utf8',
+        windowsHide: true,
+        timeout: 3000,
+      });
+      if (javaHomeResult.status !== 0) {
+        continue;
+      }
+      const javaHomeMatch = (javaHomeResult.stdout || '').match(/JavaHome\s+REG_SZ\s+(.+)/i);
+      if (javaHomeMatch) {
+        return javaHomeMatch[1].trim();
+      }
+    }
+  } catch {
+    // ignore
+  }
+  return undefined;
+}
+
+/**
+ * JAVA_HOME を検証し、無効な場合は Windows レジストリや PATH から自動検出して返す。
+ * @param {NodeJS.ProcessEnv} env 環境変数を表す。
+ * @returns {string|undefined} 有効な JAVA_HOME パス、または undefined を返す。
+ */
+function resolveJavaHome(env) {
+  const javaExecutable = process.platform === 'win32' ? 'java.exe' : 'java';
+  const candidates = [env.JAVA_HOME];
+  if (process.platform === 'win32') {
+    candidates.push(getJavaHomeFromRegistry());
+  }
+  for (const candidate of candidates.filter(Boolean)) {
+    const expanded = process.platform === 'win32'
+      ? candidate.replace(/%([^%]+)%/gu, (_, v) => env[v] || process.env[v] || '')
+      : candidate;
+    if (fs.existsSync(path.join(expanded, 'bin', javaExecutable))) {
+      return expanded;
+    }
+  }
+  const searchPath = env.PATH || env.Path || '';
+  for (const dir of searchPath.split(path.delimiter).filter(Boolean)) {
+    if (!fs.existsSync(path.join(dir, javaExecutable))) {
+      continue;
+    }
+    const derivedHome = path.dirname(dir);
+    if (fs.existsSync(path.join(derivedHome, 'bin', javaExecutable))) {
+      return derivedHome;
+    }
+  }
+  return undefined;
+}
+
+/**
  * コマンド実行用の環境変数を返す。
  * @param {string|undefined} currentWorkingDirectory 実行時の作業ディレクトリを表す。
  * @param {NodeJS.ProcessEnv} env 元の環境変数を表す。
@@ -1247,6 +1344,13 @@ function buildCommandEnvironment(currentWorkingDirectory, env) {
 
   if (process.platform === 'win32') {
     resolvedEnvironment.Path = resolvedPath;
+  }
+
+  const resolvedJavaHome = resolveJavaHome({ ...env, PATH: resolvedPath });
+  if (resolvedJavaHome) {
+    resolvedEnvironment.JAVA_HOME = resolvedJavaHome;
+  } else {
+    delete resolvedEnvironment.JAVA_HOME;
   }
 
   return resolvedEnvironment;

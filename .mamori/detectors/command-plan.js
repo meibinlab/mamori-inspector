@@ -627,10 +627,19 @@ function buildMavenArguments(toolName, moduleDefinition, moduleFiles) {
   if (toolName === 'spotless') {
     const args = ['-q', 'spotless:apply'];
     if (Array.isArray(moduleFiles) && moduleFiles.length > 0) {
-      const relativeFiles = moduleFiles.map(
-        (filePath) => path.relative(moduleDefinition.moduleRoot, filePath).replace(/\\/gu, '/'),
-      );
-      args.push(`-DspotlessFiles=${relativeFiles.join(',')}`);
+      // -DspotlessFiles は Java 正規表現パターンを受け付ける。
+      // Windows では絶対パスに \ が使われるため、/ と \ 両方にマッチする文字クラス [/\\] を使う。
+      // junction/シンボリックリンク経由のパスを実パスに解決してから相対パスを計算する。
+      const resolvedModuleRoot = (() => { try { return fs.realpathSync(moduleDefinition.moduleRoot); } catch { return moduleDefinition.moduleRoot; } })();
+      const regexPatterns = moduleFiles.map((filePath) => {
+        const resolvedFilePath = (() => { try { return fs.realpathSync(filePath); } catch { return filePath; } })();
+        const relPath = path.relative(resolvedModuleRoot, resolvedFilePath);
+        const escapedSegments = relPath
+          .split(path.sep)
+          .map((seg) => seg.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'));
+        return `.*${escapedSegments.join('[/\\\\]')}$`;
+      });
+      args.push(`-DspotlessFiles=${regexPatterns.join(',')}`);
     }
     return args;
   }
@@ -665,10 +674,19 @@ function buildGradleArguments(toolName, moduleFiles, moduleRoot) {
   if (toolName === 'spotless') {
     const args = ['spotlessApply'];
     if (Array.isArray(moduleFiles) && moduleFiles.length > 0) {
-      const relativeFiles = moduleFiles.map(
-        (filePath) => path.relative(moduleRoot, filePath).replace(/\\/gu, '/'),
-      );
-      args.push(`-DspotlessFiles=${relativeFiles.join(',')}`);
+      // -DspotlessFiles は Java 正規表現パターンを受け付ける。
+      // Windows では絶対パスに \ が使われるため、/ と \ 両方にマッチする文字クラス [/\\] を使う。
+      // junction/シンボリックリンク経由のパスを実パスに解決してから相対パスを計算する。
+      const resolvedModuleRoot = (() => { try { return fs.realpathSync(moduleRoot); } catch { return moduleRoot; } })();
+      const regexPatterns = moduleFiles.map((filePath) => {
+        const resolvedFilePath = (() => { try { return fs.realpathSync(filePath); } catch { return filePath; } })();
+        const relPath = path.relative(resolvedModuleRoot, resolvedFilePath);
+        const escapedSegments = relPath
+          .split(path.sep)
+          .map((seg) => seg.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'));
+        return `.*${escapedSegments.join('[/\\\\]')}$`;
+      });
+      args.push(`-DspotlessFiles=${regexPatterns.join(',')}`);
     }
     return args;
   }

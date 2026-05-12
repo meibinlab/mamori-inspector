@@ -10,6 +10,12 @@
 
 ### Changed
 
+## [0.3.14] - 2026-05-12
+
+### Fixed
+- 保存時・pre-commit 時に Spotless が保存対象ファイルだけでなく全ファイルを整形していた問題を修正しました。Maven では `-DspotlessFiles=<正規表現>`、Gradle では `-DspotlessFiles=<正規表現>` を付与して対象ファイルのみを整形します。Windows のパス区切り文字（`\` と `/`）両方にマッチする `[/\\]` パターンを使用し、junction（シンボリックリンク）経由のパスは `fs.realpathSync` で実パスに解決してから正規表現を生成します。
+- VS Code プロセスが無効な `JAVA_HOME` を持つ環境で Maven が起動できず、Spotless・Checkstyle・PMD がすべて失敗する問題を修正しました。`HKLM\SOFTWARE\JavaSoft\JDK` レジストリキーからインストール済み JDK を自動検出して `JAVA_HOME` を設定するようにしました。
+
 ## [0.3.13] - 2026-05-11
 
 ### Added
