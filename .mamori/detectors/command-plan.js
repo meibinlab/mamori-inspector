@@ -600,9 +600,10 @@ function buildSemgrepArguments(semgrepResolution, moduleRoot, moduleFiles) {
  * Maven 向けツール引数一覧を返す。
  * @param {string} toolName ツール名を表す。
  * @param {object} moduleDefinition モジュール定義を表す。
+ * @param {string[]} moduleFiles 対象ファイル一覧を表す。
  * @returns {string[]|undefined} 引数一覧を返す。
  */
-function buildMavenArguments(toolName, moduleDefinition) {
+function buildMavenArguments(toolName, moduleDefinition, moduleFiles) {
   if (toolName === 'checkstyle') {
     const args = ['-q', 'checkstyle:check', '-Dcheckstyle.includeTestSourceDirectory=true'];
     if (moduleDefinition.checkstyle && moduleDefinition.checkstyle.configLocation) {
@@ -624,7 +625,14 @@ function buildMavenArguments(toolName, moduleDefinition) {
   }
 
   if (toolName === 'spotless') {
-    return ['-q', 'spotless:apply'];
+    const args = ['-q', 'spotless:apply'];
+    if (Array.isArray(moduleFiles) && moduleFiles.length > 0) {
+      const relativeFiles = moduleFiles.map(
+        (filePath) => path.relative(moduleDefinition.moduleRoot, filePath).replace(/\\/gu, '/'),
+      );
+      args.push(`-DspotlessFiles=${relativeFiles.join(',')}`);
+    }
+    return args;
   }
 
   return undefined;
@@ -633,9 +641,11 @@ function buildMavenArguments(toolName, moduleDefinition) {
 /**
  * Gradle 向けツール引数一覧を返す。
  * @param {string} toolName ツール名を表す。
+ * @param {string[]} moduleFiles 対象ファイル一覧を表す。
+ * @param {string} moduleRoot モジュールルートを表す。
  * @returns {string[]|undefined} 引数一覧を返す。
  */
-function buildGradleArguments(toolName) {
+function buildGradleArguments(toolName, moduleFiles, moduleRoot) {
   if (toolName === 'checkstyle') {
     return ['checkstyleMain', 'checkstyleTest'];
   }
@@ -653,7 +663,14 @@ function buildGradleArguments(toolName) {
   }
 
   if (toolName === 'spotless') {
-    return ['spotlessApply'];
+    const args = ['spotlessApply'];
+    if (Array.isArray(moduleFiles) && moduleFiles.length > 0) {
+      const relativeFiles = moduleFiles.map(
+        (filePath) => path.relative(moduleRoot, filePath).replace(/\\/gu, '/'),
+      );
+      args.push(`-DspotlessFiles=${relativeFiles.join(',')}`);
+    }
+    return args;
   }
 
   return undefined;
@@ -728,7 +745,7 @@ function buildCommandEntry(toolEntry, moduleDefinition, semgrepResolution, modul
       enabled: true,
       phase: toolEntry.phase || 'check',
       command: resolveMavenCommand(moduleDefinition.moduleRoot),
-      args: buildMavenArguments(toolEntry.tool, moduleDefinition),
+      args: buildMavenArguments(toolEntry.tool, moduleDefinition, moduleFiles),
       cwd: moduleDefinition.moduleRoot,
     };
   }
@@ -739,7 +756,7 @@ function buildCommandEntry(toolEntry, moduleDefinition, semgrepResolution, modul
       enabled: true,
       phase: toolEntry.phase || 'check',
       command: resolveGradleCommand(moduleDefinition.moduleRoot),
-      args: buildGradleArguments(toolEntry.tool),
+      args: buildGradleArguments(toolEntry.tool, moduleFiles, moduleDefinition.moduleRoot),
       cwd: moduleDefinition.moduleRoot,
     };
   }
